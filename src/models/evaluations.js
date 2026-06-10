@@ -1,0 +1,365 @@
+// Parser + CRUD for deal_evaluations table.
+// Reads deal-log markdown files from the investment-grading project and
+// imports them into the deal_evaluations table in Neon.
+
+import { readFileSync, readdirSync } from 'fs';
+import { join, basename } from 'path';
+import { query } from '../db/index.js';
+import { withSyncRun } from '../db/sync-runs.js';
+import { matchCompanyToInvestment, loadInvestmentUniverse } from '../utils/match.js';
+import { normalize as normalizeCompanyName, tokenize, STOPWORDS } from '../utils/company-names.js';
+
+const DEAL_LOG_DIR = process.env.DEAL_LOG_DIR || null;
+
+// --- Parser ---
+
+/**
+ * Parse a deal-log markdown file and extract structured fields.
+ * Returns null if the file can't be parsed meaningfully.
+ */
+export function parseDealLogFile(filePath) {
+  const content = readFileSync(filePath, 'utf-8');
+  const filename = basename(filePath);
+
+  // Extract eval_date from filename (YYYY-MM-DD-company.md) or from content
+  let eval_date = null;
+  const dateFromFilename = filename.match(/^(\d{4}-\d{2}-\d{2})-/);
+  if (dateFromFilename) {
+    eval_date = dateFromFilename[1];
+  }
+  if (!eval_date) {
+    // Try "Date evaluated:" or "Date:" line
+    const dateLine = content.match(/\*\*Date(?:\s+evaluated)?:\*\*\s*(\d{4}-\d{2}-\d{2})/);
+    if (dateLine) eval_date = dateLine[1];
+  }
+
+  // Extract company_name from heading
+  // Formats: "# Deal Log: Company Name" or "# Deal Diagnosis: Company Name"
+  let company_name = null;
+  const headingMatch = content.match(/^#\s+(?:Deal\s+(?:Log|Diagnosis|Assessment)):\s*(.+?)(?:\s*—.*)?$/m);
+  if (headingMatch) {
+    company_name = headingMatch[1].trim();
+  }
+  if (!company_name) {
+    // Try "# Company Name — Deal Assessment" or similar
+    const altHeading = content.match(/^#\s+(.+?)(?:\s*—\s*Deal\s+(?:Assessment|Log|Diagnosis))?$/m);
+    if (altHeading) {
+      company_name = altHeading[1].trim();
+    }
+  }
+
+  // Extract thesis_fit_score — look for "Thesis Fit subtotal:" with various formats
+  // Formats: "**Thesis Fit subtotal:** ... **21.5/25**"
+  //          "| **Thesis Fit subtotal** | **15/25** |"
+  //          "**Thesis Fit subtotal: 10/20**"
+  let thesis_fit_score = null;
+  const thesisFitPatterns = [
+    /Thesis\s+Fit\s+subtotal[:\s]*.*?(\d+(?:\.\d+)?)\s*\/\s*\d+/i,
+  ];
+  for (const pat of thesisFitPatterns) {
+    const m = content.match(pat);
+    if (m) {
+      thesis_fit_score = parseFloat(m[1]);
+      break;
+    }
+  }
+
+  // Extract viability_score — "Viability subtotal:" with various formats
+  let viability_score = null;
+  const viabilityPatterns = [
+    /Viability\s+subtotal[:\s]*.*?(\d+(?:\.\d+)?)\s*\/\s*\d+/i,
+  ];
+  for (const pat of viabilityPatterns) {
+    const m = content.match(pat);
+    if (m) {
+      viability_score = parseFloat(m[1]);
+      break;
+    }
+  }
+
+  // Extract total_score — formats vary widely:
+  // "### Total: **42/50**"
+  // "## Total: 25/45"
+  // "## Total: 37/50"  (inside code block)
+  let total_score = null;
+  const totalPatterns = [
+    /#+\s*Total:\s*\*{0,2}(\d+(?:\.\d+)?)\s*\/\s*\d+/m,
+    /Total:\s*\*{0,2}(\d+(?:\.\d+)?)\s*\/\s*\d+/m,
+  ];
+  for (const pat of totalPatterns) {
+    const m = content.match(pat);
+    if (m) {
+      total_score = parseFloat(m[1]);
+      break;
+    }
+  }
+
+  // Extract verdict — formats:
+  // "### Verdict: **Strong Fit**"
+  // "## Verdict: Likely Pass"
+  // "## Verdict: Worth Exploring (high end...)"
+  let verdict = null;
+  const verdictPatterns = [
+    /#+\s*Verdict:\s*\*{0,2}([^*\n]+?)\*{0,2}\s*$/m,
+    /Verdict:\s*\*{0,2}([^*\n]+?)\*{0,2}\s*$/m,
+  ];
+  for (const pat of verdictPatterns) {
+    const m = content.match(pat);
+    if (m) {
+      verdict = m[1].trim();
+      break;
+    }
+  }
+
+  // Extract council scores from Stage 5c synthesis table
+  // Format: "| Bull | XX/50 | ... |" or "| **Bull** | **XX/50** | ... |"
+  let council_bull = null, council_bear = null, council_calibrator = null;
+
+  const bullMatch = content.match(/\|\s*\*{0,2}Bull\*{0,2}\s*\|\s*\*{0,2}(\d+(?:\.\d+)?)\s*\/\s*50\*{0,2}/i);
+  if (bullMatch) council_bull = parseFloat(bullMatch[1]);
+
+  const bearMatch = content.match(/\|\s*\*{0,2}Bear\*{0,2}\s*\|\s*\*{0,2}(\d+(?:\.\d+)?)\s*\/\s*50\*{0,2}/i);
+  if (bearMatch) council_bear = parseFloat(bearMatch[1]);
+
+  const calMatch = content.match(/\|\s*\*{0,2}Calibrator\*{0,2}\s*\|\s*\*{0,2}(\d+(?:\.\d+)?)\s*\/\s*50\*{0,2}/i);
+  if (calMatch) council_calibrator = parseFloat(calMatch[1]);
+
+  // Extract CFO verdict from council output
+  // Format: "| CFO | — | Deploy ... |" or "Verdict: Deploy — ..." in CFO section
+  let council_cfo_verdict = null;
+  const cfoTableMatch = content.match(/\|\s*\*{0,2}CFO\*{0,2}\s*\|\s*[—\-]+\s*\|\s*\*{0,2}(Deploy|Defer|Pass)\*{0,2}/i);
+  if (cfoTableMatch) {
+    council_cfo_verdict = cfoTableMatch[1];
+  } else {
+    // Fallback: look for "Verdict: Deploy/Defer/Pass" in CFO section
+    const cfoSectionMatch = content.match(/CFO\s*\(Portfolio Construction\)[\s\S]*?Verdict:\s*(Deploy|Defer|Pass)/i);
+    if (cfoSectionMatch) council_cfo_verdict = cfoSectionMatch[1];
+  }
+
+  // Compute spread and consensus if we have council data
+  let council_spread = null, council_consensus = null, council_divergence = null;
+  const councilScores = [council_bull, council_bear, council_calibrator].filter(s => s != null);
+  if (councilScores.length >= 2) {
+    council_spread = Math.max(...councilScores) - Math.min(...councilScores);
+    council_consensus = councilScores.reduce((a, b) => a + b, 0) / councilScores.length;
+    council_divergence = council_spread > 10 ? 'HIGH' : council_spread > 5 ? 'MODERATE' : 'LOW';
+  }
+
+  if (!company_name) return null;
+
+  return {
+    eval_date,
+    file_path: filePath,
+    company_name,
+    thesis_fit_score,
+    viability_score,
+    total_score,
+    verdict,
+    council_bull,
+    council_bear,
+    council_calibrator,
+    council_spread,
+    council_consensus,
+    council_divergence,
+    council_cfo_verdict,
+  };
+}
+
+// --- Import ---
+
+/**
+ * Import all deal-log markdown files into deal_evaluations.
+ * Skips files already imported (by file_path). Links to investments and pipeline invites.
+ */
+export async function importDealLogs(dir = DEAL_LOG_DIR, opts = {}) {
+  if (!dir) {
+    throw new Error('DEAL_LOG_DIR is not set. Add it to .env (path to your deal-log markdown directory).');
+  }
+  return withSyncRun('deal-log:import', `import ${dir}`, async () => {
+    return runDealLogImport(dir, opts);
+  });
+}
+
+async function runDealLogImport(dir, opts = {}) {
+  const evalMode = opts.mode || 'standard';
+  const files = readdirSync(dir).filter(f => f.endsWith('.md'));
+  const results = {
+    total: files.length,
+    imported: 0,
+    skipped: 0,
+    errors: 0,
+    details: [],
+  };
+
+  // Load investments universe once per batch.
+  const universe = await loadInvestmentUniverse();
+
+  for (const file of files) {
+    const filePath = join(dir, file);
+    try {
+      // Check if already imported
+      const existing = await query(
+        `SELECT id FROM deal_evaluations WHERE file_path = $1 LIMIT 1`,
+        [filePath]
+      );
+      if (existing.length > 0) {
+        results.skipped++;
+        results.details.push({ file, company: null, status: 'skipped' });
+        continue;
+      }
+
+      const parsed = parseDealLogFile(filePath);
+      if (!parsed) {
+        results.errors++;
+        results.details.push({ file, company: null, status: 'parse_error', error: 'Could not parse file' });
+        continue;
+      }
+
+      // Try to link to an investment
+      let investment_id = null;
+      const investMatch = await matchCompanyToInvestment(parsed.company_name, { universe });
+      if (investMatch.confidence === 'exact' || investMatch.confidence === 'token') {
+        investment_id = investMatch.investment_id;
+      }
+
+      // Try to link to a pipeline invite (multi-strategy fuzzy match)
+      let pipeline_invite_id = null;
+      let pipeline_status = null;
+      const normalized = normalizeCompanyName(parsed.company_name);
+      // Strategy 1: exact case-insensitive
+      let pipelineRows = await query(
+        `SELECT id, status, company_name FROM pipeline_invites WHERE LOWER(company_name) = LOWER($1) LIMIT 1`,
+        [parsed.company_name]
+      );
+      if (pipelineRows.length === 0) {
+        // Strategy 2: normalized match against all invites
+        const allInvites = await query(`SELECT id, status, company_name FROM pipeline_invites`);
+        for (const inv of allInvites) {
+          const invNorm = normalizeCompanyName(inv.company_name);
+          if (invNorm === normalized || invNorm.startsWith(normalized) || normalized.startsWith(invNorm)) {
+            pipelineRows = [inv];
+            break;
+          }
+        }
+        if (pipelineRows.length === 0) {
+          // Strategy 3: shared token match (≥3 chars, excluding stopwords).
+          // Uses the canonical STOPWORDS from company-names.js.
+          const tokens = tokenize(normalized);
+          if (tokens.length > 0) {
+            for (const inv of allInvites) {
+              const invTokens = normalizeCompanyName(inv.company_name).split(/\s+/).filter(t => !STOPWORDS.has(t));
+              const overlap = tokens.filter(t => invTokens.includes(t));
+              if (overlap.length > 0) {
+                pipelineRows = [inv];
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      if (pipelineRows.length > 0) {
+        pipeline_invite_id = pipelineRows[0].id;
+        pipeline_status = pipelineRows[0].status;
+      }
+
+      // Determine invested flag
+      let invested = false;
+      if (investment_id) invested = true;
+      if (pipeline_status === 'committed' || pipeline_status === 'invested') invested = true;
+
+      // Insert
+      await query(
+        `INSERT INTO deal_evaluations
+           (investment_id, pipeline_invite_id, eval_date, file_path, thesis_fit_score, viability_score, total_score, verdict, invested,
+            council_bull_score, council_bear_score, council_calibrator_score, council_spread, council_consensus, council_divergence, council_cfo_verdict,
+            eval_mode)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+        [
+          investment_id,
+          pipeline_invite_id,
+          parsed.eval_date,
+          parsed.file_path,
+          parsed.thesis_fit_score,
+          parsed.viability_score,
+          parsed.total_score,
+          parsed.verdict,
+          invested,
+          parsed.council_bull,
+          parsed.council_bear,
+          parsed.council_calibrator,
+          parsed.council_spread,
+          parsed.council_consensus,
+          parsed.council_divergence,
+          parsed.council_cfo_verdict,
+          evalMode,
+        ]
+      );
+
+      results.imported++;
+      results.details.push({
+        file,
+        company: parsed.company_name,
+        status: 'imported',
+        investment_id,
+        pipeline_invite_id,
+        invested,
+        total_score: parsed.total_score,
+        verdict: parsed.verdict,
+      });
+    } catch (err) {
+      results.errors++;
+      results.details.push({ file, company: null, status: 'error', error: err.message });
+    }
+  }
+
+  // sync_runs fields
+  results.records_seen = results.total;
+  results.records_new = results.imported;
+  results.records_changed = 0;
+  results.error_details = results.errors > 0
+    ? results.details.filter(d => d.status === 'error' || d.status === 'parse_error')
+    : null;
+
+  return results;
+}
+
+// --- Queries ---
+
+export async function listEvaluations() {
+  return query(
+    `SELECT de.*,
+            i.company_name AS inv_company_name,
+            pi.company_name AS pipe_company_name,
+            pi.status AS pipe_status
+     FROM deal_evaluations de
+     LEFT JOIN investments i ON de.investment_id = i.id
+     LEFT JOIN pipeline_invites pi ON de.pipeline_invite_id = pi.id
+     ORDER BY de.eval_date DESC NULLS LAST, de.id DESC`
+  );
+}
+
+export async function getEvaluationByCompany(search) {
+  // Try exact file_path match on company slug
+  const slug = search.toLowerCase().replace(/\s+/g, '-');
+  const byPath = await query(
+    `SELECT de.*, i.company_name AS inv_company_name
+     FROM deal_evaluations de
+     LEFT JOIN investments i ON de.investment_id = i.id
+     WHERE de.file_path ILIKE $1
+     LIMIT 1`,
+    [`%${slug}%`]
+  );
+  if (byPath.length > 0) return byPath[0];
+
+  // Try parsing company name from file content
+  const all = await listEvaluations();
+  const lower = search.toLowerCase();
+  const match = all.find(r => {
+    // Extract company name from file_path slug
+    const fn = basename(r.file_path || '');
+    const nameSlug = fn.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/\.md$/, '');
+    return nameSlug.includes(lower) || lower.includes(nameSlug);
+  });
+  return match || null;
+}

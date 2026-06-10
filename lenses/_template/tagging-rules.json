@@ -1,0 +1,20 @@
+{
+  "rules": [
+    {
+      "thesis_id": "example-thesis-one",
+      "market_patterns": ["AI / ML", "Software"],
+      "company_patterns": [
+        "Example AI Co",
+        "Example Platform Co"
+      ]
+    },
+    {
+      "thesis_id": "example-thesis-two",
+      "market_patterns": ["Hardware", "Robotics", "Aerospace"],
+      "company_patterns": [
+        "Example Robotics Co",
+        "Example Energy Co"
+      ]
+    }
+  ]
+}

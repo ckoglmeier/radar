@@ -1,0 +1,40 @@
+{
+  "name": "radar",
+  "version": "1.0.0",
+  "description": "Decision infrastructure for private market investors. Portfolio tracking, thesis management, deal pipeline, and bet sizing.",
+  "type": "module",
+  "license": "AGPL-3.0",
+  "author": "Chandler Koglmeier",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ckoglmeier/radar.git"
+  },
+  "keywords": [
+    "investing",
+    "portfolio",
+    "angel-investing",
+    "private-markets",
+    "venture-capital",
+    "cli"
+  ],
+  "bin": {
+    "radar": "./src/cli.js"
+  },
+  "scripts": {
+    "radar": "node src/cli.js",
+    "setup": "node src/cli.js db:setup",
+    "import": "node src/cli.js import angellist",
+    "test": "node src/utils/test-irr.js && node src/utils/test-matching.js && node src/utils/test-recompute.js && node src/utils/test-format.js && node src/utils/test-stage.js && node src/utils/test-match.js && node src/utils/test-bet-sizing.js && node src/utils/test-analytics.js && node src/import/test-transactions.js && node src/models/test-evaluations.js && node src/models/test-investments.js && node src/lenses/test-council-parser.js && node src/lenses/test-lens-loader.js && node src/sync/test-fixtures/test-parser.js && node src/reports/test-reports.js && python3 src/analytics/test_kelly.py && python3 src/analytics/test_thesis_validation.py",
+    "setup-hooks": "git config core.hooksPath hooks"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.3",
+    "csv-parse": "^6.2.1",
+    "dotenv": "^17.4.1"
+  }
+}

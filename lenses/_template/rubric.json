@@ -1,0 +1,115 @@
+{
+  "total_points": 50,
+  "sections": [
+    {
+      "name": "Thesis Fit",
+      "weight_pct": 50,
+      "max_points": 25,
+      "dimensions": [
+        {
+          "name": "Domain match",
+          "weight_pct": 15,
+          "scale": [1, 5],
+          "anchors": {
+            "1": "Doesn't map to any active thesis",
+            "3": "Adjacent to a thesis but not core",
+            "5": "Squarely in one or more thesis clusters"
+          }
+        },
+        {
+          "name": "Compounding structure",
+          "weight_pct": 15,
+          "scale": [1, 5],
+          "anchors": {
+            "1": "Linear business — revenue scales with headcount",
+            "3": "Some retention or expansion dynamics",
+            "5": "Clear flywheel: data, network effect, switching cost, or regulatory moat"
+          }
+        },
+        {
+          "name": "Structural tailwind",
+          "weight_pct": 10,
+          "scale": [1, 5],
+          "anchors": {
+            "1": "Timing is unclear or the market is mature",
+            "3": "Tailwind exists but may be cyclical",
+            "5": "Durable policy, technology, or cost-curve shift with multi-year runway"
+          }
+        },
+        {
+          "name": "Portfolio construction fit",
+          "weight_pct": 10,
+          "scale": [1, 5],
+          "anchors": {
+            "1": "Duplicates existing thesis/stage/GP exposure",
+            "3": "Neutral — doesn't improve or worsen portfolio concentration",
+            "5": "Fills a gap in thesis coverage, vintage diversity, stage balance, or GP relationship breadth"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Viability",
+      "weight_pct": 50,
+      "max_points": 25,
+      "dimensions": [
+        {
+          "name": "Team-market fit",
+          "weight_pct": 15,
+          "scale": [1, 5],
+          "anchors": {
+            "1": "Generic team for this problem",
+            "3": "Relevant experience but gaps",
+            "5": "Obvious why this team builds this thing — domain, technical, or operating edge"
+          }
+        },
+        {
+          "name": "Capital efficiency",
+          "weight_pct": 10,
+          "scale": [1, 5],
+          "anchors": {
+            "1": "Needs $50M+ before proving thesis",
+            "3": "Reasonable burn but milestones are far",
+            "5": "Lean path to meaningful proof points"
+          }
+        },
+        {
+          "name": "Business model clarity",
+          "weight_pct": 10,
+          "scale": [1, 5],
+          "anchors": {
+            "1": "No revenue model articulated",
+            "3": "Model exists but unproven (stage-adjusted: Pre-Seed/Seed LOIs and pilots count)",
+            "5": "Revenue model is legible and early signals confirm it (stage-adjusted)"
+          }
+        },
+        {
+          "name": "Differentiation",
+          "weight_pct": 10,
+          "scale": [1, 5],
+          "anchors": {
+            "1": "Feature lead only — no structural moat",
+            "3": "Some defensibility (IP, data, regulatory)",
+            "5": "Hard-to-replicate advantage: proprietary data, physics, or structural lock-in"
+          }
+        },
+        {
+          "name": "Source quality",
+          "weight_pct": 5,
+          "scale": [1, 5],
+          "anchors": {
+            "1": "Cold inbound, unknown referral",
+            "3": "Known GP or warm intro",
+            "5": "Tier 1 GP lead or direct founder relationship"
+          }
+        }
+      ]
+    }
+  ],
+  "verdict_bands": [
+    { "range": [40, 50], "verdict": "Strong fit", "response_type": "Warm interest" },
+    { "range": [30, 39], "verdict": "Worth exploring", "response_type": "Request more info" },
+    { "range": [20, 29], "verdict": "Likely pass", "response_type": "Polite pass" },
+    { "range": [0, 19], "verdict": "Clear pass", "response_type": "Quick pass" }
+  ]
+}

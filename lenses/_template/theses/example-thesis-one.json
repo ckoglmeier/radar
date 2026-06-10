@@ -1,0 +1,22 @@
+{
+  "id": "example-thesis-one",
+  "name": "Example Thesis One: Software Infrastructure",
+  "belief": "The infrastructure layer of [your domain] compounds in value as the application layer fragments. Picking application winners is a losing game at early stage. Picking the substrate they all depend on is not.",
+  "qualifications": [
+    "Developer tooling and platform infrastructure",
+    "Data pipelines and observability systems",
+    "Security and compliance automation",
+    "Core platform companies with defensible technical advantages"
+  ],
+  "exclusions": [
+    "Application wrappers without proprietary data or model differentiation",
+    "Thin feature layers on top of commodity infrastructure",
+    "Products that require platform lock-in to function but don't create it"
+  ],
+  "portfolio_examples": [
+    { "name": "Example Platform Co", "check": 5000, "note": "core infra play" },
+    { "name": "Example AI Co", "check": 10000, "note": "developer tooling" }
+  ],
+  "conviction_signal": "Replace this with what pattern in a deal gives you the highest conviction in this thesis.",
+  "active": true
+}

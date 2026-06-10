@@ -1,0 +1,12 @@
+{
+  "rounds": {
+    "pre-seed": { "confidence": "very_low", "time_to_liquidity_years": 9 },
+    "seed": { "confidence": "low", "time_to_liquidity_years": 8 },
+    "series a": { "confidence": "low", "time_to_liquidity_years": 6 },
+    "series b": { "confidence": "low", "time_to_liquidity_years": 5 },
+    "series c": { "confidence": "medium", "time_to_liquidity_years": 3 },
+    "series d": { "confidence": "medium", "time_to_liquidity_years": 2 },
+    "secondary": { "confidence": "high", "time_to_liquidity_years": 2 }
+  },
+  "default": { "confidence": "low", "time_to_liquidity_years": 7 }
+}

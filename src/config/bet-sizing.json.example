@@ -1,0 +1,19 @@
+{
+  "_instructions": "Copy this file to bet-sizing.json and fill in your actual numbers. bet-sizing.json is gitignored. Required fields: risk_capital, floor, tiers, min_check, max_check. tiers is an array of {min_score, check} sorted descending by min_score — the first entry whose min_score is <= the deal score wins. A check of 0 means Pass. late_stage_approved_check overrides the tier lookup when --late-stage-approved is passed.",
+  "risk_capital": 0,
+  "floor": 0,
+  "annual_budget": 0,
+  "single_position_cap_pct": 0.05,
+  "cluster_cap_pct": 0.25,
+  "illiquid_ceiling_pct": 0.40,
+  "opportunity_cost_rate": 0.07,
+  "tiers": [
+    { "min_score": 44, "check": 0 },
+    { "min_score": 39, "check": 0 },
+    { "min_score": 30, "check": 0 },
+    { "min_score":  0, "check": 0 }
+  ],
+  "late_stage_approved_check": 0,
+  "min_check": 0,
+  "max_check": 0
+}

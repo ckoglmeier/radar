@@ -1,0 +1,103 @@
+#!/bin/sh
+#
+# Pre-commit hook: block sensitive investment data from being committed.
+# Checks staged files for patterns that indicate portfolio data, deal info,
+# or research documents that shouldn't be in a public repo.
+
+# Sensitive file patterns (name-based)
+BLOCKED_PATTERNS="
+*.pdf
+*.csv
+*.xlsx
+*.xls
+*research*.md
+*pipeline*.pdf
+*angellist*.json
+*deal-log*
+*.env*
+*credentials*
+*secret*
+"
+
+# Files explicitly allowed (override blocked patterns)
+ALLOWED_FILES=".env.example"
+
+# Check staged files against blocked patterns
+STAGED=$(git diff --cached --name-only --diff-filter=ACR)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+BLOCKED=""
+
+for pattern in $BLOCKED_PATTERNS; do
+  for file in $STAGED; do
+    case "$file" in
+      $pattern)
+        # Check if file is in the allow list
+        ALLOWED=false
+        for allowed in $ALLOWED_FILES; do
+          if [ "$file" = "$allowed" ]; then
+            ALLOWED=true
+            break
+          fi
+        done
+        # Synthetic test fixtures are exempt (invented companies/numbers only)
+        case "$file" in
+          src/models/test-fixtures/*|src/sync/test-fixtures/*) ALLOWED=true ;;
+        esac
+        if [ "$ALLOWED" = false ]; then
+          BLOCKED="$BLOCKED\n  $file (matched: $pattern)"
+        fi
+        ;;
+    esac
+  done
+done
+
+# Content-based checks: scan staged text files for investment data patterns
+for file in $STAGED; do
+  # Skip binary files
+  if file "$file" | grep -q "binary"; then
+    continue
+  fi
+
+  if [ -f "$file" ]; then
+    # Check for portfolio data patterns (dollar amounts with company names, TVPI/DPI values)
+    if git diff --cached -- "$file" | grep -qiE '(TVPI|DPI|IRR|valuation_cap|invested.*\$[0-9])'; then
+      # Allow code files that reference these as column names or format strings
+      case "$file" in
+        src/*|hooks/*|package*.json|README.md|CLAUDE.md|LICENSE*|pyproject.toml)
+          ;; # Skip — these are expected to reference financial terms
+        *)
+          BLOCKED="$BLOCKED\n  $file (contains investment data patterns)"
+          ;;
+      esac
+    fi
+  fi
+done
+
+if [ -n "$BLOCKED" ]; then
+  echo ""
+  echo "BLOCKED: Sensitive files detected in commit:"
+  echo "$BLOCKED"
+  echo ""
+  echo "These files may contain investment data and should not be committed."
+  echo "If this is intentional, use: git commit --no-verify"
+  echo ""
+  exit 1
+fi
+
+# --- Regression test gate ---
+# Run all test suites. Block commit if any fail.
+echo "Running test suite..."
+npm test --silent 2>&1 | tail -50
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+  echo ""
+  echo "BLOCKED: Test suite failed. Fix failing tests before committing."
+  echo ""
+  exit 1
+fi
+echo "All tests passed."
+
+exit 0

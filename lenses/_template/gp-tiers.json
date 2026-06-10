@@ -1,0 +1,31 @@
+{
+  "tiers": [
+    {
+      "tier": 1,
+      "label": "Primary deal flow, highest trust",
+      "gps": [
+        { "name": "Example Syndicate Lead", "deals": 12, "notes": "Most prolific relationship" },
+        { "name": "Another Top Fund", "deals": 8, "notes": "Consistent quality, deep domain access" }
+      ]
+    },
+    {
+      "tier": 2,
+      "label": "Consistent, proven",
+      "gps": [
+        { "name": "Example Venture Partners", "deals": 5 },
+        { "name": "Example Scout Fund", "deals": 4, "notes": "Strong network in target sectors" }
+      ]
+    },
+    {
+      "tier": 3,
+      "label": "Selective, earlier relationship",
+      "gps": [
+        { "name": "Example Angel Group", "deals": 3 },
+        { "name": "Example Micro-VC", "deals": 2 }
+      ]
+    }
+  ],
+  "direct": [
+    { "name": "Example Direct Portfolio Co", "total": 10000, "notes": "Direct invest, no syndicate" }
+  ]
+}

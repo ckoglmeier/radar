@@ -1,0 +1,28 @@
+{
+  "automatic_pass": [
+    {
+      "label": "Category you've exited or written off entirely",
+      "reason": "No more exposure desired; no new checks"
+    },
+    {
+      "label": "Applications without proprietary data or model differentiation",
+      "reason": "No structural moat — feature leads erode quickly"
+    }
+  ],
+  "structural_flags": [
+    {
+      "label": "Valuation above $200M at pre-seed or seed",
+      "impact": "lower_score",
+      "reason": "Capital efficiency math becomes challenging at high entry prices"
+    },
+    {
+      "label": "Founders without domain experience in the problem they're solving",
+      "impact": "lower_score"
+    },
+    {
+      "label": "Business models that require a policy change to work (vs. benefit from a tailwind)",
+      "impact": "lower_score"
+    }
+  ],
+  "notes": "Automatic passes are non-negotiable regardless of score. Structural flags reduce scores within the rubric but don't force a pass on their own."
+}

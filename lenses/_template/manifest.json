@@ -1,0 +1,16 @@
+{
+  "name": "my-lens",
+  "version": "0.1.0",
+  "description": "A short description of your investment thesis framework and focus areas",
+  "author": {
+    "name": "Your Name",
+    "handle": "your-handle"
+  },
+  "license": "MIT",
+  "price_tier": "free",
+  "radar_version_min": "1.0.0",
+  "thesis_count": 2,
+  "created": "YYYY-MM-DD",
+  "updated": "YYYY-MM-DD",
+  "tags": ["angel", "pre-seed", "seed"]
+}

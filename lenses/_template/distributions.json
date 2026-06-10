@@ -1,0 +1,27 @@
+{
+  "_calibration_note": "Recalibrate these distributions after each major portfolio review. Band keys must match the output of scoreToBand() in bet-sizing.js: '44+', '39-43', '30-38', '<30'. outcomes are MOIC multiples; probs must sum to 1.0. These defaults are illustrative — replace them with your actual portfolio data.",
+  "calibration_date": "YYYY-MM-DD",
+  "calibration_source": "Describe what data these are calibrated from (e.g. '30 deals reviewed, 5 mature exits')",
+  "bands": {
+    "44+": {
+      "outcomes": [0.0, 0.5, 1.0, 3.0, 10.0, 30.0, 100.0],
+      "probs":    [0.35, 0.10, 0.12, 0.13, 0.18, 0.09, 0.03],
+      "calibration_note": "Highest-conviction deals. Replace with your own data once you have 5+ mature positions in this band."
+    },
+    "39-43": {
+      "outcomes": [0.0, 0.5, 1.0, 3.0, 10.0, 30.0, 100.0],
+      "probs":    [0.40, 0.10, 0.15, 0.15, 0.13, 0.06, 0.01],
+      "calibration_note": "Strong-conviction deals. Placeholder — calibrate from your own exits."
+    },
+    "30-38": {
+      "outcomes": [0.0, 0.5, 1.0, 3.0, 10.0, 30.0],
+      "probs":    [0.20, 0.15, 0.45, 0.10, 0.08, 0.02],
+      "calibration_note": "Worth-exploring band. If this band historically underperforms, consider retiring it as an invest signal."
+    },
+    "<30": {
+      "outcomes": [0.0, 0.5, 1.0, 3.0, 10.0],
+      "probs":    [0.40, 0.20, 0.32, 0.06, 0.02],
+      "calibration_note": "Below-threshold deals. Well-calibrated in practice — confirms pass discipline."
+    }
+  }
+}

@@ -1,0 +1,5 @@
+# Radar analytics sidecar — stdlib-only, no third-party dependencies.
+[project]
+name = "radar-analytics"
+version = "1.0.0"
+requires-python = ">=3.9"

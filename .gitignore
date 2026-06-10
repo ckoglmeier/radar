@@ -1,0 +1,28 @@
+node_modules/
+.env
+.radar/
+*.pdf
+*.csv
+/reports/
+.DS_Store
+steampipe_research.md
+src/config/bet-sizing.json
+src/config/lead-prefixes.json
+README-LAUNCH.md
+
+# Private overlay: personal notes merged with CLAUDE.md locally
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Personal lenses never ship; user lenses live in ~/.radar/lenses/
+lenses/ck-*
+
+# Per-company investor updates contain real portfolio financials. Keep
+# the README in the repo; ignore company-specific subdirectories.
+updates/*/
+
+# Operational scratch directory (charts, article drafts, audit notes)
+April*/
+
+# Python bytecode cache
+src/analytics/__pycache__/

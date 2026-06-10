@@ -1,0 +1,8 @@
+{
+  "_instructions": "Copy this file to lead-prefixes.json and replace the example entries with the real GP/syndicate lead names you invest through. lead-prefixes.json is gitignored. The 'prefixes' array is used by the AngelList transaction importer to strip the syndicate lead's name from SPV strings, revealing the embedded portfolio company name (e.g. 'Example Ventures Acme Robotics SPV' → 'Acme Robotics'). Order matters: list longer/more-specific prefixes before shorter ones that share a prefix.",
+  "prefixes": [
+    "Example Ventures Access Fund",
+    "Example Ventures",
+    "Sample Syndicate Partners"
+  ]
+}

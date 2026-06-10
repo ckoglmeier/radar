@@ -1,0 +1,23 @@
+{
+  "id": "example-thesis-two",
+  "name": "Example Thesis Two: Physical World Repricing",
+  "belief": "The most durable companies in [your domain] will be the ones that make a previously uneconomic physical process economic — through engineering breakthroughs or novel deployment models. When the physics works, the moat is structural and nearly impossible to replicate with software alone.",
+  "qualifications": [
+    "Novel hardware architectures with clear unit economics targets",
+    "Robotics and autonomous systems with measurable deployment ROI",
+    "Energy and materials science with physics-based differentiation",
+    "Industrial automation with a data moat that deepens with deployment"
+  ],
+  "exclusions": [
+    "Software-only companies calling themselves deep tech",
+    "Hardware with no path to unit economics at scale",
+    "Science projects without a commercial thesis",
+    "Companies where the technology risk is solved but the market risk is total"
+  ],
+  "portfolio_examples": [
+    { "name": "Example Robotics Co", "check": 5000, "note": "autonomous systems" },
+    { "name": "Example Energy Co", "check": 5000, "note": "novel energy generation" }
+  ],
+  "conviction_signal": "Replace this with what makes you most confident a deal belongs in this thesis.",
+  "active": true
+}
