@@ -44,6 +44,8 @@ Lenses are portable and shareable — export yours with `lens export`, install s
 
 ## Quick Start
 
+> Full configuration runbook — clone to fully-configured, with verify steps per stage: **[docs/SETUP.md](docs/SETUP.md)**
+
 ### Prerequisites
 
 - Node.js v20+

@@ -67,7 +67,7 @@ for file in $STAGED; do
     if git diff --cached -- "$file" | grep -qiE '(TVPI|DPI|IRR|valuation_cap|invested.*\$[0-9])'; then
       # Allow code files that reference these as column names or format strings
       case "$file" in
-        src/*|hooks/*|package*.json|README.md|CLAUDE.md|LICENSE*|pyproject.toml)
+        src/*|hooks/*|docs/*|package*.json|README.md|CLAUDE.md|LICENSE*|pyproject.toml)
           ;; # Skip — these are expected to reference financial terms
         *)
           BLOCKED="$BLOCKED\n  $file (contains investment data patterns)"
