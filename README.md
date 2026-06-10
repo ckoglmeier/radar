@@ -8,9 +8,7 @@ I've made over 150 investments in startups and scale-ups since 2019. What starte
 
 I built Radar because no tool existed for how serious angels actually operate. I see mid-hundreds of opportunities a year and invest in roughly ten. I started in spreadsheets and scripts years ago, then — with Claude's help — built something coherent: software that tracks not just what I own, but how I decide, why I invested, and whether my reasoning holds up over time as results come in.
 
-This turned me from a spray-and-pray investor into a focused machine, constrained no longer by decision quality — only by my capital pool. And it's working. Over the last three years my TVPI and DPI have been well above top-quartile market standards.\*
-
-_\*TVPI for 2023 and 2024 cohorts: 1.94x vs ~1.2–1.5x top quartile; DPI: 0.20x vs 0.0x._
+This turned me from a spray-and-pray investor into a focused machine, constrained no longer by decision quality — only by my capital pool. And it's working.
 
 ---
 
