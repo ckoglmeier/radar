@@ -100,6 +100,7 @@ Now edit the JSON files in `lenses/my-lens/`. **[lenses/_template/README.md](../
 Activate it:
 
 ```bash
+mkdir -p .radar
 echo '{"active_lens": "my-lens"}' > .radar/config.json
 node src/cli.js lens active           # confirm
 node src/cli.js lens retag            # apply your tagging rules to imported positions
