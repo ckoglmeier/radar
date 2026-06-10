@@ -101,8 +101,9 @@ export function buildBetJson({
   cluster = 'uncategorized',
   isLateStageApproved = false,
   distributionOverride = null,
+  config = null,
 }) {
-  const cfg = loadBetSizingConfig();
+  const cfg = config || loadBetSizingConfig();
   const resolvedMinCheck = minCheck ?? cfg.min_check ?? 0;
   const resolvedMaxCheck = maxCheck ?? cfg.max_check ?? Infinity;
   const band = isLateStageApproved ? '44+' : scoreToBand(score);
@@ -185,9 +186,6 @@ export function loadBetSizingConfig() {
   try {
     return JSON.parse(readFileSync(configPath, 'utf-8'));
   } catch {
-    throw new Error(
-      'src/config/bet-sizing.json not found or unreadable. ' +
-      'Copy src/config/bet-sizing.json.example to src/config/bet-sizing.json and fill in your numbers.'
-    );
+    return {};
   }
 }
