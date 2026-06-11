@@ -1,6 +1,5 @@
 // Pretty-printers for company updates.
 import chalk from 'chalk';
-import { readFileSync, existsSync } from 'fs';
 
 function fmtMoney(n) {
   if (n == null) return '—';
@@ -87,14 +86,11 @@ export function printUpdateDetail(row, { notFoundId } = {}) {
   console.log(`  Feedback:      ${fmtFlag(row.has_feedback)}`);
   console.log(`  File:          ${chalk.dim(row.file_path)}`);
 
-  if (row.file_path && existsSync(row.file_path)) {
+  if (row.content_markdown) {
     console.log('');
     console.log(chalk.bold('  Content'));
     console.log(chalk.dim('  ' + '-'.repeat(60)));
-    const text = readFileSync(row.file_path, 'utf-8');
-    // Strip frontmatter for display
-    const body = text.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
-    for (const line of body.split('\n')) {
+    for (const line of row.content_markdown.split('\n')) {
       if (line.startsWith('## ')) console.log(chalk.cyan('  ' + line));
       else if (line.startsWith('# ')) console.log(chalk.bold('  ' + line));
       else console.log('  ' + line);

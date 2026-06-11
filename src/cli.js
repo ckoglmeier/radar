@@ -8,7 +8,7 @@ import { runSchema } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { importAngelListCSV, autoTagTheses } from './import/angellist.js';
 import { importTransactionLedger, recomputeInvestmentReturns } from './import/transactions.js';
-import { portfolioSummary, portfolioList, portfolioDetail, portfolioByStage, reconcilePortfolio } from './reports/portfolio.js';
+import { portfolioSummary, portfolioList, portfolioDetail, portfolioByStage, portfolioByStageWithBarbell, reconcilePortfolio } from './reports/portfolio.js';
 import { printPortfolioSummary, printPortfolioList, printPortfolioDetail, printReconciliation } from './cli/printers/portfolio.js';
 import { thesisPerformance, untaggedInvestments, eraAnalysis, stageBreakdown } from './reports/thesis.js';
 import { printThesisPerformance, printUntagged, printEraAnalysis, printStageBreakdown } from './cli/printers/thesis.js';

@@ -3,6 +3,7 @@
 
 import { query } from '../db/index.js';
 import { calculateIRR } from '../utils/irr.js';
+import { stageToBarbellGroup } from '../utils/stage.js';
 
 export async function portfolioSummary(opts = {}) {
   const { since, until } = opts;
@@ -152,6 +153,35 @@ export async function portfolioByStage() {
     )
   `);
   return rows;
+}
+
+/** portfolioByStage with barbell roll-up. Returns { byStage, barbell } for the printer. */
+export async function portfolioByStageWithBarbell() {
+  const rows = await portfolioByStage();
+
+  const barbellMap = {};
+  for (const r of rows) {
+    const g = stageToBarbellGroup(r.stage_bucket);
+    if (!barbellMap[g]) barbellMap[g] = { group: g, deal_count: 0, net_invested: 0, realized: 0, total_value: 0 };
+    const b = barbellMap[g];
+    b.deal_count   += Number(r.n);
+    b.net_invested += Number(r.net_invested || 0);
+    b.realized     += Number(r.realized || 0);
+    b.total_value  += Number(r.total_value || 0);
+  }
+  const barbell = ['Early', 'Mid', 'Late', 'Growth', 'Unknown']
+    .filter(g => barbellMap[g])
+    .map(g => {
+      const b = barbellMap[g];
+      return {
+        ...b,
+        dpi:  b.net_invested > 0 ? b.realized / b.net_invested : null,
+        tvpi: b.net_invested > 0 ? b.total_value / b.net_invested : null,
+      };
+    });
+
+  const byStage = rows.map(r => ({ ...r, deal_count: Number(r.n), avg_check: r.n > 0 ? Number(r.net_invested) / Number(r.n) : 0 }));
+  return { byStage, barbell };
 }
 
 export async function portfolioList(sortBy = 'invest_date', opts = {}) {
@@ -325,13 +355,20 @@ export async function portfolioDetail(companyName) {
 
   // Compute IRR per matched investment. Terminal value uses best_unrealized_value
   // (snapshot, then table, then locked→cost) so list and detail always agree.
+  // Cash flows for all matched lots are fetched in one round trip.
   const today = new Date().toISOString().slice(0, 10);
+  const cfRows2 = rows.length > 0 ? await query(
+    `SELECT investment_id, flow_date AS date, amount FROM cash_flows
+     WHERE investment_id = ANY($1) ORDER BY flow_date`,
+    [rows.map(r => r.id)]
+  ) : [];
+  const cfByInvestment = {};
+  for (const cf of cfRows2) {
+    if (!cfByInvestment[cf.investment_id]) cfByInvestment[cf.investment_id] = [];
+    cfByInvestment[cf.investment_id].push({ date: cf.date, amount: Number(cf.amount) });
+  }
   for (const r of rows) {
-    const cfRows2 = await query(
-      `SELECT flow_date AS date, amount FROM cash_flows WHERE investment_id = $1 ORDER BY flow_date`,
-      [r.id]
-    );
-    const flows = cfRows2.map(cf => ({ date: cf.date, amount: Number(cf.amount) }));
+    const flows = [...(cfByInvestment[r.id] || [])];
     const unrealized = Number(r.best_unrealized_value || 0);
     if (unrealized > 0) flows.push({ date: today, amount: unrealized });
     r.irr = flows.length >= 2 ? calculateIRR(flows) : null;

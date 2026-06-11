@@ -2,7 +2,7 @@
 // Reads deal-log markdown files from the investment-grading project and
 // imports them into the deal_evaluations table in Neon.
 
-import { readFileSync, readdirSync } from 'fs';
+import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, basename } from 'path';
 import { query } from '../db/index.js';
 import { withSyncRun } from '../db/sync-runs.js';
@@ -197,12 +197,19 @@ async function runDealLogImport(dir, opts = {}) {
   for (const file of files) {
     const filePath = join(dir, file);
     try {
+      const raw_content = readFileSync(filePath, 'utf-8');
+
       // Check if already imported
       const existing = await query(
         `SELECT id FROM deal_evaluations WHERE file_path = $1 LIMIT 1`,
         [filePath]
       );
       if (existing.length > 0) {
+        // Backfill raw_content if not yet stored
+        await query(
+          `UPDATE deal_evaluations SET raw_content = $1 WHERE id = $2 AND raw_content IS NULL`,
+          [raw_content, existing[0].id]
+        );
         results.skipped++;
         results.details.push({ file, company: null, status: 'skipped' });
         continue;
@@ -273,8 +280,8 @@ async function runDealLogImport(dir, opts = {}) {
         `INSERT INTO deal_evaluations
            (investment_id, pipeline_invite_id, eval_date, file_path, thesis_fit_score, viability_score, total_score, verdict, invested,
             council_bull_score, council_bear_score, council_calibrator_score, council_spread, council_consensus, council_divergence, council_cfo_verdict,
-            eval_mode)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+            eval_mode, raw_content)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
         [
           investment_id,
           pipeline_invite_id,
@@ -293,6 +300,7 @@ async function runDealLogImport(dir, opts = {}) {
           parsed.council_divergence,
           parsed.council_cfo_verdict,
           evalMode,
+          raw_content,
         ]
       );
 
@@ -339,6 +347,16 @@ export async function listEvaluations() {
   );
 }
 
+function resolveEvalContent(row) {
+  if (!row) return null;
+  let rawText = row.raw_content || null;
+  if (!rawText && row.file_path) {
+    try { rawText = readFileSync(row.file_path, 'utf-8'); } catch { rawText = null; }
+  }
+  row.content_markdown = rawText || null;
+  return row;
+}
+
 export async function getEvaluationByCompany(search) {
   // Try exact file_path match on company slug
   const slug = search.toLowerCase().replace(/\s+/g, '-');
@@ -350,7 +368,7 @@ export async function getEvaluationByCompany(search) {
      LIMIT 1`,
     [`%${slug}%`]
   );
-  if (byPath.length > 0) return byPath[0];
+  if (byPath.length > 0) return resolveEvalContent(byPath[0]);
 
   // Try parsing company name from file content
   const all = await listEvaluations();
@@ -361,5 +379,5 @@ export async function getEvaluationByCompany(search) {
     const nameSlug = fn.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/\.md$/, '');
     return nameSlug.includes(lower) || lower.includes(nameSlug);
   });
-  return match || null;
+  return resolveEvalContent(match || null);
 }

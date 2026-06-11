@@ -141,6 +141,8 @@ async function runUpdatesImport(dir) {
         [parsed.company_name, parsed.quarter]
       );
 
+      const raw_content = readFileSync(filePath, 'utf-8');
+
       if (existing.length > 0) {
         await query(
           `UPDATE company_updates SET
@@ -149,14 +151,16 @@ async function runUpdatesImport(dir) {
              headcount = $6, cash_on_hand = $7,
              source = $8, attachment_ref = $9, file_path = $10,
              has_review = $11, has_feedback = $12,
+             raw_content = $13,
              updated_at = NOW()
-           WHERE id = $13`,
+           WHERE id = $14`,
           [
             investment_id, parsed.update_date,
             parsed.revenue_arr, parsed.burn_rate, parsed.runway_months,
             parsed.headcount, parsed.cash_on_hand,
             parsed.source, parsed.attachment_ref, parsed.file_path,
             parsed.has_review, parsed.has_feedback,
+            raw_content,
             existing[0].id,
           ]
         );
@@ -167,14 +171,15 @@ async function runUpdatesImport(dir) {
           `INSERT INTO company_updates
              (company_name, investment_id, update_date, quarter,
               revenue_arr, burn_rate, runway_months, headcount, cash_on_hand,
-              source, attachment_ref, file_path, has_review, has_feedback)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+              source, attachment_ref, file_path, has_review, has_feedback, raw_content)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
           [
             parsed.company_name, investment_id, parsed.update_date, parsed.quarter,
             parsed.revenue_arr, parsed.burn_rate, parsed.runway_months,
             parsed.headcount, parsed.cash_on_hand,
             parsed.source, parsed.attachment_ref, parsed.file_path,
             parsed.has_review, parsed.has_feedback,
+            raw_content,
           ]
         );
         results.imported++;
@@ -221,6 +226,11 @@ export async function listUpdates({ companyName, limit = 100, missingReview = fa
   );
 }
 
+// Strip YAML frontmatter (--- ... ---) from the top of a markdown string.
+function stripFrontmatter(text) {
+  return text.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
+}
+
 export async function getUpdateById(id) {
   const rows = await query(
     `SELECT cu.*, i.invested AS inv_invested, i.status AS inv_status, i.round AS inv_round
@@ -229,7 +239,17 @@ export async function getUpdateById(id) {
      WHERE cu.id = $1 LIMIT 1`,
     [id]
   );
-  return rows[0] || null;
+  const row = rows[0];
+  if (!row) return null;
+
+  // Resolve body-only content: DB cache preferred, filesystem fallback.
+  let rawText = row.raw_content || null;
+  if (!rawText && row.file_path) {
+    try { rawText = readFileSync(row.file_path, 'utf-8'); } catch { rawText = null; }
+  }
+  row.content_markdown = rawText ? stripFrontmatter(rawText) : null;
+
+  return row;
 }
 
 export async function getUpdateTimeline(companyName) {
