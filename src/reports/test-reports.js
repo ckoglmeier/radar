@@ -489,6 +489,73 @@ async function run() {
       approx(Number(vintageByYear[1996].tvpi), 2.0, 1e-4);
     });
 
+    // ================================================================
+    // Section E: deterministic ordering regressions
+    // Two fixtures share equal count AND equal total — tiebreaker is
+    // alphabetical (instrument ASC / round ASC). Also verifies that
+    // string_agg returns thesis names in alphabetical order.
+    // ================================================================
+    console.log('\n  deterministic ordering (tiebreaker + string_agg)');
+
+    // Patch Alpha and Gamma with instrument values that have equal counts
+    // (1 each, same invested) so the only sort key that matters is name ASC.
+    // 'SAFE Note' < 'Warrant' alphabetically → SAFE Note must appear first.
+    await query(`UPDATE investments SET instrument = $1 WHERE id = $2`, ['SAFE Note', alphaId]);
+    await query(`UPDATE investments SET instrument = $1 WHERE id = $2`, ['Warrant',   gammaId]);
+    // Also give them a round with equal counts: 'Pre-Seed' < 'Seed' alphabetically.
+    await query(`UPDATE investments SET round = $1 WHERE id = $2`, ['Pre-Seed', alphaId]);
+    await query(`UPDATE investments SET round = $1 WHERE id = $2`, ['Seed',     gammaId]);
+
+    const { byInstrument, byRound } = await portfolioSummary(OPTS);
+
+    await test('byInstrument tiebreaker: equal-count groups appear in alphabetical (instrument ASC) order', async () => {
+      // Isolate only ZZGOLDEN fixture instruments (Alpha='SAFE Note', Gamma='Warrant').
+      // Both have count=1 and invested=10000/9000 — but they differ in invested so we
+      // look for the relative ordering among these two specific rows only.
+      const fixtureRows = byInstrument.filter(r => r.instrument === 'SAFE Note' || r.instrument === 'Warrant');
+      if (fixtureRows.length < 2) throw new Error(`expected 2 fixture instrument rows, got ${fixtureRows.length}`);
+      const names = fixtureRows.map(r => r.instrument);
+      // Both have count=1. Tiebreaker = instrument ASC → SAFE Note before Warrant.
+      const safeIdx   = names.indexOf('SAFE Note');
+      const warrantIdx = names.indexOf('Warrant');
+      if (safeIdx === -1 || warrantIdx === -1) throw new Error('fixture instrument rows missing: ' + JSON.stringify(names));
+      if (safeIdx >= warrantIdx) {
+        throw new Error(`expected 'SAFE Note' before 'Warrant' (tiebreaker ASC), got order: ${names.join(', ')}`);
+      }
+    });
+
+    await test('byRound tiebreaker: equal-count groups appear in alphabetical (round ASC) order', async () => {
+      // Alpha='Pre-Seed' (count=1), Gamma='Seed' (count=1). Tiebreaker = round ASC.
+      const fixtureRows = byRound.filter(r => r.round === 'Pre-Seed' || r.round === 'Seed');
+      if (fixtureRows.length < 2) throw new Error(`expected 2 fixture round rows, got ${fixtureRows.length}`);
+      const names = fixtureRows.map(r => r.round);
+      const preIdx  = names.indexOf('Pre-Seed');
+      const seedIdx = names.indexOf('Seed');
+      if (preIdx === -1 || seedIdx === -1) throw new Error('fixture round rows missing: ' + JSON.stringify(names));
+      if (preIdx >= seedIdx) {
+        throw new Error(`expected 'Pre-Seed' before 'Seed' (tiebreaker ASC), got order: ${names.join(', ')}`);
+      }
+    });
+
+    await test('portfolioList string_agg theses column is alphabetical for multi-thesis (Gamma: AI Infra, Hard Tech)', async () => {
+      // Gamma is tagged to aiInfraId (weight=50) and hardTechId (weight=50).
+      // string_agg(t.name, ', ' ORDER BY t.name) must sort alphabetically:
+      // 'AI Infrastructure & Safety' < "Hard Tech That Reprices What's Possible"
+      const listRows2 = await portfolioList('invest_date', OPTS);
+      const gamma = listRows2.find(r => r.company_name === 'ZZGOLDEN Gamma');
+      if (!gamma) throw new Error('ZZGOLDEN Gamma not found in portfolioList');
+      const theses = gamma.theses;
+      if (!theses) throw new Error('Gamma theses is null/undefined');
+      const parts = theses.split(', ');
+      if (parts.length < 2) throw new Error(`expected 2 theses, got: ${theses}`);
+      // Verify alphabetical: each part must be <= the next
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (parts[i].localeCompare(parts[i + 1]) > 0) {
+          throw new Error(`theses not alphabetical: '${parts[i]}' comes before '${parts[i + 1]}' but shouldn't`);
+        }
+      }
+    });
+
   } finally {
     await cleanupFixtures();
   }

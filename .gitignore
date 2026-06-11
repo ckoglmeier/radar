@@ -26,3 +26,6 @@ April*/
 
 # Python bytecode cache
 src/analytics/__pycache__/
+
+# PGlite test database (created by npm run test:local)
+/.radar-test-local
