@@ -124,6 +124,19 @@ export async function withTenant(connectionString, fn) {
   return tenantStorage.run(driver, fn);
 }
 
+
+/**
+ * Close embedded database instances so short-lived processes (the CLI) can
+ * exit naturally. PGlite holds the event loop open until closed; network
+ * drivers have nothing to close. Safe to call when nothing is open.
+ */
+export async function closeDb() {
+  for (const db of _pgliteInstances.values()) {
+    try { await db.close(); } catch { /* already closed */ }
+  }
+  _pgliteInstances.clear();
+}
+
 export async function query(text, params = []) {
   const driver = tenantStorage.getStore() ?? await getDefaultDriver();
   return driver.query(text, params);
