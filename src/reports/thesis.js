@@ -104,7 +104,7 @@ export async function untaggedInvestments() {
     FROM investments i
     LEFT JOIN investment_theses it ON it.investment_id = i.id
     WHERE it.investment_id IS NULL
-    ORDER BY i.invest_date DESC
+    ORDER BY i.invest_date DESC, i.company_name
   `);
   return rows;
 }

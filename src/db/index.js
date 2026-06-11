@@ -68,6 +68,23 @@ async function getDriver(connectionString) {
     return {
       async query(text, params = []) {
         const result = await db.query(text, params);
+        // Normalize DATE columns (oid 1082) to local-midnight Dates so both
+        // drivers represent date-only values identically. PGlite hands back
+        // UTC-midnight Dates; the Neon driver uses local midnight — without
+        // this, date-sensitive math (IRR) differs by the TZ offset per flow.
+        const dateCols = (result.fields || [])
+          .filter(f => f.dataTypeID === 1082)
+          .map(f => f.name);
+        if (dateCols.length > 0) {
+          for (const row of result.rows) {
+            for (const col of dateCols) {
+              const v = row[col];
+              if (v instanceof Date) {
+                row[col] = new Date(v.getUTCFullYear(), v.getUTCMonth(), v.getUTCDate());
+              }
+            }
+          }
+        }
         return result.rows;
       },
       // exec handles multi-statement DDL strings (PGlite splits on ;)

@@ -34,7 +34,7 @@ export async function gpSummary() {
       COUNT(*) FILTER (WHERE status = 'Realized') AS realized_count
     FROM inv
     GROUP BY gp_name
-    ORDER BY SUM(invested) DESC NULLS LAST
+    ORDER BY SUM(invested) DESC NULLS LAST, COALESCE(lead, 'Direct / Unknown')
   `);
 
   // Get best performer per GP (using effective multiple)
@@ -46,7 +46,7 @@ export async function gpSummary() {
     FROM investments
     WHERE COALESCE(computed_multiple, multiple) IS NOT NULL
       AND COALESCE(lead, '') NOT IN (${CROWDFUNDING_LEADS})
-    ORDER BY COALESCE(lead, 'Direct / Unknown'), COALESCE(computed_multiple, multiple) DESC
+    ORDER BY COALESCE(lead, 'Direct / Unknown'), COALESCE(computed_multiple, multiple) DESC, company_name
   `);
 
   const bestMap = {};
@@ -64,12 +64,12 @@ export async function gpDetail(gpName) {
       i.company_name, i.invest_date, i.invested, i.unrealized_value, i.realized_value,
       i.net_value, i.multiple, i.status, i.market, i.round, i.instrument,
       COALESCE(
-        (SELECT string_agg(t.name, ', ') FROM investment_theses it JOIN theses t ON t.id = it.thesis_id WHERE it.investment_id = i.id),
+        (SELECT string_agg(t.name, ', ' ORDER BY t.name) FROM investment_theses it JOIN theses t ON t.id = it.thesis_id WHERE it.investment_id = i.id),
         ''
       ) AS theses
     FROM investments i
     WHERE LOWER(COALESCE(i.lead, '')) LIKE LOWER($1)
-    ORDER BY i.invest_date DESC
+    ORDER BY i.invest_date DESC, i.company_name
   `, [`%${gpName}%`]);
 
   // Summary stats
@@ -105,7 +105,7 @@ export async function gpDetail(gpName) {
     JOIN theses t ON t.id = it.thesis_id
     WHERE LOWER(COALESCE(i.lead, '')) LIKE LOWER($1)
     GROUP BY t.name
-    ORDER BY count DESC
+    ORDER BY count DESC, thesis
   `, [`%${gpName}%`]);
 
   // Era breakdown
