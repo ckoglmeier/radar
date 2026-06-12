@@ -59,7 +59,7 @@ export async function portfolioSummary(opts = {}) {
     FROM investments
     WHERE instrument IS NOT NULL ${dateFilterAnd}
     GROUP BY instrument
-    ORDER BY count DESC
+    ORDER BY count DESC, instrument
   `, params);
 
   // By round
@@ -68,7 +68,7 @@ export async function portfolioSummary(opts = {}) {
     FROM investments
     WHERE round IS NOT NULL AND round != '' ${dateFilterAnd}
     GROUP BY round
-    ORDER BY count DESC
+    ORDER BY count DESC, round
   `, params);
 
   // By stage bucket
@@ -209,12 +209,12 @@ export async function portfolioList(sortBy = 'invest_date', opts = {}) {
       COALESCE(i.best_multiple, 1.0) AS multiple,
       i.round, i.market, i.lead,
       COALESCE(
-        (SELECT string_agg(t.name, ', ') FROM investment_theses it JOIN theses t ON t.id = it.thesis_id WHERE it.investment_id = i.id),
+        (SELECT string_agg(t.name, ', ' ORDER BY t.name) FROM investment_theses it JOIN theses t ON t.id = it.thesis_id WHERE it.investment_id = i.id),
         ''
       ) AS theses
     FROM investments_effective i
     ${dateFilter}
-    ORDER BY ${sortCol} ${dir} NULLS LAST
+    ORDER BY ${sortCol} ${dir} NULLS LAST, i.company_name ASC
   `, params);
 
   // Bulk-fetch all cash flows and compute per-investment IRR

@@ -46,7 +46,7 @@ Lenses are portable and shareable — export yours with `lens export`, install s
 
 - Node.js v20+
 - Python 3.9+ (analytics sidecar — Kelly solver, rubric validation; stdlib only, no pip installs)
-- A PostgreSQL database (built against [Neon](https://neon.tech) — free tier works)
+- A database — zero-setup local embedded database (`DATABASE_URL=file:./radar.db`) or any PostgreSQL / [Neon](https://neon.tech) connection string
 
 ### Install
 
@@ -60,7 +60,7 @@ npm run setup-hooks   # pre-commit hook: blocks sensitive files, runs the test g
 ### Configure
 
 ```bash
-cp .env.example .env                # add your Postgres connection string
+cp .env.example .env                # choose local embedded or Postgres (see .env.example)
 node src/cli.js db:setup            # run all migrations
 node src/cli.js lens init my-lens   # create your lens (see above)
 ```
@@ -159,7 +159,7 @@ node src/cli.js eval validate
 ## Tech stack
 
 - **Runtime:** Node.js (ESM), plus a Python 3 analytics sidecar called via JSON-over-stdin (Kelly solver, statistical validation — standard library only)
-- **Database:** PostgreSQL via `@neondatabase/serverless`
+- **Database:** Embedded PGlite (local, zero-setup) or PostgreSQL via `@neondatabase/serverless` (Neon / any Postgres)
 - **CLI:** `commander` + `chalk`
 - **No ORM.** Raw parameterized SQL. Intentional at this scale.
 - **Layering:** `src/reports/` returns pure data; `src/cli/printers/` formats it. A future web GUI reuses the report layer untouched.

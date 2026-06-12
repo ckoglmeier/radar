@@ -7,7 +7,7 @@ A useful mental model: **the engine is open source; your judgment is config.** E
 | What | Where | Created in |
 |------|-------|-----------|
 | Database credentials, deal-log path | `.env` | Stage 2 |
-| Your portfolio data | your Postgres database | Stage 3 |
+| Your portfolio data | your database (local or Postgres) | Stage 3 |
 | Your theses, rubric, tagging rules, GP tiers | a lens (`lenses/<name>/` or `~/.radar/lenses/<name>/`) | Stage 4 |
 | Active-lens selection | `.radar/config.json` or `~/.radar/config.json` | Stage 4 |
 | Risk capital, budget, check tiers | `src/config/bet-sizing.json` | Stage 5 |
@@ -17,7 +17,7 @@ A useful mental model: **the engine is open source; your judgment is config.** E
 
 ## Stage 1 — Prerequisites & install
 
-You need Node v20+, Python 3.9+ (standard library only — no pip installs), and a PostgreSQL database. Radar is built against [Neon](https://neon.tech); the free tier is plenty.
+You need Node v20+ and Python 3.9+ (standard library only — no pip installs). A database is required but there are two options: a zero-setup local embedded database (no account, no external service) or a hosted PostgreSQL / [Neon](https://neon.tech) connection. See Stage 2 for both paths.
 
 ```bash
 node --version     # must be >= 20
@@ -43,9 +43,15 @@ All suites should pass with no configuration at all — tests are self-contained
 
 ```bash
 cp .env.example .env
-# edit .env: set DATABASE_URL to your Postgres connection string
+# Choose one of the two DATABASE_URL options in .env:
+#   Easy/local:  DATABASE_URL=file:./radar.db       (embedded, zero external setup)
+#   Remote:      DATABASE_URL=postgresql://...       (Neon free tier or any Postgres)
 node src/cli.js db:setup
 ```
+
+**Local embedded** (`file:./radar.db`) uses PGlite — a WASM build of Postgres that persists to a local directory. No account, no network, no service to run. This is the fastest way to get started. The file is gitignored by default.
+
+**Remote** (`postgresql://...`) is the production-grade path. Neon's free tier is plenty for a personal portfolio; any Postgres connection string works.
 
 `db:setup` runs every migration in `src/db/migrations/` in order and is safe to re-run — applied migrations are tracked in a `schema_migrations` table. `db:migrate` does the same thing later, when you pull a version with new migrations.
 

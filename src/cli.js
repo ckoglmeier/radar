@@ -1164,4 +1164,8 @@ updatesCmd
     }
   });
 
-program.parse();
+await program.parseAsync(process.argv);
+// Close any embedded database so the process exits cleanly (PGlite holds
+// the event loop open otherwise). No-op for network drivers.
+const { closeDb } = await import('./db/index.js');
+await closeDb();

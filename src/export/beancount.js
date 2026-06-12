@@ -59,7 +59,7 @@ export async function exportBeancount(outputPath) {
   const investments = await query(`
     SELECT i.*,
       COALESCE(
-        (SELECT string_agg(t.name, ', ')
+        (SELECT string_agg(t.name, ', ' ORDER BY t.name)
          FROM investment_theses it JOIN theses t ON t.id = it.thesis_id
          WHERE it.investment_id = i.id),
         ''
