@@ -6,6 +6,7 @@ import { readFileSync, cpSync, mkdirSync, writeFileSync, existsSync } from 'fs';
 import { join, resolve } from 'path';
 import { runSchema } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
+import { backupDatabase } from './db/backup.js';
 import { importAngelListCSV, autoTagTheses } from './import/angellist.js';
 import { importTransactionLedger, recomputeInvestmentReturns } from './import/transactions.js';
 import { portfolioSummary, portfolioList, portfolioDetail, portfolioByStage, portfolioByStageWithBarbell, reconcilePortfolio } from './reports/portfolio.js';
@@ -54,6 +55,23 @@ program
         for (const m of result.migrations) console.log(chalk.dim(`  Applied: ${m}`));
         console.log(chalk.green(`\n  Database initialized — ${result.applied} migration(s) applied.\n`));
       }
+    } catch (err) {
+      console.error(chalk.red(`\n  Error: ${err.message}\n`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('db:backup')
+  .description('Dump all table data from the active database to a local JSON file')
+  .option('--out <dir>', 'output directory', './backups')
+  .action(async (opts) => {
+    try {
+      const result = await backupDatabase({ outDir: opts.out });
+      for (const t of result.tables) {
+        if (t.rows > 0) console.log(chalk.dim(`  ${String(t.rows).padStart(6)}  ${t.table}`));
+      }
+      console.log(chalk.green(`\n  ${result.totalRows} rows → ${result.file}\n`));
     } catch (err) {
       console.error(chalk.red(`\n  Error: ${err.message}\n`));
       process.exit(1);
