@@ -9,6 +9,7 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, resolve, dirname, sep } from 'path';
 import { fileURLToPath } from 'url';
+import { AsyncLocalStorage } from 'async_hooks';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LENSES_DIR = join(__dirname, '../../lenses');
@@ -16,6 +17,11 @@ const LENSES_DIR = join(__dirname, '../../lenses');
 // Singleton cache — loaded once per process
 let _activeLens = null;
 let _activeLensDir = null;
+
+// Per-request lens (cloud product). Mirrors withTenant in db/index.js:
+// an assembled lens object carried in AsyncLocalStorage so every accessor
+// picks it up without threading it through call sites. CLI never sets this.
+const lensStorage = new AsyncLocalStorage();
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf-8'));
@@ -125,9 +131,36 @@ function resolveActiveLensDir() {
 }
 
 /**
- * Get the active lens (cached per process).
+ * Run fn with an assembled lens active; getActiveLens() (and every accessor
+ * built on it) reads it automatically. Mirrors withTenant in db/index.js.
+ */
+export function withLens(lens, fn) {
+  return lensStorage.run(lens, fn);
+}
+
+/**
+ * Get the active lens.
+ * Resolution order:
+ *   1. AsyncLocalStorage store (per-request hydrated lens — the cloud app)
+ *   2. process singleton (CLI, cached)
+ *   3. filesystem resolution (CLI fallback)
+ *
+ * Guard: when RADAR_LENS_SOURCE === 'db' (set in the cloud app), an unhydrated
+ * call throws instead of falling back to fs/_template — sizing capital against
+ * placeholder distributions is a silent-wrong-number bug. The CLI never sets it.
  */
 export function getActiveLens() {
+  const ctx = lensStorage.getStore();
+  if (ctx) return ctx;
+
+  if (process.env.RADAR_LENS_SOURCE === 'db') {
+    throw new Error(
+      'RADAR_LENS_SOURCE=db but no lens is hydrated in this context. ' +
+      'Wrap this call in withLens(await loadCloudLens(files), fn) ' +
+      '(via withRadar in the app). Refusing to fall back to the filesystem/_template lens.'
+    );
+  }
+
   if (!_activeLens) {
     _activeLensDir = resolveActiveLensDir();
     const templateDir = join(LENSES_DIR, '_template');
