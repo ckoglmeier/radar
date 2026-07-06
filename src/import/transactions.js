@@ -170,14 +170,21 @@ function hashRow(row) {
 
 export async function importTransactionLedger(csvPath) {
   return withSyncRun('angellist:transaction-ledger', `import ${csvPath}`, async () => {
-    return runTransactionImport(csvPath);
+    const raw = readFileSync(csvPath, 'utf-8');
+    const rows = parse(raw, { columns: true, skip_empty_lines: true, trim: true });
+    return runTransactionImportRows(rows, { source: 'angellist_ledger' });
   });
 }
 
-async function runTransactionImport(csvPath) {
-  const raw = readFileSync(csvPath, 'utf-8');
-  const rows = parse(raw, { columns: true, skip_empty_lines: true, trim: true });
+export async function importTransactionRows(rows, options = {}) {
+  const source = options.source || 'angellist_ledger';
+  return withSyncRun('angellist:transaction-ledger', `import ${source}`, async () => {
+    return runTransactionImportRows(rows, { source });
+  });
+}
 
+async function runTransactionImportRows(rows, options = {}) {
+  const source = options.source || 'angellist_ledger';
   const results = {
     total: rows.length,
     inserted: 0,
@@ -230,7 +237,7 @@ async function runTransactionImport(csvPath) {
         description,
         company_raw: company,
         spv_raw: spv,
-        source: 'angellist_ledger',
+        source,
         external_hash,
       });
 

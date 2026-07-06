@@ -149,11 +149,70 @@ export async function upsertInvestment(fields) {
  * ON CONFLICT DO NOTHING — safe to call multiple times per day.
  */
 export async function createValuationSnapshot(investmentId, values) {
+  const source = values.source || 'angellist_import';
   await query(`
     INSERT INTO valuations (investment_id, snapshot_date, unrealized_value, realized_value, net_value, multiple, source)
-    VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, 'angellist_import')
+    VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6)
     ON CONFLICT (investment_id, snapshot_date) DO NOTHING
-  `, [investmentId, values.unrealized_value, values.realized_value, values.net_value, values.multiple]);
+  `, [investmentId, values.unrealized_value, values.realized_value, values.net_value, values.multiple, source]);
+}
+
+export async function addPositionManual(fields) {
+  const result = await upsertInvestment({
+    ...fields,
+    source: 'manual',
+  });
+
+  await createValuationSnapshot(result.id, {
+    unrealized_value: fields.unrealized_value,
+    realized_value: fields.realized_value,
+    net_value: fields.net_value,
+    multiple: fields.multiple,
+    source: 'manual_position',
+  });
+
+  return result;
+}
+
+export async function tagInvestment(investmentId, thesisId, options = {}) {
+  const {
+    isPrimary = false,
+    confidence = 'manual',
+    taggedBy = 'manual',
+    weight = 100,
+  } = options;
+
+  const rows = await query(`
+    INSERT INTO investment_theses (investment_id, thesis_id, is_primary, confidence, tagged_by, weight)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT DO NOTHING
+    RETURNING investment_id, thesis_id, is_primary, confidence, tagged_by, weight
+  `, [investmentId, thesisId, isPrimary, confidence, taggedBy, weight]);
+
+  return rows[0] || null;
+}
+
+export async function untagInvestment(investmentId, thesisId) {
+  const rows = await query(`
+    DELETE FROM investment_theses
+    WHERE investment_id = $1 AND thesis_id = $2
+    RETURNING investment_id, thesis_id
+  `, [investmentId, thesisId]);
+
+  return rows[0] || null;
+}
+
+export async function setConviction(investmentId, { now, entry }) {
+  const rows = await query(`
+    UPDATE investments
+    SET conviction_now = $2,
+        conviction_entry = $3,
+        updated_at = NOW()
+    WHERE id = $1
+    RETURNING id, conviction_now, conviction_entry
+  `, [investmentId, now ?? null, entry ?? null]);
+
+  return rows[0] || null;
 }
 
 const TRACKED_FIELDS = [

@@ -7,7 +7,15 @@
 // Run: node src/models/test-investments.js
 
 import { query } from '../db/index.js';
-import { upsertInvestment, createValuationSnapshot } from './investments.js';
+import { portfolioList } from '../reports/portfolio.js';
+import {
+  upsertInvestment,
+  createValuationSnapshot,
+  addPositionManual,
+  tagInvestment,
+  untagInvestment,
+  setConviction,
+} from './investments.js';
 
 let passed = 0;
 let failed = 0;
@@ -179,6 +187,122 @@ async function run() {
         [id]
       );
       eq(rows[0].n, 1, 'second insert should be a no-op due to unique constraint');
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('addPositionManual creates an investment row, manual snapshot, and list entry', async () => {
+    const company = `Test Manual Position ${stamp}-5`;
+    try {
+      const added = await addPositionManual({
+        ...BASE_FIELDS,
+        status: 'Live',
+        company_name: company,
+        invest_date: '2026-02-03',
+        invested: 12000,
+        unrealized_value: 15000,
+        realized_value: 1000,
+        net_value: 16000,
+        multiple: 1.333333,
+      });
+
+      const rows = await query(
+        `SELECT source, invested, net_value FROM investments WHERE id = $1`,
+        [added.id]
+      );
+      eq(rows.length, 1, 'manual add should create one investment row');
+      eq(rows[0].source, 'manual', 'manual add should stamp investment source');
+      eq(Number(rows[0].invested), 12000, 'invested should round-trip');
+      eq(Number(rows[0].net_value), 16000, 'net value should round-trip');
+
+      const snapshots = await query(
+        `SELECT source, net_value FROM valuations WHERE investment_id = $1 AND snapshot_date = CURRENT_DATE`,
+        [added.id]
+      );
+      eq(snapshots.length, 1, 'manual add should create one valuation snapshot');
+      eq(snapshots[0].source, 'manual_position', 'manual snapshot should use manual source');
+      eq(Number(snapshots[0].net_value), 16000, 'snapshot net value should round-trip');
+
+      const listed = await portfolioList('company_name', {
+        since: '2026-02-03',
+        until: '2026-02-03',
+      });
+      const row = listed.find(r => r.id === added.id);
+      if (!row) throw new Error('manual add should appear in portfolioList');
+      eq(row.company_name, company, 'portfolio list company');
+      eq(Number(row.net_value), 16000, 'portfolio list net value');
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('tagInvestment and untagInvestment round-trip thesis links', async () => {
+    const company = `Test Thesis Tag ${stamp}-6`;
+    try {
+      const { id } = await upsertInvestment({
+        ...BASE_FIELDS,
+        status: 'Live',
+        company_name: company,
+        invest_date: '2026-02-04',
+      });
+      const theses = await query(`SELECT id FROM theses ORDER BY id LIMIT 1`);
+      if (theses.length === 0) throw new Error('expected at least one thesis');
+
+      const tagged = await tagInvestment(id, theses[0].id, {
+        isPrimary: true,
+        confidence: 'manual',
+        taggedBy: 'test',
+        weight: 75,
+      });
+      if (!tagged) throw new Error('tagInvestment should insert a row');
+
+      const links = await query(
+        `SELECT is_primary, confidence, tagged_by, weight
+         FROM investment_theses
+         WHERE investment_id = $1 AND thesis_id = $2`,
+        [id, theses[0].id]
+      );
+      eq(links.length, 1, 'expected thesis link to exist');
+      eq(links[0].is_primary, true, 'is_primary should round-trip');
+      eq(links[0].confidence, 'manual', 'confidence should round-trip');
+      eq(links[0].tagged_by, 'test', 'tagged_by should round-trip');
+      eq(Number(links[0].weight), 75, 'weight should round-trip');
+
+      const removed = await untagInvestment(id, theses[0].id);
+      if (!removed) throw new Error('untagInvestment should delete the row');
+
+      const after = await query(
+        `SELECT COUNT(*)::int AS n FROM investment_theses WHERE investment_id = $1 AND thesis_id = $2`,
+        [id, theses[0].id]
+      );
+      eq(after[0].n, 0, 'thesis link should be removed');
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('setConviction updates conviction_now and conviction_entry', async () => {
+    const company = `Test Conviction ${stamp}-7`;
+    try {
+      const { id } = await upsertInvestment({
+        ...BASE_FIELDS,
+        status: 'Live',
+        company_name: company,
+        invest_date: '2026-02-05',
+      });
+
+      const updated = await setConviction(id, { now: 4.5, entry: 3.5 });
+      if (!updated) throw new Error('setConviction should update the investment');
+      eq(Number(updated.conviction_now), 4.5, 'conviction_now should round-trip');
+      eq(Number(updated.conviction_entry), 3.5, 'conviction_entry should round-trip');
+
+      const rows = await query(
+        `SELECT conviction_now, conviction_entry FROM investments WHERE id = $1`,
+        [id]
+      );
+      eq(Number(rows[0].conviction_now), 4.5, 'stored conviction_now');
+      eq(Number(rows[0].conviction_entry), 3.5, 'stored conviction_entry');
     } finally {
       await cleanupCompany(company);
     }

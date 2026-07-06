@@ -4,7 +4,13 @@ import { query } from '../db/index.js';
 import { withSyncRun } from '../db/sync-runs.js';
 import { parseMoney, parseDate, parsePercent, parseMultiple } from '../utils/format.js';
 import { roundToStageBucket } from '../utils/stage.js';
-import { upsertInvestment, createValuationSnapshot, snapshotInvestment, detectAndLogChanges } from '../models/investments.js';
+import {
+  upsertInvestment,
+  createValuationSnapshot,
+  snapshotInvestment,
+  detectAndLogChanges,
+  tagInvestment,
+} from '../models/investments.js';
 import { getTaggingRules } from '../lenses/loader.js';
 
 export function autoTagTheses(companyName, market) {
@@ -133,11 +139,12 @@ async function runAngelListImport(filePath) {
         const thesisId = thesisMap[thesisMatches[i]];
         if (thesisId) {
           const weight = baseWeight + (i < remainder ? 1 : 0);
-          await query(`
-            INSERT INTO investment_theses (investment_id, thesis_id, is_primary, confidence, tagged_by, weight)
-            VALUES ($1, $2, $3, 'auto', 'system', $4)
-            ON CONFLICT DO NOTHING
-          `, [investmentId, thesisId, i === 0, weight]);
+          await tagInvestment(investmentId, thesisId, {
+            isPrimary: i === 0,
+            confidence: 'auto',
+            taggedBy: 'system',
+            weight,
+          });
           tagged++;
         }
       }
