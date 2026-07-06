@@ -34,7 +34,7 @@ export async function gpSummary() {
       COUNT(*) FILTER (WHERE status = 'Realized') AS realized_count
     FROM inv
     GROUP BY gp_name
-    ORDER BY SUM(invested) DESC NULLS LAST, COALESCE(lead, 'Direct / Unknown')
+    ORDER BY SUM(invested) DESC NULLS LAST, gp_name
   `);
 
   // Get best performer per GP (using effective multiple)
