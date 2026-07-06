@@ -208,11 +208,13 @@ export async function portfolioList(sortBy = 'invest_date', opts = {}) {
       COALESCE(i.best_total_value, i.invested) AS net_value,
       COALESCE(i.best_multiple, 1.0) AS multiple,
       i.round, i.market, i.lead,
+      raw.conviction_now, raw.conviction_entry, raw.qsbs_eligible,
       COALESCE(
         (SELECT string_agg(t.name, ', ' ORDER BY t.name) FROM investment_theses it JOIN theses t ON t.id = it.thesis_id WHERE it.investment_id = i.id),
         ''
       ) AS theses
     FROM investments_effective i
+    JOIN investments raw ON raw.id = i.id
     ${dateFilter}
     ORDER BY ${sortCol} ${dir} NULLS LAST, i.company_name ASC
   `, params);
