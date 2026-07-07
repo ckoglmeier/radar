@@ -47,6 +47,7 @@ const EMPTY_FILES = {
 const SLUGS = ['tw-alpha', 'tw-beta', 'tw-gamma', 'tw-renamed', 'tw-new-thesis'];
 
 async function cleanup() {
+  await query(`DELETE FROM lens_config WHERE id = 1`);
   const rows = await query(
     `SELECT id FROM theses WHERE lens_thesis_id = ANY($1::text[]) OR name LIKE 'TW %' OR name LIKE 'TW:%'`,
     [SLUGS]
@@ -81,6 +82,14 @@ async function run() {
     });
 
     await test('save → fresh hydration reflects the new thesis', async () => {
+      // loadCloudLens now guards against an unseeded lens (empty theses OR
+      // missing distributions), so seed a minimal distributions row before
+      // hydrating. This test only cares about the thesis rows coming back.
+      await query(
+        `INSERT INTO lens_config (id, distributions) VALUES (1, $1::jsonb)
+         ON CONFLICT (id) DO UPDATE SET distributions = EXCLUDED.distributions`,
+        [JSON.stringify({ bands: {} })]
+      );
       const lens = await loadCloudLens(EMPTY_FILES);
       const t = lens.theses.find(x => x.id === 'tw-new-thesis');
       eq(t !== undefined, true, 'thesis present in assembled lens');

@@ -195,6 +195,51 @@ async function run() {
       deepEq(results, ['A', 'B'], 'each context saw its own lens');
     });
 
+    await test('loadCloudLens throws on an unseeded DB (zero theses)', async () => {
+      // Empty-lens guard: an empty-but-hydrated lens must fail loudly, not feed
+      // empty distributions to the Kelly solver. Clear the tables, expect a throw.
+      await query(`DELETE FROM lens_config WHERE id = 1`);
+      await query(`DELETE FROM investment_theses`);
+      await query(`DELETE FROM theses`);
+      let threw = false;
+      let msg = '';
+      try {
+        await loadCloudLens(templateFiles());
+      } catch (e) {
+        threw = true;
+        msg = e.message;
+      }
+      eq(threw, true, 'loadCloudLens threw on unseeded DB');
+      eq(/zero rows/.test(msg), true, `error names the empty-theses cause (got: ${msg})`);
+      // Re-seed so subsequent tests see the seeded state.
+      await seedTemplateRows();
+    });
+
+    await test('loadCloudLens throws when distributions are missing (theses present)', async () => {
+      // Second door to the same wrong-numbers class: theses seeded but no
+      // lens_config row. Must also fail loudly.
+      await query(`DELETE FROM lens_config WHERE id = 1`);
+      let threw = false;
+      let msg = '';
+      try {
+        await loadCloudLens(templateFiles());
+      } catch (e) {
+        threw = true;
+        msg = e.message;
+      }
+      eq(threw, true, 'loadCloudLens threw when distributions missing');
+      eq(/distributions/.test(msg), true, `error names the missing-distributions cause (got: ${msg})`);
+      await seedTemplateRows();
+    });
+
+    await test('loadCloudLens succeeds on a seeded DB', async () => {
+      // The positive: with template rows + distributions seeded, no throw and
+      // the assembled lens carries real distributions.
+      const cloud = await loadCloudLens(templateFiles());
+      eq(cloud.theses.length > 0, true, 'assembled lens has theses');
+      eq(cloud.distributions != null, true, 'assembled lens has distributions');
+    });
+
     await test('guard throws when RADAR_LENS_SOURCE=db and unhydrated', async () => {
       const prev = process.env.RADAR_LENS_SOURCE;
       process.env.RADAR_LENS_SOURCE = 'db';

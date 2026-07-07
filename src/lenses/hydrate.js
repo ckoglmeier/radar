@@ -77,5 +77,27 @@ export async function loadCloudLens(files) {
   const configRows = await query(`SELECT distributions FROM lens_config WHERE id = 1`);
   const distributions = configRows.length > 0 ? configRows[0].distributions : null;
 
+  // Empty-lens guard. An empty-but-hydrated lens (unseeded or wrong DB) must
+  // fail loudly here — otherwise it sails past the RADAR_LENS_SOURCE=db check
+  // in getActiveLens() (a hydrated lens IS present in ALS) and feeds empty
+  // theses / null distributions to the Kelly solver, producing silent wrong
+  // numbers — the exact failure the guard exists to prevent.
+  // See RADAR_CLOUD_LENS_ARCHITECTURE.md §9 risk 1 and REVIEW-FINDINGS P0.2(b).
+  if (!theses || theses.length === 0) {
+    throw new Error(
+      'loadCloudLens: theses table returned zero rows. The lens is not seeded ' +
+      '(or DATABASE_URL points at the wrong database). Run src/db/seed-lens.js. ' +
+      'Refusing to hydrate an empty lens.'
+    );
+  }
+  if (distributions == null) {
+    throw new Error(
+      'loadCloudLens: lens_config.distributions is missing (no row id=1, or a ' +
+      'null value). The lens is not seeded (or DATABASE_URL points at the wrong ' +
+      'database). Run src/db/seed-lens.js. Refusing to size capital against ' +
+      'empty distributions.'
+    );
+  }
+
   return assembleLens({ files, theses, distributions });
 }

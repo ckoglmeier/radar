@@ -14,7 +14,7 @@ import os from 'os';
 import {
   getActiveLens, getTaggingRules, getDistributions,
   getThesisClusters, getRoundParams, getActiveThesisNames,
-  getRubric, getGpTiers, getKillCriteria, resetLensCache,
+  getRubric, getGpTiers, getKillCriteria, resetLensCache, withLens,
 } from './loader.js';
 import { runAnalytics } from '../utils/analytics.js';
 
@@ -555,6 +555,36 @@ try {
   const kc = getKillCriteria();
   assert(kc.automatic_pass.length === 4, 'kill criteria has 4 automatic passes');
   assert(kc.structural_flags.length === 4, 'kill criteria has 4 structural flags');
+
+  // 12. Guard-ordering: RADAR_LENS_SOURCE=db guard sits ABOVE the singleton cache.
+  // The whole suite above has already warmed the module singleton (_activeLens)
+  // via the filesystem path (getActiveLens() at test 1). Now flip the flag on.
+  // The guard must still throw for an unhydrated (ALS-empty) call — proving it is
+  // checked before the cached _activeLens short-circuit. If a future refactor
+  // reorders "return the cache first," this test fails. (loader.js:156-162)
+  console.log('\n  Guard ordering (db flag beats warm cache)\n');
+  {
+    const prev = process.env.RADAR_LENS_SOURCE;
+    process.env.RADAR_LENS_SOURCE = 'db';
+    try {
+      let threw = false;
+      try {
+        getActiveLens(); // ALS empty, but _activeLens is warm from test 1
+      } catch (e) {
+        threw = /RADAR_LENS_SOURCE/.test(e.message);
+      }
+      assert(threw, 'warm singleton + db flag + no ALS → getActiveLens() throws');
+
+      // And a hydrated (ALS-present) call under the same flag does NOT throw,
+      // returning the request lens rather than the warm singleton.
+      const hydrated = { manifest: { name: 'hydrated-under-flag' } };
+      const got = withLens(hydrated, () => getActiveLens());
+      assert(got === hydrated, 'hydrated call under db flag returns the ALS lens');
+    } finally {
+      if (prev === undefined) delete process.env.RADAR_LENS_SOURCE;
+      else process.env.RADAR_LENS_SOURCE = prev;
+    }
+  }
 
 } finally {
   // Restore cwd, clear cache, remove temp dir — leave no trace.
