@@ -40,6 +40,11 @@
  * @property {string[]} [tools]
  *   Built-in tool names to allow (e.g. ['WebSearch', 'Write']). Empty array
  *   disables built-in tools. Optional.
+ * @property {Object<string, {description: string, prompt: string, model?: string, tools?: string[], skills?: string[], maxTurns?: number}>} [agents]
+ *   Subagent definitions (SDK `options.agents`, a Record keyed by agent name).
+ *   The council personas ride here — each with its own `model` alias, which is
+ *   how per-persona tiering (Bull/Bear/CFO=sonnet, Calibrator=opus, research=
+ *   haiku) is expressed. Optional.
  * @property {number} [maxTurns]
  *   Upper bound on assistant turns before the session is forced to stop.
  * @property {AbortSignal} [signal]

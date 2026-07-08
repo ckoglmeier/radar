@@ -167,32 +167,67 @@ to the actual deal — these are registers, not templates):
 ## Output — write the deal log
 
 Write the full diagnosis to `deal-log/YYYY-MM-DD-company-name.md` (create the
-`deal-log/` directory if absent; slugify the company name). The file is the
-permanent record and the structured source the engine ingests, so keep the
-canonical section order:
+`deal-log/` directory if absent; slugify the company name; use today's date).
+The file is the permanent record AND the structured source the engine parses, so
+the exact markers below are load-bearing — the parser keys on them. Emit the
+sections in this order:
 
-1. Parsed fields table
-2. Team Dossier + Company Context
-3. Kill-criteria / thesis-match result
-4. Scoring — the calibrated dimension scores and total (Thesis Fit /25 +
-   Viability /25 = /50), then the **Council Evaluation** section:
+    # Deal Log: <Company Name>
 
-   ```
-   ## Council Evaluation
+    **Date:** YYYY-MM-DD · headless council run · calibration: <maturity>
 
-   | Voice | Score | Key argument |
-   |---|---|---|
-   | Bull | NN/50 | ... |
-   | Bear | NN/50 | ... |
-   | Calibrator | NN/50 | ... |
-   | CFO | — | Deploy/Defer/Pass — <tier + one-line reason> |
-   ```
+    <parsed fields table>
 
-   (Do not compute consensus / spread / divergence yourself — the engine derives
-   those deterministically from these four rows.)
-5. What Would Change This Analysis (up / down / net)
-6. Key questions to resolve before increasing conviction
-7. The verdict band and the draft response (email + LinkedIn), clearly labeled
+    ## Team Dossier
+    <one paragraph per person>
+    ## Company Context
+    <one paragraph>
 
-Record provenance at the top: the date, that this is a headless council run, and
-the calibration `maturity`. Do not write any score into the outbound response.
+    ## Gates
+    Kill criteria: <none triggered | which one fired>
+    Primary thesis: <thesis name | none — note prominently>
+
+    ## Thesis Fit
+    - <dimension>: N/5 — <one line>   (one bullet per rubric Thesis Fit dimension)
+    - **Thesis Fit subtotal: NN/25**
+
+    ## Viability
+    - <dimension>: N/5 — <one line>   (one bullet per rubric Viability dimension)
+    - **Viability subtotal: NN/25**
+
+    ## Total: NN/50
+    ## Verdict: <band name from the injected verdictBands>
+
+    ## Council Evaluation
+
+    | Voice | Score | Key argument |
+    |---|---|---|
+    | Bull | NN/50 | ... |
+    | Bear | NN/50 | ... |
+    | Calibrator | NN/50 | ... |
+    | CFO | — | Deploy/Defer/Pass — <tier + one-line reason> |
+
+    ## What Would Change This Analysis
+    ### Moves this up
+    - ...
+    ### Moves this down
+    - ...
+    ### Net assessment
+    <one sentence>
+
+    ## Key Questions
+    - ...
+
+    ## Draft Response
+    **Email:** <3–5 lines, Radar's voice>
+    **LinkedIn:** <2–3 lines, Radar's voice>
+
+Rules that keep the record parseable and honest:
+- The **Total** is the Calibrator's canonical score; the **Verdict** is the band
+  that score falls into per the injected `verdictBands`.
+- Do **not** compute consensus / spread / divergence yourself — the engine
+  derives those deterministically from the four Council Evaluation rows.
+- The **Draft Response** never contains a score, a rubric term, or any hint of
+  the grading system.
+- If a kill criterion fired, skip the scoring sections and record only the gate
+  result + a bottom-band pass response.
