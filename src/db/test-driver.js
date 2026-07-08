@@ -9,6 +9,12 @@ import path from 'path';
 import { execSync } from 'child_process';
 import { rmSync, mkdirSync } from 'fs';
 import { withTenant, query, closeDb, exec, runSchema } from './index.js';
+import { fileURLToPath, pathToFileURL } from 'url';
+
+// Absolute file: URL to db/index.js, so a child spawned from ANY cwd can import
+// it. (Interpolating a cwd-relative './src/db/index.js' only resolved from the
+// repo root and silently failed elsewhere.)
+const INDEX_URL = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), 'index.js')).href;
 
 let passed = 0;
 let failed = 0;
@@ -141,12 +147,12 @@ await test('closeDb(): a spawned child process with DATABASE_URL=file:... exits 
   const exitedClean = (() => {
     try {
       execSync(
-        `node -e "import('./src/db/index.js').then(async m => { await m.withTenant('${url}', async () => { await m.query('SELECT 1'); }); await m.closeDb(); })"`,
+        `node -e "import(process.env.RADAR_INDEX_URL).then(async m => { await m.withTenant(process.env.DATABASE_URL, async () => { await m.query('SELECT 1'); }); await m.closeDb(); })"`,
         {
-          cwd: '/Users/ck/radar-local-data',
+          cwd: os.tmpdir(), // exists on every platform; the import uses an absolute URL
           timeout: 30000,
           stdio: 'pipe',
-          env: { ...process.env, DATABASE_URL: url },
+          env: { ...process.env, DATABASE_URL: url, RADAR_INDEX_URL: INDEX_URL },
         }
       );
       return true;
