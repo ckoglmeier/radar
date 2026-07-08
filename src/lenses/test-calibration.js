@@ -112,19 +112,16 @@ async function run() {
       // (e.g. a personal lens with different band names/counts).
       const rubric = getRubric();
       const sortedBands = [...rubric.verdict_bands].sort((a, b) => b.range[0] - a.range[0]);
-      const expectedThresholds = {
-        strong: sortedBands[0]?.range[0],
-        exploring: sortedBands[1]?.range[0],
-        likely_pass: sortedBands[2]?.range[0],
-      };
+      const expectedInvestLine = sortedBands[0]?.range[0];
 
       if (cal.dealsScored === 0) {
         eq(cal.maturity, 'default');
         eq(cal.confidence, 0);
         eq(cal.examples.length, 0);
-        eq(cal.thresholds.strong, expectedThresholds.strong);
-        eq(cal.thresholds.exploring, expectedThresholds.exploring);
-        eq(cal.thresholds.likely_pass, expectedThresholds.likely_pass);
+        eq(cal.thresholds.investLine, expectedInvestLine);
+        eq(cal.thresholds.revealedInvestLine, null);
+        // Full band set preserved — no band dropped whatever the lens band count.
+        eq(cal.thresholds.verdictBands.length, rubric.verdict_bands.length);
         ok(cal.note.toLowerCase().includes('no scored deals'), 'note should say no scored deals');
         ok(Object.keys(cal.dimensionWeights).length > 0, 'dimensionWeights should carry rubric defaults');
       } else {
@@ -181,17 +178,16 @@ async function run() {
 
       const rubric = getRubric();
       const sortedBands = [...rubric.verdict_bands].sort((a, b) => b.range[0] - a.range[0]);
-      const defaultExploring = sortedBands[1]?.range[0];
-      // Revealed boundary from the 44-invested / 24-passed pair is the
-      // midpoint = 34. The blended threshold = default*(1-w) + 34*w must sit
-      // strictly between the default and 34 (since 0 < w < 1 with other
-      // deals in the DB) — neither pure-default nor pure-observed.
-      const revealed = 34;
-      const lo = Math.min(defaultExploring, revealed);
-      const hi = Math.max(defaultExploring, revealed);
-      ok(cal.thresholds.exploring !== defaultExploring, 'blended threshold should move off pure default');
-      ok(cal.thresholds.exploring > lo - 0.01 && cal.thresholds.exploring < hi + 0.01,
-        `blended threshold ${cal.thresholds.exploring} should sit between default ${defaultExploring} and revealed ${revealed}`);
+      const defaultInvestLine = sortedBands[0]?.range[0];
+      // Revealed invest line from the 44-invested / 24-passed class means is the
+      // midpoint = 34, below the default invest line. Only the invest line
+      // personalizes: it must sit strictly between the revealed boundary and the
+      // default (0 < w < 1). The lower bands and the full verdict_bands are untouched.
+      ok(cal.thresholds.investLine !== defaultInvestLine, 'blended invest line should move off pure default');
+      ok(cal.thresholds.investLine < defaultInvestLine, 'blended invest line should move down toward the revealed boundary');
+      ok(cal.thresholds.investLine > cal.thresholds.revealedInvestLine - 0.01,
+        `blended invest line ${cal.thresholds.investLine} should not overshoot the revealed boundary ${cal.thresholds.revealedInvestLine}`);
+      eq(cal.thresholds.verdictBands.length, rubric.verdict_bands.length);
 
       ok(cal.examples.length > 0, 'examples should be non-empty once deals exist');
       const roles = cal.examples.map(e => e.role);

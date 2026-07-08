@@ -36,19 +36,20 @@ const PARTIAL_AT = 1;   // any real signal at all moves off pure "default"
 const PERSONAL_AT = 30; // w = 30/(30+15) = 0.67 — clearly personal, not a cliff
 
 /**
- * Default verdict thresholds, read from the active lens rubric's verdict_bands.
- * Shape: { strong: 40, exploring: 30, likely_pass: 20 } — the score at/above
- * which each band starts. (< likely_pass is "clear pass".)
+ * Default verdict bands + the invest line, from the active lens rubric.
+ *
+ * Returns the FULL verdict_bands (however many the lens defines — the _template
+ * has 4, CK's ck-conviction-era lens has 3) so no band is ever dropped, plus
+ * `investLine` = the floor of the top (highest) band. The invest line is the one
+ * boundary that invest-vs-pass data can personalize; the rest are response
+ * archetypes the invest/pass signal says nothing about, so they pass through
+ * untouched. (Reducing to a fixed set of named keys would both drop bands beyond
+ * the third and, for a lens whose bottom band floors at 0, let that floor drift
+ * up into a nonsensical gap.)
  */
-function defaultThresholds(rubric) {
-  const bands = rubric?.verdict_bands || [];
-  // verdict_bands are ordered high-to-low in the template; sort defensively.
-  const sorted = [...bands].sort((a, b) => b.range[0] - a.range[0]);
-  return {
-    strong: sorted[0]?.range[0] ?? 40,
-    exploring: sorted[1]?.range[0] ?? 30,
-    likely_pass: sorted[2]?.range[0] ?? 20,
-  };
+function defaultBands(rubric) {
+  const bands = [...(rubric?.verdict_bands || [])].sort((a, b) => b.range[0] - a.range[0]);
+  return { bands, investLine: bands[0]?.range[0] ?? 40 };
 }
 
 /**
@@ -129,29 +130,25 @@ function companyFromFilePath(filePath) {
 }
 
 /**
- * Estimate the user's revealed yes/no threshold from scored deals: the score
- * that best separates "invested" from "explicitly passed" decisions. This is
- * the same divergence evalReconcile() surfaces (scored high but passed) —
- * here we use it to locate a boundary rather than just list the outliers.
+ * Estimate the user's revealed invest line from scored deals: the score at which
+ * invest/pass separates. Same divergence evalReconcile() surfaces (scored high
+ * but passed), used here to locate the boundary rather than list the outliers.
  *
- * Method: take the lowest score among invested deals and the highest score
- * among passed deals. If passed deals score *below* invested deals (the
- * expected case), the revealed threshold is the midpoint between them. If
- * they overlap (CK passed on something that scored as high as something he
- * funded), there's no clean separating line — fall back to null and let the
- * caller keep the default threshold for that band.
+ * Method: the midpoint of the mean invested score and the mean explicitly-passed
+ * score — the Bayes decision boundary for two equal-variance classes. Class means
+ * (not min/max margins) stay robust: one oddly-scored deal nudges the estimate
+ * instead of voiding it (min/max returns null on any overlap, which is common in
+ * real angel data). Null unless both classes are present, in which case the
+ * default line is kept.
  */
-function estimateRevealedThreshold(deals) {
+function estimateRevealedInvestLine(deals) {
   const investedScores = deals.filter(d => d.invested).map(d => d.total_score);
   const passedScores = deals.filter(d => d.passed && !d.invested).map(d => d.total_score);
 
   if (investedScores.length === 0 || passedScores.length === 0) return null;
 
-  const minInvested = Math.min(...investedScores);
-  const maxPassed = Math.max(...passedScores);
-
-  if (maxPassed >= minInvested) return null; // overlapping — no clean boundary
-  return (minInvested + maxPassed) / 2;
+  const mean = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
+  return (mean(investedScores) + mean(passedScores)) / 2;
 }
 
 /**
@@ -198,15 +195,16 @@ function pickExamples(deals, thresholdForBorderline) {
  *   confidence        shrinkage weight w = N/(N+k), 0 at cold start
  *   dealsScored       N — count of deal_evaluations rows with a total_score
  *   examples          [] at cold start; up to 3 real rows (invested/passed/borderline) after
- *   thresholds        { strong, exploring, likely_pass } — shrinkage-blended toward the
- *                      revealed yes/no boundary as deals accumulate
+ *   thresholds        { verdictBands (full, unmodified), investLine (shrinkage-blended
+ *                      toward the revealed invest boundary), defaultInvestLine,
+ *                      revealedInvestLine } — only the invest line personalizes
  *   dimensionWeights  lens rubric defaults (v1 — see reweightDimensions() seam above)
  *   note              human-readable maturity/trust indicator for the skill's
  *                      old "tuned to general criteria" line
  */
 export async function getCalibration() {
   const rubric = getRubric();
-  const defaultTh = defaultThresholds(rubric);
+  const defaultB = defaultBands(rubric);
   const defaultWeights = reweightDimensions(defaultDimensionWeights(rubric));
 
   const deals = await fetchScoredDeals();
@@ -219,20 +217,30 @@ export async function getCalibration() {
       confidence: 0,
       dealsScored: 0,
       examples: [],
-      thresholds: defaultTh,
+      thresholds: {
+        verdictBands: defaultB.bands,
+        investLine: defaultB.investLine,
+        defaultInvestLine: defaultB.investLine,
+        revealedInvestLine: null,
+      },
       dimensionWeights: defaultWeights,
       note: 'No scored deals yet — scoring from generic rubric anchors, not tuned to your judgment.',
     };
   }
 
-  const revealed = estimateRevealedThreshold(deals);
+  // Only the invest line (the top band's floor) is personalized — that is the one
+  // boundary invest-vs-pass data reveals. The full verdict_bands pass through
+  // unchanged, so no band is dropped and no lower floor drifts into a gap.
+  const revealedInvestLine = estimateRevealedInvestLine(deals);
+  const investLine = blendThreshold(defaultB.investLine, revealedInvestLine, w);
   const thresholds = {
-    strong: blendThreshold(defaultTh.strong, revealed, w),
-    exploring: blendThreshold(defaultTh.exploring, revealed, w),
-    likely_pass: blendThreshold(defaultTh.likely_pass, revealed, w),
+    verdictBands: defaultB.bands,
+    investLine,
+    defaultInvestLine: defaultB.investLine,
+    revealedInvestLine: revealedInvestLine == null ? null : Math.round(revealedInvestLine * 10) / 10,
   };
 
-  const examples = pickExamples(deals, thresholds.exploring).map(({ id, company_name, total_score, verdict, invested, passed, eval_date, role }) => ({
+  const examples = pickExamples(deals, investLine).map(({ id, company_name, total_score, verdict, invested, passed, eval_date, role }) => ({
     deal_evaluation_id: id,
     company_name,
     total_score,
