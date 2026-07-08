@@ -58,6 +58,10 @@
  *   Token/cost usage for the session, aggregated and per-model.
  * @property {string} model
  *   The primary model the session reported running under.
+ * @property {string|null} [apiKeySource]
+ *   Which credential the SDK actually authenticated with, from the init message
+ *   ('oauth' = subscription token; 'user'|'project'|'org'|'temporary' = API key).
+ *   A2's diagnostic checks this against the selected auth mode.
  * @property {number} numTurns
  *   Assistant turns taken.
  * @property {string} [sessionId]

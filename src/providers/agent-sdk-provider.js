@@ -51,9 +51,14 @@ async function defaultQuery() {
  */
 async function collectResult(stream) {
   let initModel;
+  let initApiKeySource;
   for await (const msg of stream) {
     if (msg?.type === 'system' && msg.subtype === 'init') {
       initModel = msg.model;
+      // Which credential actually won — 'oauth' means the subscription token.
+      // A2's startup diagnostic reads this to confirm the winning credential
+      // matches the selected auth mode (no silent billing surprise).
+      initApiKeySource = msg.apiKeySource;
       continue;
     }
     if (msg?.type === 'result') {
@@ -71,6 +76,7 @@ async function collectResult(stream) {
         text: msg.result ?? '',
         usage: normalizeUsage(msg),
         model: initModel ?? '',
+        apiKeySource: initApiKeySource ?? null,
         numTurns: msg.num_turns ?? 0,
         sessionId: msg.session_id,
       };
