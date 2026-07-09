@@ -3,14 +3,14 @@ import { AsyncLocalStorage } from 'async_hooks';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
-if (!DATABASE_URL) {
-  console.error(
-    'Error: DATABASE_URL is not set. Copy .env.example to .env and configure a connection.\n' +
-    '  Local embedded database:  DATABASE_URL=file:./radar.db\n' +
-    '  Neon / Postgres:          DATABASE_URL=postgresql://user:password@host/dbname'
-  );
-  process.exit(1);
-}
+// DATABASE_URL is required only when the default driver is actually used (a
+// query with no tenant scope) — checked lazily in getDefaultDriver(), not at
+// import. This lets DB-free commands (e.g. `auth:status`) run without a database
+// configured, while anything that touches the DB still fails loud + helpfully.
+const MISSING_DATABASE_URL_MESSAGE =
+  'DATABASE_URL is not set. Copy .env.example to .env and configure a connection.\n' +
+  '  Local embedded database:  DATABASE_URL=file:./radar.db\n' +
+  '  Neon / Postgres:          DATABASE_URL=postgresql://user:password@host/dbname';
 
 // ---------------------------------------------------------------------------
 // Driver selection
@@ -118,6 +118,9 @@ async function getDriver(connectionString) {
 let _defaultDriverPromise = null;
 
 function getDefaultDriver() {
+  if (!DATABASE_URL) {
+    throw new Error(MISSING_DATABASE_URL_MESSAGE);
+  }
   if (!_defaultDriverPromise) {
     _defaultDriverPromise = getDriver(DATABASE_URL);
   }
