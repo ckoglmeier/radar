@@ -77,8 +77,21 @@ export function validateAuthStartup(env = process.env) {
  * @param {string} apiKeySource
  * @returns {boolean}
  */
+// The init `apiKeySource` values that mean an ANTHROPIC_API_KEY was actually used
+// (billed to the API account). Anything else — `none` (verified via live e2e:
+// the subscription OAuth token bills with no API key, so the source is 'none')
+// or `oauth` — means the API key was NOT used.
+export const API_KEY_SOURCES = Object.freeze(['user', 'project', 'org', 'temporary']);
+
+/** Did the SDK actually authenticate with an ANTHROPIC_API_KEY? */
+export function usedApiKey(apiKeySource) {
+  return API_KEY_SOURCES.includes(apiKeySource);
+}
+
 export function isApiKeySourceConsistent(mode, apiKeySource) {
-  return mode === 'subscription' ? apiKeySource === 'oauth' : apiKeySource !== 'oauth';
+  // subscription: the API key must NOT have been used (any non-key source is fine).
+  // api_key: an API key MUST have been used.
+  return mode === 'subscription' ? !usedApiKey(apiKeySource) : usedApiKey(apiKeySource);
 }
 
 /**
@@ -95,8 +108,8 @@ export function verifyActualCredential(mode, apiKeySource) {
   if (!isApiKeySourceConsistent(mode, apiKeySource)) {
     const detail =
       mode === 'subscription'
-        ? `selected subscription mode but the SDK authenticated via '${apiKeySource}', not the OAuth token — this would bill the API account`
-        : `selected api_key mode but the SDK authenticated via the subscription OAuth token ('oauth')`;
+        ? `selected subscription mode but the SDK authenticated with an API key (apiKeySource='${apiKeySource}') — this bills the API account`
+        : `selected api_key mode but the SDK did not use an API key (apiKeySource='${apiKeySource}')`;
     throw new Error(`credential mismatch: ${detail}. Refusing to proceed.`);
   }
   return { mode, apiKeySource, ok: true };
@@ -126,6 +139,13 @@ export async function probeActiveCredential(provider) {
 export function formatAuthStatus(mode, selection, apiKeySource = null) {
   const cred = mode === 'subscription' ? 'OAuth subscription token' : 'ANTHROPIC_API_KEY';
   const shadow = selection?.strippedApiKey ? '; ANTHROPIC_API_KEY stripped from subprocess' : '';
-  const verified = apiKeySource ? ` — verified active credential: ${apiKeySource}` : ' — not yet probed';
+  // Render the probed source as a human label, not the raw enum ('none' reads as
+  // a failure but is the correct subscription result — no API key was used).
+  let verified = ' — not yet probed';
+  if (apiKeySource != null) {
+    verified = usedApiKey(apiKeySource)
+      ? ` — verified: billing an API key (source: ${apiKeySource})`
+      : ' — verified: billing your subscription (no API key used)';
+  }
   return `auth: ${mode} (${cred}${shadow})${verified}`;
 }

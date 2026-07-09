@@ -48,12 +48,13 @@ Bills against your Pro/Max/Team subscription's Agent-SDK credit instead of
 metered API tokens. It does **not** draw down your interactive Claude Code / chat
 limits.
 
-1. Generate a subscription token once:
+1. Generate a subscription token, then **export what it prints**:
    ```
    claude setup-token
+   export CLAUDE_CODE_OAUTH_TOKEN='sk-ant-oat01-…'   # the token it printed
    ```
-   It is stored in your local credential store — Radar never reads, copies, or
-   logs it.
+   Add the export to your shell profile to persist it. Radar passes it through to
+   the SDK subprocess; it never logs or copies the value.
 2. Select the mode:
    ```
    export RADAR_AUTH_MODE=subscription
@@ -70,9 +71,11 @@ Check what's configured (and, with `--probe`, what actually wins):
 radar auth:status
 radar auth:status --probe    # spawns a tiny session; needs a live credential
 ```
-`--probe` reports the SDK's actual `apiKeySource` (`oauth` = the subscription
-token won) and errors if it disagrees with the mode you selected — so you never
-get a silent billing surprise.
+`--probe` reports what actually billed. On the subscription it reads **"billing
+your subscription (no API key used)"** — the SDK's `apiKeySource` is `none`
+because the OAuth token uses no API key. If it instead reports an API key while
+you selected subscription (or vice-versa), Radar flags the mismatch — so you
+never get a silent billing surprise.
 
 ## The single-user boundary
 

@@ -88,17 +88,20 @@ test('startup: api_key + ANTHROPIC_API_KEY present -> ok, key preserved (not str
 });
 
 // ---- credential consistency (report the actually-winning credential) ----
+// 'none' is the real subscription result (verified live: OAuth token bills with
+// no API key). 'user'/'project'/'org'/'temporary' mean an API key was used.
+test('consistency: subscription + none (real OAuth result) is consistent', () => ok(isApiKeySourceConsistent('subscription', 'none')));
 test('consistency: subscription + oauth is consistent', () => ok(isApiKeySourceConsistent('subscription', 'oauth')));
-test('consistency: subscription + user is INconsistent', () => ok(!isApiKeySourceConsistent('subscription', 'user')));
+test('consistency: subscription + user (an API key) is INconsistent', () => ok(!isApiKeySourceConsistent('subscription', 'user')));
 test('consistency: api_key + user is consistent', () => ok(isApiKeySourceConsistent('api_key', 'user')));
-test('consistency: api_key + oauth is INconsistent', () => ok(!isApiKeySourceConsistent('api_key', 'oauth')));
+test('consistency: api_key + none is INconsistent (no key was used)', () => ok(!isApiKeySourceConsistent('api_key', 'none')));
 
-test('verify: subscription + oauth -> ok', () => eq(verifyActualCredential('subscription', 'oauth').ok, true));
-test('verify: subscription + user -> throws (would bill API account)', () =>
-  throws(() => verifyActualCredential('subscription', 'user'), 'bill the API account'));
+test('verify: subscription + none -> ok (subscription billing)', () => eq(verifyActualCredential('subscription', 'none').ok, true));
+test('verify: subscription + user -> throws (bills the API account)', () =>
+  throws(() => verifyActualCredential('subscription', 'user'), 'bills the API account'));
 test('verify: api_key + user -> ok', () => eq(verifyActualCredential('api_key', 'user').ok, true));
-test('verify: api_key + oauth -> throws (unexpected subscription billing)', () =>
-  throws(() => verifyActualCredential('api_key', 'oauth'), 'credential mismatch'));
+test('verify: api_key + none -> throws (no API key was used)', () =>
+  throws(() => verifyActualCredential('api_key', 'none'), 'credential mismatch'));
 
 // ---- probeActiveCredential (with a fake provider — no real SDK) ----
 test('probe: extracts apiKeySource from the session result', async () => {
@@ -113,10 +116,10 @@ test('probe: returns null when the result carries no apiKeySource', async () => 
 // ---- formatAuthStatus (secret-free) ----
 test('status: subscription line names mode + stripped + verified credential', () => {
   const sel = describeCredentialSelection('subscription', { ANTHROPIC_API_KEY: 'sk-ant-SECRET' });
-  const line = formatAuthStatus('subscription', sel, 'oauth');
+  const line = formatAuthStatus('subscription', sel, 'none');
   ok(line.includes('subscription'), 'names the mode');
   ok(line.includes('stripped'), 'notes the key was stripped');
-  ok(line.includes('oauth'), 'reports the verified credential');
+  ok(line.includes('no API key'), 'reports subscription billing (none = no API key used)');
   ok(!line.includes('sk-ant-SECRET'), 'must never leak the key value');
 });
 test('status: api_key line, not-yet-probed', () => {
