@@ -4,8 +4,6 @@ Decision infrastructure for private market investors.
 
 ---
 
-I've made over 150 investments in startups and scale-ups since 2019. What started as a learning exercise became a system — one that now consistently outperforms top-quartile venture benchmarks. Radar is the software behind that system.
-
 I built Radar because no tool existed for how serious angels actually operate. I see mid-hundreds of opportunities a year and invest in roughly ten. I started in spreadsheets and scripts years ago, then — with Claude's help — built something coherent: software that tracks not just what I own, but how I decide, why I invested, and whether my reasoning holds up over time as results come in.
 
 ---
