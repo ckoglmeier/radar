@@ -16,6 +16,7 @@ I built Radar because no tool existed for how serious angels actually operate. I
 - **Thesis attribution** — tag every investment to the investment theses that motivated it, then measure whether thesis-driven bets actually outperform
 - **Deal pipeline** — ingest inbound deal invites, track status changes through an append-only event log, link invites to investments when you wire
 - **Evaluation grading** — import structured deal evaluations (markdown), then validate the rubric: does your score actually predict returns? (`eval validate` computes Spearman correlation, per-band performance, and calibration)
+- **Investment council** — run an adversarial council (Bull / Bear / Calibrator / CFO) over a deal against your own lens and calibration, write the diagnosis to your deal log, and ingest it — all headless via the Claude Agent SDK. Bills against a pay-per-token API key *or* your Claude subscription. See [docs/COUNCIL_AUTH.md](docs/COUNCIL_AUTH.md)
 - **Bet sizing** — Kelly-criterion check sizing from your score bands and outcome distributions, with portfolio-level caps
 - **GP / source quality** — which syndicate leads actually make you money
 - **Quarterly updates** — investor updates as markdown files with a queryable metrics index (ARR, burn, runway, headcount over time)
@@ -131,6 +132,18 @@ node src/cli.js eval validate
 | `eval reconcile` | Pipeline passes that scored high — what did you walk away from? |
 | `bet-size <company>` | Kelly-based check sizing for a graded company |
 
+### Council & AI auth
+
+| Command | Description |
+|---------|-------------|
+| `council <slug>` | Run the adversarial council on a pipeline deal; writes + ingests a deal-log (`--dry-run` to preview) |
+| `auth:status [--probe]` | Show the model auth mode; `--probe` reports the credential that actually wins |
+
+Model calls route through the Claude Agent SDK. Set `RADAR_AUTH_MODE=api_key`
+(default) to bill an `ANTHROPIC_API_KEY`, or `subscription` to bill your Claude
+subscription's Agent-SDK credit (run `claude setup-token` first; single-user /
+local only). Full guide: [docs/COUNCIL_AUTH.md](docs/COUNCIL_AUTH.md).
+
 ### Pipeline & GP
 
 | Command | Description |
@@ -160,6 +173,7 @@ node src/cli.js eval validate
 
 - **Runtime:** Node.js (ESM), plus a Python 3 analytics sidecar called via JSON-over-stdin (Kelly solver, statistical validation — standard library only)
 - **Database:** Embedded PGlite (local, zero-setup) or PostgreSQL via `@neondatabase/serverless` (Neon / any Postgres)
+- **AI:** Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) behind a single provider seam — subscription (OAuth) or API-key billing; per-persona model tiering via subagents
 - **CLI:** `commander` + `chalk`
 - **No ORM.** Raw parameterized SQL. Intentional at this scale.
 - **Layering:** `src/reports/` returns pure data; `src/cli/printers/` formats it. A future web GUI reuses the report layer untouched.
