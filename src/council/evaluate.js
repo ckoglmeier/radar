@@ -147,8 +147,7 @@ export function buildCouncilAgents(models) {
  * @returns {Promise<{result: object, usedFallback: boolean, primaryErrorKind?: string, calibrationMaturity: string, modelPolicy: object}>}
  */
 export async function councilEvaluate(deal, opts = {}) {
-  const { provider, buildFallback, models, env = process.env, maxTurns = 40 } = opts;
-  if (!provider) throw new Error('councilEvaluate requires a provider (inject a ModelProvider)');
+  const { provider, buildFallback, models, env = process.env, maxTurns = 40, dryRun = false } = opts;
 
   const lens = {
     rubric: getRubric(),
@@ -175,6 +174,15 @@ export async function councilEvaluate(deal, opts = {}) {
     agents,
     maxTurns,
   };
+
+  // Dry run: assemble everything and return it without spawning the SDK — lets
+  // the CLI preview exactly what would be sent (and what it would cost) without
+  // a credential. No provider required.
+  if (dryRun) {
+    return { dryRun: true, request: req, authMode, calibrationMaturity: calibration.maturity, modelPolicy: policy };
+  }
+
+  if (!provider) throw new Error('councilEvaluate requires a provider (inject a ModelProvider)');
 
   const { result, usedFallback, primaryErrorKind } = await runWithFallback(req, {
     primary: provider,

@@ -35,6 +35,9 @@ import { exportBeancount } from './export/beancount.js';
 import { getActiveLens, loadLens, listAvailableLenses, resetLensCache } from './lenses/loader.js';
 import { importUpdates, scaffoldUpdate } from './models/updates.js';
 import { updatesList, updateDetail, updateTimeline } from './reports/updates.js';
+import { councilEvaluate } from './council/evaluate.js';
+import { AgentSdkProvider } from './providers/agent-sdk-provider.js';
+import { resolveAuthMode, validateAuthStartup, formatAuthStatus, probeActiveCredential } from './providers/auth-mode.js';
 import { printUpdatesList, printUpdateDetail, printUpdateTimeline } from './cli/printers/updates.js';
 
 program
@@ -757,6 +760,88 @@ program
       printBetSize(data);
     } catch (err) {
       console.error(chalk.red(`\n  Error: ${err.message}\n`));
+      process.exit(1);
+    }
+  });
+
+// --- Council ---
+program
+  .command('council <slug>')
+  .description('Run the investment council on a pipeline deal (headless; writes + ingests a deal-log)')
+  .option('--dry-run', 'Assemble and preview the session without calling the model')
+  .option('--deal-log-dir <path>', 'Where to write the deal-log artifact (default: $DEAL_LOG_DIR)')
+  .action(async (slug, opts) => {
+    try {
+      const invite = await pipelineDetail(slug);
+      if (!invite) {
+        console.error(chalk.red(`\n  No pipeline deal found for slug "${slug}".\n`));
+        process.exit(1);
+      }
+      const deal = {
+        company: invite.company_name,
+        market: invite.market,
+        round: invite.round,
+        valuation_usd: invite.valuation_usd,
+        lead_gp: invite.lead,
+        carry_pct: invite.carry_pct,
+        min_investment: invite.min_investment,
+        allocation_usd: invite.allocation_usd,
+        source: invite.source,
+        notes: invite.notes || invite.raw_message || undefined,
+      };
+
+      if (opts.dryRun) {
+        const out = await councilEvaluate(deal, { dryRun: true });
+        console.log(chalk.bold(`\n  Council dry run — ${deal.company}\n`));
+        console.log(`  Auth mode:   ${out.authMode}`);
+        console.log(`  Calibration: ${out.calibrationMaturity}`);
+        console.log(`  Models:      ${JSON.stringify(out.modelPolicy)}`);
+        console.log(`  Tools:       ${out.request.tools.join(', ')}`);
+        console.log(`  Subagents:   ${Object.keys(out.request.agents).join(', ')}`);
+        console.log(`  Context:     ${out.request.context.length} chars assembled`);
+        console.log(chalk.dim(`\n  (dry run — no model call, no deal-log written)\n`));
+        return;
+      }
+
+      const dealLogDir = opts.dealLogDir || process.env.DEAL_LOG_DIR;
+      if (!dealLogDir) {
+        console.error(chalk.red('\n  Set --deal-log-dir or $DEAL_LOG_DIR (where the deal-log artifact is written).\n'));
+        process.exit(1);
+      }
+
+      const authMode = resolveAuthMode(process.env);
+      const provider = new AgentSdkProvider({ authMode, cwd: dealLogDir });
+      const buildFallback = () => new AgentSdkProvider({ authMode: 'api_key', cwd: dealLogDir });
+
+      console.log(chalk.dim(`\n  Running council (${authMode}) on ${deal.company}…\n`));
+      const out = await councilEvaluate(deal, { provider, buildFallback, dealLogDir, env: process.env });
+      if (out.usedFallback) {
+        console.log(chalk.yellow(`  ⚠ fell back to api_key after a ${out.primaryErrorKind} condition on the subscription`));
+      }
+
+      const imp = await importDealLogs(dealLogDir);
+      console.log(chalk.green(`  ✓ graded and ingested (${imp.imported} imported, ${imp.skipped} already present)`));
+      console.log(`  Calibration: ${out.calibrationMaturity} · session: ${out.result.sessionId || 'n/a'}\n`);
+    } catch (err) {
+      console.error(chalk.red(`\n  Error: ${err.message}\n`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('auth:status')
+  .description('Show the model auth mode; --probe reports the actually-winning credential')
+  .option('--probe', 'Run a live probe (spawns a session; needs a real credential)')
+  .action(async (opts) => {
+    try {
+      const { mode, selection } = validateAuthStartup(process.env);
+      let apiKeySource = null;
+      if (opts.probe) {
+        apiKeySource = await probeActiveCredential(new AgentSdkProvider({ authMode: mode }));
+      }
+      console.log('\n  ' + formatAuthStatus(mode, selection, apiKeySource) + '\n');
+    } catch (err) {
+      console.error(chalk.red(`\n  ${err.message}\n`));
       process.exit(1);
     }
   });

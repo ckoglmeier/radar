@@ -85,6 +85,15 @@ test('councilEvaluate: model override flows to the subagents', async () => {
   eq(fake.calls[0].agents.calibrator.model, 'sonnet', 'override applied');
 });
 
+test('councilEvaluate: dry run assembles without a provider or a model call', async () => {
+  const out = await councilEvaluate({ company: 'Dry Co' }, { dryRun: true, env: {} });
+  eq(out.dryRun, true);
+  ok(out.request.context.includes('Dry Co'), 'assembled the context');
+  ok(out.request.systemPrompt.includes('Headless Council'), 'loaded the skill');
+  eq(out.modelPolicy.calibrator, 'opus');
+  ok(out.calibrationMaturity, 'reports calibration maturity');
+});
+
 for (const [name, fn] of tests) {
   try { await fn(); console.log(`  ✓ ${name}`); passed++; }
   catch (e) { console.log(`  ✗ ${name}: ${e.message}`); failed++; }
