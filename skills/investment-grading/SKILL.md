@@ -166,8 +166,9 @@ to the actual deal — these are registers, not templates):
 
 ## Output — write the deal log
 
-Write the full diagnosis to `deal-log/YYYY-MM-DD-company-name.md` (create the
-`deal-log/` directory if absent; slugify the company name; use today's date).
+Write the full diagnosis to `YYYY-MM-DD-company-name.md` **in the current working
+directory** (slugify the company name; use today's date — the working directory
+is already the deal-log directory, so do not nest it under a `deal-log/` subdir).
 The file is the permanent record AND the structured source the engine parses, so
 the exact markers below are load-bearing — the parser keys on them. Emit the
 sections in this order:
