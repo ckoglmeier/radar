@@ -12,7 +12,7 @@
 import { query } from '../db/index.js';
 import { portfolioSummary, portfolioList } from './portfolio.js';
 import { thesisPerformance } from './thesis.js';
-import { performanceWindows } from './performance.js';
+import { performanceWindows, computeWindowMetrics, cashFlowsInRange } from './performance.js';
 import { calculateIRR } from '../utils/irr.js';
 
 let passed = 0;
@@ -82,12 +82,14 @@ async function insertInvestment(fields) {
   const {
     company_name, status, invest_date, invested,
     unrealized_value, realized_value, net_value, multiple, stage_bucket,
+    asset_class,
   } = fields;
   const rows = await query(`
     INSERT INTO investments
       (company_name, status, invest_date, invested,
-       unrealized_value, realized_value, net_value, multiple, stage_bucket)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       unrealized_value, realized_value, net_value, multiple, stage_bucket,
+       asset_class)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     ON CONFLICT (company_name, invest_date) DO UPDATE
       SET status = EXCLUDED.status,
           invested = EXCLUDED.invested,
@@ -95,13 +97,15 @@ async function insertInvestment(fields) {
           realized_value = EXCLUDED.realized_value,
           net_value = EXCLUDED.net_value,
           multiple = EXCLUDED.multiple,
-          stage_bucket = EXCLUDED.stage_bucket
+          stage_bucket = EXCLUDED.stage_bucket,
+          asset_class = EXCLUDED.asset_class
     RETURNING id
   `, [
     company_name, status, invest_date, invested,
     unrealized_value ?? null, realized_value ?? null,
     net_value ?? null, multiple ?? null,
     stage_bucket ?? null,
+    asset_class ?? 'direct',
   ]);
   return rows[0].id;
 }
@@ -554,6 +558,59 @@ async function run() {
           throw new Error(`theses not alphabetical: '${parts[i]}' comes before '${parts[i + 1]}' but shouldn't`);
         }
       }
+    });
+
+    // Section: asset_class + window math (migration 026 / performance fixes)
+    console.log('\n  asset_class exclusion + flow-adjusted window math');
+
+    // A fund LP stake and account-transfer flows inside the golden window.
+    const fundId = await insertInvestment({
+      company_name: 'ZZGOLDEN Fund LP', status: 'Live', invest_date: '1995-06-01',
+      invested: 7000, asset_class: 'fund',
+    });
+    await insertCashFlow(fundId, 'investment', -7000, '1995-06-01');
+    // Account-level transfers (deposit/withdrawal) linked to a direct fixture —
+    // must be excluded by TYPE regardless of linkage.
+    await insertCashFlow(alphaId, 'deposit', 12345, '1995-07-01');
+    await insertCashFlow(alphaId, 'withdrawal', -2345, '1995-07-02');
+
+    await test('portfolioSummary excludes fund positions (total_invested still 29000)', async () => {
+      const { summary: s2 } = await portfolioSummary(OPTS);
+      eq(Number(s2.total_invested), 29000);
+      eq(Number(s2.total_investments), 4);
+    });
+
+    await test('portfolioList excludes fund positions', async () => {
+      const list = await portfolioList('invest_date', OPTS);
+      const golden = list.filter(r => r.company_name.startsWith('ZZGOLDEN'));
+      if (golden.some(r => r.company_name === 'ZZGOLDEN Fund LP')) {
+        throw new Error('fund LP leaked into direct portfolio list');
+      }
+    });
+
+    await test('cashFlowsInRange excludes deposits/withdrawals and fund flows', async () => {
+      const cf = await cashFlowsInRange('1995-01-01', '1996-12-31');
+      // Direct fixture flows only: no 12345 deposit, no 2345 withdrawal, no 7000 fund call.
+      if (cf.cash_in >= 12345) throw new Error(`deposit counted as cash_in: ${cf.cash_in}`);
+      const directOut = cf.cash_out;
+      const withFund = directOut >= 7000 + 29000;
+      if (withFund) throw new Error(`fund capital call counted as deployed: ${directOut}`);
+    });
+
+    await test('computeWindowMetrics: contributions are not gains (Modified Dietz)', async () => {
+      // SV 100k, EV 125k, deployed 20k, distributions 5k -> netFlow 15k,
+      // gain 10k, base 107.5k -> 9.3%. The old naive formula said 25%.
+      const m = computeWindowMetrics(100000, 125000, 5000, 20000);
+      eq(m.gain, 10000);
+      approx(m.value_change_pct, 9.3, 0.01);
+      eq(m.tvpi, undefined, 'window tvpi retired');
+      eq(m.dpi, undefined, 'window dpi retired');
+    });
+
+    await test('computeWindowMetrics: pure appreciation with no flows', async () => {
+      const m = computeWindowMetrics(100000, 110000, 0, 0);
+      eq(m.gain, 10000);
+      approx(m.value_change_pct, 10.0, 0.01);
     });
 
   } finally {

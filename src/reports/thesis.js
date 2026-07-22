@@ -103,7 +103,7 @@ export async function untaggedInvestments() {
     SELECT i.company_name, i.invest_date, i.invested, i.market, i.round, i.status
     FROM investments i
     LEFT JOIN investment_theses it ON it.investment_id = i.id
-    WHERE it.investment_id IS NULL
+    WHERE it.investment_id IS NULL AND i.asset_class = 'direct'
     ORDER BY i.invest_date DESC, i.company_name
   `);
   return rows;
@@ -127,6 +127,7 @@ export async function stageBreakdown() {
         NULLIF(SUM(COALESCE(computed_net_invested, invested)), 0), 3
       ) AS tvpi
     FROM investments
+    WHERE asset_class = 'direct'
     GROUP BY COALESCE(stage_bucket, 'unknown')
     ORDER BY ARRAY_POSITION(
       ARRAY['pre-seed','seed','seed-ext','series-a','series-b','series-c','growth','fund','unknown'],
@@ -176,6 +177,7 @@ export async function eraAnalysis() {
         NULLIF(SUM(invested), 0) AS tvpi,
       AVG(multiple) FILTER (WHERE multiple IS NOT NULL) AS avg_multiple
     FROM investments
+    WHERE asset_class = 'direct'
     GROUP BY CASE WHEN invest_date < '2023-01-01' THEN 'Exploration (2021-2022)' ELSE 'Conviction (2023+)' END
     ORDER BY era
   `);

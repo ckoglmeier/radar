@@ -19,7 +19,7 @@ export async function gpSummary() {
         COALESCE(computed_total_value,
                  COALESCE(realized_value, 0) + COALESCE(unrealized_value, 0)) AS eff_value
       FROM investments
-      WHERE COALESCE(lead, '') NOT IN (${CROWDFUNDING_LEADS})
+      WHERE asset_class = 'direct' AND COALESCE(lead, '') NOT IN (${CROWDFUNDING_LEADS})
     )
     SELECT
       gp_name,
@@ -44,7 +44,8 @@ export async function gpSummary() {
       company_name,
       COALESCE(computed_multiple, multiple) AS multiple
     FROM investments
-    WHERE COALESCE(computed_multiple, multiple) IS NOT NULL
+    WHERE asset_class = 'direct'
+      AND COALESCE(computed_multiple, multiple) IS NOT NULL
       AND COALESCE(lead, '') NOT IN (${CROWDFUNDING_LEADS})
     ORDER BY COALESCE(lead, 'Direct / Unknown'), COALESCE(computed_multiple, multiple) DESC, company_name
   `);
@@ -68,7 +69,7 @@ export async function gpDetail(gpName) {
         ''
       ) AS theses
     FROM investments i
-    WHERE LOWER(COALESCE(i.lead, '')) LIKE LOWER($1)
+    WHERE i.asset_class = 'direct' AND LOWER(COALESCE(i.lead, '')) LIKE LOWER($1)
     ORDER BY i.invest_date DESC, i.company_name
   `, [`%${gpName}%`]);
 
@@ -93,7 +94,7 @@ export async function gpDetail(gpName) {
       MIN(invest_date) AS first_deal,
       MAX(invest_date) AS last_deal
     FROM investments
-    WHERE LOWER(COALESCE(lead, '')) LIKE LOWER($1)
+    WHERE asset_class = 'direct' AND LOWER(COALESCE(lead, '')) LIKE LOWER($1)
     GROUP BY COALESCE(lead, 'Direct / Unknown')
   `, [`%${gpName}%`]);
 
@@ -103,7 +104,7 @@ export async function gpDetail(gpName) {
     FROM investments i
     JOIN investment_theses it ON it.investment_id = i.id
     JOIN theses t ON t.id = it.thesis_id
-    WHERE LOWER(COALESCE(i.lead, '')) LIKE LOWER($1)
+    WHERE i.asset_class = 'direct' AND LOWER(COALESCE(i.lead, '')) LIKE LOWER($1)
     GROUP BY t.name
     ORDER BY count DESC, thesis
   `, [`%${gpName}%`]);
@@ -122,7 +123,7 @@ export async function gpDetail(gpName) {
       SUM(COALESCE(realized_value, 0) + COALESCE(unrealized_value, invested)) /
         NULLIF(SUM(invested), 0) AS tvpi
     FROM investments
-    WHERE LOWER(COALESCE(lead, '')) LIKE LOWER($1)
+    WHERE asset_class = 'direct' AND LOWER(COALESCE(lead, '')) LIKE LOWER($1)
     GROUP BY CASE WHEN invest_date < '2023-01-01' THEN 'Exploration (2021-2022)' ELSE 'Conviction (2023+)' END
     ORDER BY era
   `, [`%${gpName}%`]);
@@ -138,7 +139,7 @@ export async function gpDetail(gpName) {
         NULLIF(SUM(COALESCE(computed_net_invested, invested)), 0), 2
       ) AS tvpi
     FROM investments
-    WHERE LOWER(COALESCE(lead, '')) LIKE LOWER($1)
+    WHERE asset_class = 'direct' AND LOWER(COALESCE(lead, '')) LIKE LOWER($1)
     GROUP BY COALESCE(stage_bucket, 'unknown')
     ORDER BY ARRAY_POSITION(
       ARRAY['pre-seed','seed','seed-ext','series-a','series-b','series-c','growth','fund','unknown'],

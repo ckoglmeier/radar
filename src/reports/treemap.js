@@ -40,6 +40,7 @@ export async function treemapData(opts = {}) {
     FROM investments i
     LEFT JOIN investment_theses it ON it.investment_id = i.id AND it.is_primary = true
     LEFT JOIN theses t ON t.id = it.thesis_id
+    WHERE i.asset_class = 'direct'
     ORDER BY i.company_name
   `);
 

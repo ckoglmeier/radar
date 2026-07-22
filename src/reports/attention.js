@@ -33,7 +33,8 @@ export async function qsbsWindowItems({ today, windowDays }) {
   const rows = await query(`
     SELECT id, company_name, invest_date, invested, round, market
     FROM investments
-    WHERE status = 'Live'
+    WHERE asset_class = 'direct'
+      AND status = 'Live'
       AND qsbs_eligible = TRUE
       AND invest_date IS NOT NULL
     ORDER BY invest_date ASC, company_name ASC
@@ -73,7 +74,7 @@ export async function quietFounderItems({ today, quietDays, limit }) {
     FROM investments i
     LEFT JOIN company_updates cu
       ON cu.investment_id = i.id OR LOWER(cu.company_name) = LOWER(i.company_name)
-    WHERE i.status = 'Live'
+    WHERE i.asset_class = 'direct' AND i.status = 'Live'
     GROUP BY i.id, i.company_name, i.status, i.invest_date, i.invested
     ORDER BY MAX(cu.update_date) ASC NULLS FIRST, i.company_name ASC
     LIMIT $1
@@ -145,7 +146,8 @@ export async function clusterExposure({ thesis, market, limit = 20 } = {}) {
     clauses.push(`LOWER(t.name) = LOWER($${params.length})`);
   }
 
-  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  clauses.unshift(`i.asset_class = 'direct'`);
+  const where = `WHERE ${clauses.join(' AND ')}`;
   params.push(limit);
 
   const rows = await query(`
@@ -200,7 +202,8 @@ export async function relatedDeals({ companyName, market, thesis, limit = 8 } = 
     clauses.push(`LOWER(t.name) = LOWER($${params.length})`);
   }
 
-  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  clauses.unshift(`i.asset_class = 'direct'`);
+  const where = `WHERE ${clauses.join(' AND ')}`;
   params.push(limit);
 
   return query(`

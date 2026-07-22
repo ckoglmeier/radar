@@ -21,7 +21,7 @@ export async function portfolioValueAsOf(asOfDate) {
       WHERE investment_id = i.id AND snapshot_date <= $1
       ORDER BY snapshot_date DESC LIMIT 1
     ) v ON true
-    WHERE i.invest_date <= $1
+    WHERE i.invest_date <= $1 AND i.asset_class = 'direct'
   `, [asOfDate]);
   const r = rows[0];
   return {
@@ -36,13 +36,20 @@ export async function portfolioValueAsOf(asOfDate) {
  * Returns { cash_in, cash_out } where cash_in = distributions/refunds,
  * cash_out = investments deployed.
  */
-async function cashFlowsInRange(startDate, endDate) {
+export async function cashFlowsInRange(startDate, endDate) {
+  // Investment-level flows only: deposits/withdrawals are transfers between
+  // the owner's bank and the brokerage account — counting them here showed
+  // the owner's own ACH transfers as "cash returned". Same filter the
+  // portfolio ledger uses. Fund flows excluded from direct-window math.
   const rows = await query(`
     SELECT
-      COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS cash_in,
-      COALESCE(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS cash_out
-    FROM cash_flows
-    WHERE flow_date BETWEEN $1 AND $2
+      COALESCE(SUM(CASE WHEN cf.amount > 0 THEN cf.amount ELSE 0 END), 0) AS cash_in,
+      COALESCE(SUM(CASE WHEN cf.amount < 0 THEN ABS(cf.amount) ELSE 0 END), 0) AS cash_out
+    FROM cash_flows cf
+    LEFT JOIN investments i ON i.id = cf.investment_id
+    WHERE cf.flow_date BETWEEN $1 AND $2
+      AND cf.type IN ('investment', 'distribution', 'refund')
+      AND COALESCE(i.asset_class, 'direct') = 'direct'
   `, [startDate, endDate]);
   return {
     cash_in: Number(rows[0].cash_in),
@@ -50,15 +57,19 @@ async function cashFlowsInRange(startDate, endDate) {
   };
 }
 
-function computeWindowMetrics(startValue, endValue, cashIn, cashOut) {
-  const totalInvested = startValue + cashOut;
-  const totalReturned = endValue + cashIn;
+export function computeWindowMetrics(startValue, endValue, cashIn, cashOut) {
+  // Flow-adjusted period return (Modified Dietz, midpoint convention).
+  // Capital deployed during the window is a contribution, not a gain —
+  // the naive (end-start)/start formula counted every new check as
+  // appreciation. netFlow = capital added to the portfolio in-window.
+  const netFlow = cashOut - cashIn;
+  const gain = endValue - startValue - netFlow;
+  const base = startValue + netFlow / 2;
   return {
-    tvpi: totalInvested > 0 ? Math.round(totalReturned / totalInvested * 1000) / 1000 : null,
-    dpi: totalInvested > 0 ? Math.round(cashIn / totalInvested * 1000) / 1000 : null,
-    value_change_pct: startValue > 0
-      ? Math.round((endValue - startValue) / startValue * 10000) / 100
-      : null,
+    gain: Math.round(gain),
+    value_change_pct: base > 0 ? Math.round(gain / base * 10000) / 100 : null,
+    // Window "TVPI"/"DPI" were period ratios wearing since-inception labels
+    // — retired. TVPI/DPI live on the vintage (since-inception) views.
   };
 }
 
@@ -132,7 +143,7 @@ export async function performanceWindows() {
         NULLIF(SUM(COALESCE(computed_net_invested, invested)), 0), 3
       ) AS dpi
     FROM investments
-    WHERE invest_date IS NOT NULL
+    WHERE invest_date IS NOT NULL AND asset_class = 'direct'
     GROUP BY EXTRACT(YEAR FROM invest_date)
     ORDER BY vintage_year
   `);
@@ -144,7 +155,7 @@ export async function performanceWindows() {
       cf.amount
     FROM cash_flows cf
     JOIN investments i ON i.id = cf.investment_id
-    WHERE i.invest_date IS NOT NULL
+    WHERE i.invest_date IS NOT NULL AND i.asset_class = 'direct'
     ORDER BY cf.flow_date
   `);
   const cfByVintage = {};
@@ -162,7 +173,7 @@ export async function performanceWindows() {
       -- Crowdfunding write-offs are encoded in the data layer (unrealized_value = 0).
       SUM(COALESCE(unrealized_value, invested)) AS unrealized
     FROM investments
-    WHERE invest_date IS NOT NULL
+    WHERE invest_date IS NOT NULL AND asset_class = 'direct'
     GROUP BY EXTRACT(YEAR FROM invest_date)
   `);
   const unrByVintage = {};
@@ -192,7 +203,7 @@ export async function performanceWindows() {
         date_trunc('quarter', MIN(invest_date))::date AS first_q,
         date_trunc('quarter', CURRENT_DATE)::date AS last_q
       FROM investments
-      WHERE invest_date IS NOT NULL
+      WHERE invest_date IS NOT NULL AND asset_class = 'direct'
     ),
     quarters AS (
       SELECT generate_series(first_q, last_q, '3 months'::interval)::date AS quarter_start
@@ -200,11 +211,14 @@ export async function performanceWindows() {
     ),
     deployed AS (
       SELECT
-        date_trunc('quarter', flow_date)::date AS q,
-        COALESCE(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS deployed,
-        COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS distributions
-      FROM cash_flows
-      GROUP BY date_trunc('quarter', flow_date)
+        date_trunc('quarter', cf.flow_date)::date AS q,
+        COALESCE(SUM(CASE WHEN cf.amount < 0 THEN ABS(cf.amount) ELSE 0 END), 0) AS deployed,
+        COALESCE(SUM(CASE WHEN cf.amount > 0 THEN cf.amount ELSE 0 END), 0) AS distributions
+      FROM cash_flows cf
+      LEFT JOIN investments i ON i.id = cf.investment_id
+      WHERE cf.type IN ('investment', 'distribution', 'refund')
+        AND COALESCE(i.asset_class, 'direct') = 'direct'
+      GROUP BY date_trunc('quarter', cf.flow_date)
     )
     SELECT
       q.quarter_start,

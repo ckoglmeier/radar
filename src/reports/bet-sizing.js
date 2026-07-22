@@ -92,7 +92,8 @@ export async function betSizeReport(company, opts = {}) {
   const deployedRows = await query(`
     SELECT SUM(invested) AS illiquid
     FROM investments
-    WHERE status != 'Realized' OR (unrealized_value IS NOT NULL AND unrealized_value > 0)
+    WHERE asset_class = 'direct'
+      AND (status != 'Realized' OR (unrealized_value IS NOT NULL AND unrealized_value > 0))
   `);
   const clusterRows = await query(`
     SELECT t.name, SUM(i.invested) AS exposure
@@ -100,6 +101,7 @@ export async function betSizeReport(company, opts = {}) {
     JOIN investment_theses it ON it.investment_id = i.id AND it.is_primary = true
     JOIN theses t ON t.id = it.thesis_id
     WHERE t.active = true
+      AND i.asset_class = 'direct'
       AND (i.status != 'Realized' OR (i.unrealized_value IS NOT NULL AND i.unrealized_value > 0))
     GROUP BY t.name
   `);

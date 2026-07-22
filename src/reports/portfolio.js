@@ -8,13 +8,14 @@ import { stageToBarbellGroup } from '../utils/stage.js';
 export async function portfolioSummary(opts = {}) {
   const { since, until } = opts;
 
-  // Build date filter clause and params
-  const conditions = [];
+  // Build filter clause and params. Direct positions only — fund LP stakes
+  // (asset_class = 'fund') have their own surfaces and their own math.
+  const conditions = [`asset_class = 'direct'`];
   const params = [];
   if (since) { params.push(since); conditions.push(`invest_date >= $${params.length}`); }
   if (until) { params.push(until); conditions.push(`invest_date <= $${params.length}`); }
-  const dateFilter = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-  const dateFilterAnd = conditions.length > 0 ? 'AND ' + conditions.join(' AND ') : '';
+  const dateFilter = 'WHERE ' + conditions.join(' AND ');
+  const dateFilterAnd = 'AND ' + conditions.join(' AND ');
 
   const summary = await query(`
     SELECT
