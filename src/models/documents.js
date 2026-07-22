@@ -9,7 +9,7 @@
 import { randomUUID, createHash } from 'crypto';
 import { query } from '../db/index.js';
 
-const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB cap (documents table; hosted intake's transport cap is separate, enforced in the app layer)
+export const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB cap (documents table; hosted intake's transport cap is separate, enforced in the app layer)
 
 // Attachment matrix (docs/INTAKE_BUILD_PLAN.md): the entity_type a document
 // attaches to, mapped to the table its entity_id refers to.
@@ -125,6 +125,21 @@ export async function markPendingCommitted(id, created_refs) {
   const rows = await query(`
     UPDATE pending_intake
     SET status = 'committed', created_refs = $2::jsonb
+    WHERE id = $1
+    RETURNING *
+  `, [id, JSON.stringify(created_refs)]);
+  return rows[0] || null;
+}
+
+// Records created_refs progressively while the row STAYS 'pending' (does not
+// flip status) — used by intakeCommit's ordered-writes + progressive-refs
+// recovery path on the non-transactional (Neon) driver, so a retry after a
+// partial failure sees what already succeeded instead of re-creating it. See
+// docs/INTAKE_BUILD_PLAN.md "Commit contract & artifact lifecycle".
+export async function updatePendingRefs(id, created_refs) {
+  const rows = await query(`
+    UPDATE pending_intake
+    SET created_refs = $2::jsonb
     WHERE id = $1
     RETURNING *
   `, [id, JSON.stringify(created_refs)]);

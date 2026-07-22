@@ -38,9 +38,11 @@ const INSERT_ORDER = [
   'room_pipeline',
   'room_views',
   'company_updates',
+  'documents', // provenance artifacts; must follow all 4 of its possible parents (investments, pipeline_invites, company_updates, deal_evaluations) above
   'user_settings',
   'lens_config',
   'sync_runs',
+  'pending_intake', // ephemeral preview/confirm staging; no FK dependents, kept last
 ];
 
 export async function backupDatabase({ outDir = './backups' } = {}) {

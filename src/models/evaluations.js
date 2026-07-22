@@ -7,7 +7,7 @@ import { join, basename } from 'path';
 import { query } from '../db/index.js';
 import { withSyncRun } from '../db/sync-runs.js';
 import { matchCompanyToInvestment, loadInvestmentUniverse } from '../utils/match.js';
-import { normalize as normalizeCompanyName, tokenize, STOPWORDS } from '../utils/company-names.js';
+import { matchCompanyToPipelineInvite } from './pipeline.js';
 
 const DEAL_LOG_DIR = process.env.DEAL_LOG_DIR || null;
 
@@ -24,51 +24,95 @@ const DEAL_LOG_DIR = process.env.DEAL_LOG_DIR || null;
  * Exported so the one-time backfill (db/backfill-eval-companies.js) uses
  * exactly the import path's logic.
  */
+// Strict deal-log heading grammar (the "# Deal Log: X" / "# Investment
+// Evaluation: X" prefix family).
+const DEAL_LOG_HEADING_RE = /^#\s+(?:Deal\s+(?:Log|Diagnosis|Assessment)|Investment\s+Evaluation|Deal\s+Evaluation|Portfolio\s+Review):\s*(.+?)$/m;
+
+// Trailing em-dash context vocabulary that isn't part of the company's name
+// ("Mark — Investment Evaluation" -> "Mark", "Groq — Portfolio Review —
+// 2026-04-10" -> "Groq"). Also matches the suffix ("X — Deal Assessment")
+// heading form, which has no leading "Deal ...:" prefix to trip
+// DEAL_LOG_HEADING_RE — stripDealLogVocabulary() below is how that form gets
+// recognized as deal-log grammar too.
+const CONTEXT_SUFFIX_RE = new RegExp(
+  '\\s*—\\s*(?:' +
+  [
+    'Deal\\s+(?:Assessment|Log|Diagnosis|Evaluation|Review)',
+    'Investment\\s+Evaluation', 'Evaluation',
+    'Portfolio\\s+Review(?:\\s*—?\\s*\\d{4}-\\d{2}-\\d{2})?',
+    'New\\s+Inbound.*',
+    '(?:Deck\\s+)?v?\\d+\\s*Regrade', 'Deck.*Regrade', 'Regrade',
+    'Pre-?Seed', 'Seed(?:\\s+Round)?',
+    'Series\\s+[A-Z]\\d*\\+?(?:\\s*/\\s*[^—]*)?',
+    'Angel(?:\\s+Round)?', 'Growth\\s+Raise', 'Crossover\\s+Round',
+    '\\d{4}-\\d{2}-\\d{2}',
+  ].join('|') +
+  ')\\s*$', 'i'
+);
+const CONTEXT_PARENTHETICAL_RE = /\s*\((?:Portfolio\s+Review|Deal\s+Evaluation|Investment\s+Evaluation|Regrade)\)\s*$/i;
+
+// Strips trailing eval/round/context vocabulary from a heading-derived name.
+// Suffixes stack, so strip repeatedly until stable. Unknown suffixes are
+// kept — a genuine em-dash company name ("Sword — Shield Robotics") survives.
+function stripDealLogVocabulary(name) {
+  let prev;
+  do { prev = name; name = name.replace(CONTEXT_SUFFIX_RE, '').trim(); } while (name && name !== prev);
+  name = name.replace(CONTEXT_PARENTHETICAL_RE, '').trim();
+  return name;
+}
+
+/**
+ * Does this content use deal-log heading grammar? True for the strict
+ * prefix form ("# Deal Log: X") and for a bare "# X" heading whose trailing
+ * segment is recognized eval/round/context vocabulary ("# X — Deal
+ * Assessment", "# X (Portfolio Review)") — i.e. exactly the two heading
+ * shapes extractCompanyName recognizes as deal-log-specific, as opposed to
+ * its generic "any # Heading" fallback (too weak a signal on its own — a
+ * plain markdown doc with a top-level heading isn't a deal-log). Exported so
+ * callers that need to know "is this deal-log markdown" (src/intake
+ * classification) can ask without re-deriving the grammar.
+ */
+export function hasDealLogHeading(content) {
+  if (!content) return false;
+  if (DEAL_LOG_HEADING_RE.test(content)) return true;
+  const altHeading = content.match(/^#\s+(.+?)$/m);
+  if (!altHeading) return false;
+  const raw = altHeading[1].trim();
+  return stripDealLogVocabulary(raw) !== raw;
+}
+
 export function extractCompanyName(content) {
   if (!content) return null;
   let name = null;
-  const headingMatch = content.match(/^#\s+(?:Deal\s+(?:Log|Diagnosis|Assessment)|Investment\s+Evaluation|Deal\s+Evaluation|Portfolio\s+Review):\s*(.+?)$/m);
+  const headingMatch = content.match(DEAL_LOG_HEADING_RE);
   if (headingMatch) name = headingMatch[1].trim();
   if (!name) {
     const altHeading = content.match(/^#\s+(.+?)$/m);
     if (altHeading) name = altHeading[1].trim();
   }
   if (!name) return null;
-  // Strip trailing em-dash segments that are eval/round/context vocabulary,
-  // not part of the company's name ("Mark — Investment Evaluation" -> "Mark",
-  // "Groq — Portfolio Review — 2026-04-10" -> "Groq"). Suffixes stack, so
-  // strip repeatedly until stable. Unknown suffixes are kept — a genuine
-  // em-dash company name ("Sword — Shield Robotics") survives.
-  const SUFFIX = new RegExp(
-    '\\s*—\\s*(?:' +
-    [
-      'Deal\\s+(?:Assessment|Log|Diagnosis|Evaluation|Review)',
-      'Investment\\s+Evaluation', 'Evaluation',
-      'Portfolio\\s+Review(?:\\s*—?\\s*\\d{4}-\\d{2}-\\d{2})?',
-      'New\\s+Inbound.*',
-      '(?:Deck\\s+)?v?\\d+\\s*Regrade', 'Deck.*Regrade', 'Regrade',
-      'Pre-?Seed', 'Seed(?:\\s+Round)?',
-      'Series\\s+[A-Z]\\d*\\+?(?:\\s*/\\s*[^—]*)?',
-      'Angel(?:\\s+Round)?', 'Growth\\s+Raise', 'Crossover\\s+Round',
-      '\\d{4}-\\d{2}-\\d{2}',
-    ].join('|') +
-    ')\\s*$', 'i'
-  );
-  let prev;
-  do { prev = name; name = name.replace(SUFFIX, '').trim(); } while (name && name !== prev);
-  // Parenthesized context: "Boom Supersonic (Portfolio Review)" — strip when
-  // the parenthetical is pure vocabulary (a real "(YC W21)" etc. survives).
-  name = name.replace(/\s*\((?:Portfolio\s+Review|Deal\s+Evaluation|Investment\s+Evaluation|Regrade)\)\s*$/i, '').trim();
+  name = stripDealLogVocabulary(name);
   return name || null;
 }
 
 export function parseDealLogFile(filePath) {
   const content = readFileSync(filePath, 'utf-8');
   const filename = basename(filePath);
+  const parsed = parseDealLogContent(content, filename);
+  if (!parsed) return null;
+  return { ...parsed, file_path: filePath };
+}
 
+// Content-only variant of parseDealLogFile — same regex extraction, no
+// filesystem read. Exists so callers that already have bytes in hand (the
+// intake pipeline parsing an uploaded/pasted artifact) can reuse the exact
+// scoring/verdict/council regexes instead of duplicating them. filename is
+// optional and only used for the YYYY-MM-DD-company.md date-from-filename
+// convention; pass null/undefined to skip it.
+export function parseDealLogContent(content, filename) {
   // Extract eval_date from filename (YYYY-MM-DD-company.md) or from content
   let eval_date = null;
-  const dateFromFilename = filename.match(/^(\d{4}-\d{2}-\d{2})-/);
+  const dateFromFilename = filename && filename.match(/^(\d{4}-\d{2}-\d{2})-/);
   if (dateFromFilename) {
     eval_date = dateFromFilename[1];
   }
@@ -182,7 +226,6 @@ export function parseDealLogFile(filePath) {
 
   return {
     eval_date,
-    file_path: filePath,
     company_name,
     thesis_fit_score,
     viability_score,
@@ -262,46 +305,12 @@ async function runDealLogImport(dir, opts = {}) {
         investment_id = investMatch.investment_id;
       }
 
-      // Try to link to a pipeline invite (multi-strategy fuzzy match)
-      let pipeline_invite_id = null;
-      let pipeline_status = null;
-      const normalized = normalizeCompanyName(parsed.company_name);
-      // Strategy 1: exact case-insensitive
-      let pipelineRows = await query(
-        `SELECT id, status, company_name FROM pipeline_invites WHERE LOWER(company_name) = LOWER($1) LIMIT 1`,
-        [parsed.company_name]
-      );
-      if (pipelineRows.length === 0) {
-        // Strategy 2: normalized match against all invites
-        const allInvites = await query(`SELECT id, status, company_name FROM pipeline_invites`);
-        for (const inv of allInvites) {
-          const invNorm = normalizeCompanyName(inv.company_name);
-          if (invNorm === normalized || invNorm.startsWith(normalized) || normalized.startsWith(invNorm)) {
-            pipelineRows = [inv];
-            break;
-          }
-        }
-        if (pipelineRows.length === 0) {
-          // Strategy 3: shared token match (≥3 chars, excluding stopwords).
-          // Uses the canonical STOPWORDS from company-names.js.
-          const tokens = tokenize(normalized);
-          if (tokens.length > 0) {
-            for (const inv of allInvites) {
-              const invTokens = normalizeCompanyName(inv.company_name).split(/\s+/).filter(t => !STOPWORDS.has(t));
-              const overlap = tokens.filter(t => invTokens.includes(t));
-              if (overlap.length > 0) {
-                pipelineRows = [inv];
-                break;
-              }
-            }
-          }
-        }
-      }
-
-      if (pipelineRows.length > 0) {
-        pipeline_invite_id = pipelineRows[0].id;
-        pipeline_status = pipelineRows[0].status;
-      }
+      // Try to link to a pipeline invite (multi-strategy fuzzy match) —
+      // shared with src/intake via models/pipeline.js so the two callers
+      // can't drift apart.
+      const inviteMatch = await matchCompanyToPipelineInvite(parsed.company_name);
+      const pipeline_invite_id = inviteMatch.invite_id;
+      const pipeline_status = inviteMatch.status;
 
       // Determine invested flag
       let invested = false;
