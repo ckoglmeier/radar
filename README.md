@@ -186,7 +186,7 @@ Test suites are fully self-contained — synthetic fixtures, no external files o
 
 ## License
 
-Licensed under AGPL-3.0 — anyone hosting a modified version commercially must open-source their changes back to the community.
+Licensed under MIT — no strings. The engine is deliberately free; the calibration that makes it sharp is yours to build.
 
 ---
 
