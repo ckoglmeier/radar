@@ -27,7 +27,7 @@ const DEAL_LOG_DIR = process.env.DEAL_LOG_DIR || null;
 export function extractCompanyName(content) {
   if (!content) return null;
   let name = null;
-  const headingMatch = content.match(/^#\s+(?:Deal\s+(?:Log|Diagnosis|Assessment)):\s*(.+?)$/m);
+  const headingMatch = content.match(/^#\s+(?:Deal\s+(?:Log|Diagnosis|Assessment)|Investment\s+Evaluation|Deal\s+Evaluation|Portfolio\s+Review):\s*(.+?)$/m);
   if (headingMatch) name = headingMatch[1].trim();
   if (!name) {
     const altHeading = content.match(/^#\s+(.+?)$/m);

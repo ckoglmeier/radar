@@ -517,6 +517,9 @@ test('extractCompanyName: unknown em-dash suffix kept (part of the name)', () =>
   eq(extractCompanyName('# Sword — Shield Robotics\n'), 'Sword — Shield Robotics');
   eq(extractCompanyName('# PolarGrid — CDN for AI Inference\n'), 'PolarGrid — CDN for AI Inference');
 });
+test('extractCompanyName: prefix-form vocabulary', () => {
+  eq(extractCompanyName('# Investment Evaluation: ClearPath.AI\n'), 'ClearPath.AI');
+});
 test('extractCompanyName: stacked context suffixes stripped', () => {
   eq(extractCompanyName('# Groq — Portfolio Review — 2026-04-10\n'), 'Groq');
   eq(extractCompanyName('# Yuva Pay — Portfolio Review 2026-04-14\n'), 'Yuva Pay');
