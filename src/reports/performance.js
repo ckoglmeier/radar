@@ -74,6 +74,58 @@ export function computeWindowMetrics(startValue, endValue, cashIn, cashOut) {
 }
 
 /**
+ * Name positions that received an in-window valuation but have no valuation
+ * at or before the window start. Cost basis is never substituted for an
+ * opening mark when a later mark would make that substitution look like gain.
+ */
+export async function missingOpeningPositions(startDate, endDate) {
+  const rows = await query(`
+    SELECT i.id, i.company_name
+    FROM investments i
+    WHERE i.asset_class = 'direct'
+      AND i.invest_date <= $1
+      AND EXISTS (
+        SELECT 1 FROM valuations later
+        WHERE later.investment_id = i.id
+          AND later.snapshot_date > $1
+          AND later.snapshot_date <= $2
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM valuations opening
+        WHERE opening.investment_id = i.id
+          AND opening.snapshot_date <= $1
+      )
+    ORDER BY i.company_name, i.id
+  `, [startDate, endDate]);
+  return rows.map(row => ({ id: Number(row.id), company_name: row.company_name }));
+}
+
+export function guardWindowReturn(window, missingOpening = []) {
+  const missing = missingOpening.map(position => ({
+    id: Number(position.id),
+    company_name: position.company_name,
+  }));
+  if (missing.length === 0) {
+    return {
+      ...window,
+      return_available: true,
+      missing_opening_marks: 0,
+      missing_opening_positions: [],
+      coverage: { state: 'available', missing_opening_positions: [] },
+    };
+  }
+  return {
+    ...window,
+    gain: null,
+    value_change_pct: null,
+    return_available: false,
+    missing_opening_marks: missing.length,
+    missing_opening_positions: missing,
+    coverage: { state: 'unavailable', missing_opening_positions: missing },
+  };
+}
+
+/**
  * Main entry point. Returns all time-windowed performance views.
  */
 export async function performanceWindows() {
@@ -96,7 +148,7 @@ export async function performanceWindows() {
     ytdStartVal.total_value, ytdEndVal.total_value,
     ytdCash.cash_in, ytdCash.cash_out
   );
-  const ytd = {
+  const ytdRaw = {
     start_date: ytdStart,
     end_date: today,
     start_value: ytdStartVal.total_value,
@@ -116,7 +168,7 @@ export async function performanceWindows() {
     t12StartVal.total_value, t12EndVal.total_value,
     t12Cash.cash_in, t12Cash.cash_out
   );
-  const trailing12m = {
+  const trailing12mRaw = {
     start_date: trailing12mStart,
     end_date: today,
     start_value: t12StartVal.total_value,
@@ -241,5 +293,15 @@ export async function performanceWindows() {
     };
   });
 
-  return { ytd, trailing12m, byVintageYear, byQuarter };
+  const [ytdMissing, trailing12mMissing] = await Promise.all([
+    missingOpeningPositions(ytdStart, today),
+    missingOpeningPositions(trailing12mStart, today),
+  ]);
+
+  return {
+    ytd: guardWindowReturn(ytdRaw, ytdMissing),
+    trailing12m: guardWindowReturn(trailing12mRaw, trailing12mMissing),
+    byVintageYear,
+    byQuarter,
+  };
 }
