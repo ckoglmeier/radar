@@ -3,7 +3,7 @@
 // Standalone test fixture for parseDealLogFile — no DB required.
 // Run: node src/models/test-evaluations.js
 
-import { parseDealLogFile } from './evaluations.js';
+import { parseDealLogFile, extractCompanyName } from './evaluations.js';
 import { writeFileSync, mkdtempSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
@@ -493,6 +493,20 @@ test('file_path is set in result', () => {
 console.log('\n  Integration Tests (synthetic deal-log fixtures)\n');
 
 const FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), 'test-fixtures/deal-log');
+
+// extractCompanyName — shared by importer and backfill (migration 027)
+test('extractCompanyName: "Deal Log:" heading', () => {
+  eq(extractCompanyName('# Deal Log: Acme Autonomy\n\nBody'), 'Acme Autonomy');
+});
+test('extractCompanyName: heading with em-dash suffix stripped', () => {
+  eq(extractCompanyName('# Deal Log: Naboo — Series A\n'), 'Naboo');
+});
+test('extractCompanyName: "Company — Deal Assessment" alt form', () => {
+  eq(extractCompanyName('# Delta Dynamics — Deal Assessment\n'), 'Delta Dynamics');
+});
+test('extractCompanyName: null content -> null', () => {
+  eq(extractCompanyName(null), null);
+});
 
 // 1. Acme Autonomy — "Deal Log:" heading, date in filename, council table
 test('Fixture: Acme Autonomy — full parse (Deal Log heading, filename date, council table)', () => {

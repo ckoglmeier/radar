@@ -17,6 +17,22 @@ const DEAL_LOG_DIR = process.env.DEAL_LOG_DIR || null;
  * Parse a deal-log markdown file and extract structured fields.
  * Returns null if the file can't be parsed meaningfully.
  */
+/**
+ * Extract the company name from deal-log markdown content.
+ * Formats: "# Deal Log: Company Name" / "# Deal Diagnosis: Company Name"
+ * or "# Company Name — Deal Assessment" (and variants).
+ * Exported so the one-time backfill (db/backfill-eval-companies.js) uses
+ * exactly the import path's logic.
+ */
+export function extractCompanyName(content) {
+  if (!content) return null;
+  const headingMatch = content.match(/^#\s+(?:Deal\s+(?:Log|Diagnosis|Assessment)):\s*(.+?)(?:\s*—.*)?$/m);
+  if (headingMatch) return headingMatch[1].trim();
+  const altHeading = content.match(/^#\s+(.+?)(?:\s*—\s*Deal\s+(?:Assessment|Log|Diagnosis))?$/m);
+  if (altHeading) return altHeading[1].trim();
+  return null;
+}
+
 export function parseDealLogFile(filePath) {
   const content = readFileSync(filePath, 'utf-8');
   const filename = basename(filePath);
@@ -33,20 +49,8 @@ export function parseDealLogFile(filePath) {
     if (dateLine) eval_date = dateLine[1];
   }
 
-  // Extract company_name from heading
-  // Formats: "# Deal Log: Company Name" or "# Deal Diagnosis: Company Name"
-  let company_name = null;
-  const headingMatch = content.match(/^#\s+(?:Deal\s+(?:Log|Diagnosis|Assessment)):\s*(.+?)(?:\s*—.*)?$/m);
-  if (headingMatch) {
-    company_name = headingMatch[1].trim();
-  }
-  if (!company_name) {
-    // Try "# Company Name — Deal Assessment" or similar
-    const altHeading = content.match(/^#\s+(.+?)(?:\s*—\s*Deal\s+(?:Assessment|Log|Diagnosis))?$/m);
-    if (altHeading) {
-      company_name = altHeading[1].trim();
-    }
-  }
+  // Extract company_name from heading (shared with the backfill script)
+  let company_name = extractCompanyName(content);
 
   // Extract thesis_fit_score — look for "Thesis Fit subtotal:" with various formats
   // Formats: "**Thesis Fit subtotal:** ... **21.5/25**"
@@ -280,8 +284,8 @@ async function runDealLogImport(dir, opts = {}) {
         `INSERT INTO deal_evaluations
            (investment_id, pipeline_invite_id, eval_date, file_path, thesis_fit_score, viability_score, total_score, verdict, invested,
             council_bull_score, council_bear_score, council_calibrator_score, council_spread, council_consensus, council_divergence, council_cfo_verdict,
-            eval_mode, raw_content)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+            eval_mode, raw_content, company_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
         [
           investment_id,
           pipeline_invite_id,
@@ -301,6 +305,7 @@ async function runDealLogImport(dir, opts = {}) {
           parsed.council_cfo_verdict,
           evalMode,
           raw_content,
+          parsed.company_name,
         ]
       );
 
@@ -369,6 +374,18 @@ export async function getEvaluationByCompany(search) {
     [`%${slug}%`]
   );
   if (byPath.length > 0) return resolveEvalContent(byPath[0]);
+
+  // Own persisted company name (evals for passed deals have no joins to match)
+  const byOwnName = await query(
+    `SELECT de.*, i.company_name AS inv_company_name
+     FROM deal_evaluations de
+     LEFT JOIN investments i ON de.investment_id = i.id
+     WHERE de.company_name ILIKE $1
+     ORDER BY de.eval_date DESC NULLS LAST
+     LIMIT 1`,
+    [`%${search}%`]
+  );
+  if (byOwnName.length > 0) return resolveEvalContent(byOwnName[0]);
 
   // Try parsing company name from file content
   const all = await listEvaluations();
