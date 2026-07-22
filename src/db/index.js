@@ -157,6 +157,19 @@ export async function closeDb() {
   _pgliteInstances.clear();
 }
 
+/**
+ * True when the currently-active driver (tenant-scoped, else DATABASE_URL)
+ * is PGlite. PGlite supports real cross-statement transactions (BEGIN/COMMIT/
+ * ROLLBACK persist across separate query() calls on the same embedded
+ * instance); the Neon HTTP driver does not (each query() call is an
+ * independent HTTP request, so a mid-sequence BEGIN has nothing to commit
+ * against). src/intake's withTx() uses this to pick a strategy.
+ */
+export async function isPgliteActive() {
+  const driver = tenantStorage.getStore() ?? await getDefaultDriver();
+  return driver.isPglite;
+}
+
 export async function query(text, params = []) {
   // Fails open to DATABASE_URL when no ALS tenant scope is set. Correct for
   // single-tenant (today); becomes a cross-tenant hazard once multi-tenancy

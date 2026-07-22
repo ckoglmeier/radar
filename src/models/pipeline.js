@@ -1,6 +1,7 @@
 // CRUD + change detection for the pipeline_invites / pipeline_events tables.
 import { query } from '../db/index.js';
 import { matchCompanyToInvestment } from '../utils/match.js';
+import { normalize as normalizeCompanyName, tokenize, STOPWORDS } from '../utils/company-names.js';
 
 // Fields we track for change detection. Keys are pipeline_invites columns,
 // values come from the parsed invite object.
@@ -172,6 +173,53 @@ export async function logEvent(inviteId, eventType, oldValue, newValue, notes) {
      VALUES ($1, $2, $3, $4, $5)`,
     [inviteId, eventType, oldValue, newValue, notes || null]
   );
+}
+
+// Fuzzy company-name match against pipeline_invites (as opposed to
+// matchCompanyToInvestment, which matches against investments). Same
+// 3-strategy cascade evaluations.js's deal-log importer has always used to
+// link an eval to an existing invite: exact case-insensitive, then
+// normalized-name (equal or prefix either direction), then shared
+// discriminating token. Extracted here so both callers (the deal-log
+// importer and src/intake) share one implementation instead of drifting.
+//
+// Pass `{ allInvites }` (rows of { id, status, company_name }) to skip the
+// per-call SELECT when batching. Returns
+// { invite_id, status, match_basis } — match_basis is 'exact' | 'normalized'
+// | 'token' | null.
+export async function matchCompanyToPipelineInvite(companyName, { allInvites } = {}) {
+  if (!companyName) return { invite_id: null, status: null, match_basis: null };
+
+  const exactRows = await query(
+    `SELECT id, status, company_name FROM pipeline_invites WHERE LOWER(company_name) = LOWER($1) LIMIT 1`,
+    [companyName]
+  );
+  if (exactRows.length > 0) {
+    return { invite_id: exactRows[0].id, status: exactRows[0].status, match_basis: 'exact' };
+  }
+
+  const invites = allInvites || await query(`SELECT id, status, company_name FROM pipeline_invites`);
+  const normalized = normalizeCompanyName(companyName);
+
+  for (const inv of invites) {
+    const invNorm = normalizeCompanyName(inv.company_name);
+    if (invNorm === normalized || invNorm.startsWith(normalized) || normalized.startsWith(invNorm)) {
+      return { invite_id: inv.id, status: inv.status, match_basis: 'normalized' };
+    }
+  }
+
+  const tokens = tokenize(normalized);
+  if (tokens.length > 0) {
+    for (const inv of invites) {
+      const invTokens = normalizeCompanyName(inv.company_name).split(/\s+/).filter(t => !STOPWORDS.has(t));
+      const overlap = tokens.filter(t => invTokens.includes(t));
+      if (overlap.length > 0) {
+        return { invite_id: inv.id, status: inv.status, match_basis: 'token' };
+      }
+    }
+  }
+
+  return { invite_id: null, status: null, match_basis: null };
 }
 
 export async function listInvites({ status, limit = 100 } = {}) {

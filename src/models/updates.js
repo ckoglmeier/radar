@@ -70,6 +70,19 @@ function hasSectionContent(body, sectionHeading) {
 
 export function parseUpdateFile(filePath) {
   const text = readFileSync(filePath, 'utf-8');
+  const parsed = parseUpdateContent(text);
+  if (!parsed) return null;
+  return { ...parsed, file_path: filePath };
+}
+
+// Content-only variant of parseUpdateFile — same frontmatter/section-detection
+// logic, no filesystem read. Exists so callers that already have bytes in
+// hand (the intake pipeline parsing an uploaded/pasted artifact) can reuse
+// the exact field-extraction rules instead of duplicating them. Returns null
+// when the required frontmatter (company/quarter/date) is absent — callers
+// needing a best-effort parse of freeform text (no frontmatter) should treat
+// a null return as "no structured fields found", not an error.
+export function parseUpdateContent(text) {
   const { frontmatter, body } = parseFrontmatter(text);
 
   if (!frontmatter.company || !frontmatter.quarter || !frontmatter.date) {
@@ -77,7 +90,6 @@ export function parseUpdateFile(filePath) {
   }
 
   return {
-    file_path: filePath,
     company_name: frontmatter.company,
     quarter: frontmatter.quarter,
     update_date: frontmatter.date,
