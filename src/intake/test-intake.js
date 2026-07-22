@@ -121,6 +121,16 @@ function buildInviteEml({ messageId = 'msg-intake-test-000000000001' } = {}) {
   return Buffer.from(eml, 'utf-8');
 }
 
+function buildAngelListPageHtml(companyName = 'Northstar Robotics') {
+  return Buffer.from(`<!doctype html><html><head><title>${companyName} | AngelList</title></head><body>
+    <h2>Note from Example Syndicate</h2>
+    <dl><dt>Round</dt><dd>Series A</dd><dt>Post-money valuation</dt><dd>$48M USD</dd>
+    <dt>Allocation</dt><dd>$250k USD</dd><dt>Gross carry</dt><dd>20.0%</dd>
+    <dt>Min. investment</dt><dd>$5,000 USD</dd><dt>Markets</dt><dd>Robotics</dd></dl>
+    <p>Confidential: Disclosing deal information will result in removal from AngelList</p>
+  </body></html>`);
+}
+
 function dealLogFixtures() {
   const dir = join(__dirname, '..', 'models', 'test-fixtures', 'deal-log');
   return readdirSync(dir).filter(f => f.endsWith('.md')).map(f => ({
@@ -146,45 +156,62 @@ async function run() {
   // classifyArtifact — one family per branch
   // -------------------------------------------------------------------
 
-  await test('classifyArtifact: AngelList invite .eml -> pipeline_invite, high confidence', () => {
+  await test('classifyArtifact: AngelList invite .eml -> pipeline_invite, high confidence', async () => {
     const eml = buildInviteEml();
-    const result = classifyArtifact(eml, 'invite.eml', 'message/rfc822');
+    const result = await classifyArtifact(eml, 'invite.eml', 'message/rfc822');
     eq(result.type, 'pipeline_invite');
     eq(result.confidence, 'high');
     eq(result.parsed.company_name, 'Acme Autonomy (YC W24)');
     eq(result.parsed.lead, 'Example Syndicate');
   });
 
+  await test('classifyArtifact: AngelList page-save HTML -> pipeline_invite with real fields', async () => {
+    const result = await classifyArtifact(buildAngelListPageHtml(), 'northstar.html', 'text/html');
+    eq(result.type, 'pipeline_invite');
+    eq(result.confidence, 'high');
+    eq(result.parsed.company_name, 'Northstar Robotics');
+    eq(result.parsed.round, 'Series A');
+    eq(result.parsed.allocation_usd, 250000);
+    eq(result.parsed.valuation_usd, 48000000);
+  });
+
+  await test('classifyArtifact: non-AngelList HTML stays residual company_update', async () => {
+    const html = Buffer.from('<!doctype html><html><body><h1>Founder memo</h1><p>Round and market notes.</p></body></html>');
+    const result = await classifyArtifact(html, 'memo.html', 'text/html');
+    eq(result.type, 'company_update');
+    eq(result.confidence, 'low');
+  });
+
   for (const fixture of dealLogFixtures()) {
-    await test(`classifyArtifact: deal-log fixture ${fixture.filename} -> deal_log_eval, high confidence`, () => {
-      const result = classifyArtifact(Buffer.from(fixture.content), fixture.filename, 'text/markdown');
+    await test(`classifyArtifact: deal-log fixture ${fixture.filename} -> deal_log_eval, high confidence`, async () => {
+      const result = await classifyArtifact(Buffer.from(fixture.content), fixture.filename, 'text/markdown');
       eq(result.type, 'deal_log_eval');
       eq(result.confidence, 'high');
       ok(result.parsed.company_name, 'company_name extracted');
     });
   }
 
-  await test('classifyArtifact: synthetic founder-update text (no frontmatter/grammar) -> company_update, low confidence', () => {
+  await test('classifyArtifact: synthetic founder-update text (no frontmatter/grammar) -> company_update, low confidence', async () => {
     const text = 'Hey Chandler,\n\nQuick update on how things are going this month. Revenue is up, team is heads-down.\n\nBest,\nJane';
-    const result = classifyArtifact(Buffer.from(text), 'update.txt', 'text/plain');
+    const result = await classifyArtifact(Buffer.from(text), 'update.txt', 'text/plain');
     eq(result.type, 'company_update');
     eq(result.confidence, 'low');
   });
 
-  await test('classifyArtifact: fake PDF buffer -> document, high confidence (stored, not parsed)', () => {
-    const result = classifyArtifact(Buffer.from('%PDF-1.4\n%fake pdf bytes for a test fixture'), 'deck.pdf', 'application/pdf');
+  await test('classifyArtifact: fake PDF buffer -> document, high confidence (stored, not parsed)', async () => {
+    const result = await classifyArtifact(Buffer.from('%PDF-1.4\n%fake pdf bytes for a test fixture'), 'deck.pdf', 'application/pdf');
     eq(result.type, 'document');
     eq(result.confidence, 'high');
     eq(result.parsed, null);
   });
 
-  await test('classifyArtifact: random bytes -> unknown', () => {
-    const result = classifyArtifact(randomBytes(256), 'blob', undefined);
+  await test('classifyArtifact: random bytes -> unknown', async () => {
+    const result = await classifyArtifact(randomBytes(256), 'blob', undefined);
     eq(result.type, 'unknown');
   });
 
-  await test('classifyArtifact: empty buffer -> unknown', () => {
-    const result = classifyArtifact(Buffer.alloc(0), 'empty', undefined);
+  await test('classifyArtifact: empty buffer -> unknown', async () => {
+    const result = await classifyArtifact(Buffer.alloc(0), 'empty', undefined);
     eq(result.type, 'unknown');
   });
 
@@ -444,6 +471,22 @@ async function run() {
   }
 
   try {
+    await test('AngelList HTML page-save previews and commits as a populated pipeline deal', async () => {
+      const companyName = `ZZINTAKE HTML Page ${stamp}`;
+      const page = buildAngelListPageHtml(companyName);
+      const preview = await intakePreview({ content: page, filename: 'deal.html', mime: 'text/html' });
+      eq(preview.type, 'pipeline_invite');
+      eq(preview.fields.company_name, companyName);
+      eq(preview.fields.round, 'Series A');
+      eq(preview.fields.allocation_usd, 250000);
+      const result = await intakeCommit({ preview_id: preview.preview_id });
+      const row = (await query(`SELECT company_name, round, allocation_usd, valuation_usd FROM pipeline_invites WHERE id = $1`, [result.created.id]))[0];
+      eq(row.company_name, companyName);
+      eq(row.round, 'Series A');
+      eq(Number(row.allocation_usd), 250000);
+      eq(Number(row.valuation_usd), 48000000);
+    });
+
     await test('new-deal override: unmatched pitch text (classifies company_update) becomes a new deal', async () => {
       // The reported gap: a NEW deal arrives as plain founder text — the
       // residual classifier calls it company_update with NO_COMPANY_MATCH,

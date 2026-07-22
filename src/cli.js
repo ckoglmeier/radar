@@ -39,6 +39,7 @@ import { councilEvaluate } from './council/evaluate.js';
 import { AgentSdkProvider } from './providers/agent-sdk-provider.js';
 import { resolveAuthMode, validateAuthStartup, formatAuthStatus, probeActiveCredential } from './providers/auth-mode.js';
 import { printUpdatesList, printUpdateDetail, printUpdateTimeline } from './cli/printers/updates.js';
+import { reextractIntake } from './intake/reextract.js';
 
 program
   .name('radar')
@@ -93,6 +94,32 @@ program
         for (const m of result.migrations) console.log(chalk.dim(`  Applied: ${m}`));
         console.log(chalk.green(`\n  ${result.applied} migration(s) applied.\n`));
       }
+    } catch (err) {
+      console.error(chalk.red(`\n  Error: ${err.message}\n`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('intake:reextract')
+  .description('Fill missing pipeline fields from stored intake provenance documents')
+  .option('--dry-run', 'Print proposed changes without writing', false)
+  .action(async (opts) => {
+    try {
+      const results = await reextractIntake({ dryRun: opts.dryRun });
+      console.log(chalk.dim(`\n  Intake re-extraction ${opts.dryRun ? '(dry run)' : '(applied)'}`));
+      if (results.length === 0) {
+        console.log(chalk.green('  No fillable fields found.\n'));
+        return;
+      }
+      for (const result of results) {
+        console.log(`\n  ${chalk.cyan(result.company_name)} ${chalk.dim(`#${result.id}`)}`);
+        for (const [field, change] of Object.entries(result.changes)) {
+          console.log(`    ${field}: ${chalk.dim('NULL')} → ${change.to}`);
+        }
+      }
+      const fieldCount = results.reduce((sum, result) => sum + Object.keys(result.changes).length, 0);
+      console.log(chalk.green(`\n  ${opts.dryRun ? 'Would fill' : 'Filled'} ${fieldCount} field(s) across ${results.length} deal(s).\n`));
     } catch (err) {
       console.error(chalk.red(`\n  Error: ${err.message}\n`));
       process.exit(1);

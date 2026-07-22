@@ -22,6 +22,8 @@ import { hasDealLogHeading, parseDealLogContent, extractCompanyName } from '../m
 import { parseUpdateContent } from '../models/updates.js';
 import { matchCompanyToInvestment, loadInvestmentUniverse } from '../utils/match.js';
 import { parseEml, looksLikeRFC822 } from './parse-eml.js';
+import { extractHtmlText, extractPdfText } from './extract-text.js';
+import { extractDealFields, isAngelListDealText } from './extract-fields.js';
 
 // entity_type (documents table enum) a domain type's created row attaches
 // as, per the provenance attachment matrix. 'document' has no domain row —
@@ -110,16 +112,35 @@ function bufferToTextOrNull(buf) {
  * `fields` shape) so intakePreview/intakeCommit can build both the trimmed
  * preview and the full domain-row insert from one classification call.
  */
-export function classifyArtifact(content, filename, mime) {
+export async function classifyArtifact(content, filename, mime) {
   const buf = Buffer.isBuffer(content) ? content : Buffer.from(content);
   const lowerName = (filename || '').toLowerCase();
+  const lowerMime = (mime || '').toLowerCase();
 
-  // --- PDF: stored, not parsed (v1) ---
-  if (mime === 'application/pdf' || lowerName.endsWith('.pdf')) {
+  // --- PDF page-save/deck: text-layer extraction is best-effort. Scanned,
+  // malformed, and non-AngelList PDFs keep the v1 store-only behavior. ---
+  if (lowerMime === 'application/pdf' || lowerName.endsWith('.pdf')) {
+    const pdfText = await extractPdfText(buf);
+    if (pdfText && isAngelListDealText(pdfText)) {
+      return { type: 'pipeline_invite', confidence: 'high', parsed: extractDealFields(pdfText) };
+    }
     return { type: 'document', confidence: 'high', parsed: null };
   }
 
-  const text = bufferToTextOrNull(buf);
+  let text = bufferToTextOrNull(buf);
+
+  // --- HTML page-save: only AngelList-shaped pages become pipeline deals.
+  // Other HTML continues through the residual text path below. ---
+  const looksLikeHtml = lowerMime === 'text/html'
+    || lowerName.endsWith('.html')
+    || lowerName.endsWith('.htm')
+    || /^\s*(?:<!doctype\s+html|<html\b)/i.test(text || '');
+  if (looksLikeHtml && text) {
+    text = extractHtmlText(text);
+    if (isAngelListDealText(text)) {
+      return { type: 'pipeline_invite', confidence: 'high', parsed: extractDealFields(text) };
+    }
+  }
 
   // --- RFC822 email: reuse the EXISTING AngelList invite parser ---
   const looksLikeEmail = lowerName.endsWith('.eml') || mime === 'message/rfc822' || (text && looksLikeRFC822(text));
@@ -230,7 +251,7 @@ export async function intakePreview({ content, filename, mime }) {
   // call here too.
   await sweepExpiredPending();
 
-  const classified = classifyArtifact(buf, filename, mime);
+  const classified = await classifyArtifact(buf, filename, mime);
 
   if (classified.type === 'unknown' && isUnsupportedBinaryMime(mime)) {
     return { error: 'UNSUPPORTED_MIME' };
@@ -568,7 +589,7 @@ export async function intakeCommit({ preview_id, overrides = {} }) {
     let created = refs.created ?? null;
 
     if (effectiveType !== 'document' && !created) {
-      const classified = classifyArtifact(content, pending.filename, pending.mime);
+      const classified = await classifyArtifact(content, pending.filename, pending.mime);
       created = await writeDomainRow(effectiveType, classified.parsed, content, preview_id, overrides);
       refs = { ...refs, created };
       await updatePendingRefs(pending.id, refs);
