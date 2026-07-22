@@ -158,6 +158,10 @@ export async function closeDb() {
 }
 
 export async function query(text, params = []) {
+  // Fails open to DATABASE_URL when no ALS tenant scope is set. Correct for
+  // single-tenant (today); becomes a cross-tenant hazard once multi-tenancy
+  // lands, at which point this must throw instead of falling back. See
+  // RADAR_SUPABASE_AUTH_PLAN.md §7.
   const driver = tenantStorage.getStore() ?? await getDefaultDriver();
   return driver.query(text, params);
 }

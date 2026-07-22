@@ -16,6 +16,10 @@
  *
  * Runs against DATABASE_URL. DO NOT point this at a remote/Neon DB from here —
  * CK runs the real cutover. Tests exercise it against throwaway PGlite.
+ *
+ * Relies on query()'s no-ALS-scope fallback to DATABASE_URL (single-tenant
+ * only today — see src/db/index.js); must be revisited once multi-tenancy
+ * lands.
  */
 
 import { readFileSync, readdirSync, existsSync } from 'fs';
