@@ -127,7 +127,9 @@ test('Company from "# Company — Deal Assessment"', () => {
 test('Company from "# Investment Evaluation: Company"', () => {
   // This matches the alt heading pattern (anything before end of line)
   const result = parseMarkdown('test.md', '# Investment Evaluation: Vantage.AI\nContent.');
-  eq(result.company_name, 'Investment Evaluation: Vantage.AI');
+  // Updated with migration 027's extractor: the eval-type prefix is
+  // vocabulary, not part of the company's name.
+  eq(result.company_name, 'Vantage.AI');
 });
 
 test('Company name strips em-dash suffix from heading', () => {
