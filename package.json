@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Decision infrastructure for private market investors. Portfolio tracking, thesis management, deal pipeline, and bet sizing.",
   "type": "module",
-  "license": "AGPL-3.0",
+  "license": "MIT",
   "author": "Chandler Koglmeier",
   "repository": {
     "type": "git",
