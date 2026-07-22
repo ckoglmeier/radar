@@ -507,6 +507,24 @@ test('extractCompanyName: "Company — Deal Assessment" alt form', () => {
 test('extractCompanyName: null content -> null', () => {
   eq(extractCompanyName(null), null);
 });
+test('extractCompanyName: strips round/eval suffixes', () => {
+  eq(extractCompanyName('# Mark — Investment Evaluation\n'), 'Mark');
+  eq(extractCompanyName('# Mulberry Industries — Seed\n'), 'Mulberry Industries');
+  eq(extractCompanyName('# StirlingX — Series A\n'), 'StirlingX');
+  eq(extractCompanyName('# Task Engineering (taskeng.ai) — Deck v4 Regrade\n'), 'Task Engineering (taskeng.ai)');
+});
+test('extractCompanyName: unknown em-dash suffix kept (part of the name)', () => {
+  eq(extractCompanyName('# Sword — Shield Robotics\n'), 'Sword — Shield Robotics');
+  eq(extractCompanyName('# PolarGrid — CDN for AI Inference\n'), 'PolarGrid — CDN for AI Inference');
+});
+test('extractCompanyName: stacked context suffixes stripped', () => {
+  eq(extractCompanyName('# Groq — Portfolio Review — 2026-04-10\n'), 'Groq');
+  eq(extractCompanyName('# Yuva Pay — Portfolio Review 2026-04-14\n'), 'Yuva Pay');
+  eq(extractCompanyName('# Naboo — New Inbound (Mana Ventures Syndicate)\n'), 'Naboo');
+  eq(extractCompanyName('# Harbinger — Series D / Crossover Round\n'), 'Harbinger');
+  eq(extractCompanyName('# MICRO1 INC. — 2026-04-17\n'), 'MICRO1 INC.');
+  eq(extractCompanyName('# Mimi & Grace — Growth Raise\n'), 'Mimi & Grace');
+});
 
 // 1. Acme Autonomy — "Deal Log:" heading, date in filename, council table
 test('Fixture: Acme Autonomy — full parse (Deal Log heading, filename date, council table)', () => {

@@ -29,10 +29,13 @@ function nameFromFilePath(filePath) {
     .join(' ');
 }
 
+const recomputeAll = process.argv.includes('--all');
 const rows = await query(
-  `SELECT id, file_path, raw_content FROM deal_evaluations WHERE company_name IS NULL ORDER BY id`
+  recomputeAll
+    ? `SELECT id, file_path, raw_content, company_name FROM deal_evaluations ORDER BY id`
+    : `SELECT id, file_path, raw_content, company_name FROM deal_evaluations WHERE company_name IS NULL ORDER BY id`
 );
-console.log(`${rows.length} evaluation(s) missing company_name`);
+console.log(`${rows.length} evaluation(s) to ${recomputeAll ? 'recompute' : 'backfill'}`);
 
 let fromHeading = 0;
 let fromSlug = 0;
@@ -50,6 +53,7 @@ for (const row of rows) {
     console.log(`  ! id=${row.id} unresolved (no heading, no usable file_path)`);
     continue;
   }
+  if (name === row.company_name) continue;
   await query(`UPDATE deal_evaluations SET company_name = $1 WHERE id = $2`, [name, row.id]);
 }
 

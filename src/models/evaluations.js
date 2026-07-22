@@ -26,11 +26,37 @@ const DEAL_LOG_DIR = process.env.DEAL_LOG_DIR || null;
  */
 export function extractCompanyName(content) {
   if (!content) return null;
-  const headingMatch = content.match(/^#\s+(?:Deal\s+(?:Log|Diagnosis|Assessment)):\s*(.+?)(?:\s*—.*)?$/m);
-  if (headingMatch) return headingMatch[1].trim();
-  const altHeading = content.match(/^#\s+(.+?)(?:\s*—\s*Deal\s+(?:Assessment|Log|Diagnosis))?$/m);
-  if (altHeading) return altHeading[1].trim();
-  return null;
+  let name = null;
+  const headingMatch = content.match(/^#\s+(?:Deal\s+(?:Log|Diagnosis|Assessment)):\s*(.+?)$/m);
+  if (headingMatch) name = headingMatch[1].trim();
+  if (!name) {
+    const altHeading = content.match(/^#\s+(.+?)$/m);
+    if (altHeading) name = altHeading[1].trim();
+  }
+  if (!name) return null;
+  // Strip trailing em-dash segments that are eval/round/context vocabulary,
+  // not part of the company's name ("Mark — Investment Evaluation" -> "Mark",
+  // "Groq — Portfolio Review — 2026-04-10" -> "Groq"). Suffixes stack, so
+  // strip repeatedly until stable. Unknown suffixes are kept — a genuine
+  // em-dash company name ("Sword — Shield Robotics") survives.
+  const SUFFIX = new RegExp(
+    '\\s*—\\s*(?:' +
+    [
+      'Deal\\s+(?:Assessment|Log|Diagnosis|Evaluation|Review)',
+      'Investment\\s+Evaluation', 'Evaluation',
+      'Portfolio\\s+Review(?:\\s*—?\\s*\\d{4}-\\d{2}-\\d{2})?',
+      'New\\s+Inbound.*',
+      '(?:Deck\\s+)?v?\\d+\\s*Regrade', 'Deck.*Regrade', 'Regrade',
+      'Pre-?Seed', 'Seed(?:\\s+Round)?',
+      'Series\\s+[A-Z]\\d*\\+?(?:\\s*/\\s*[^—]*)?',
+      'Angel(?:\\s+Round)?', 'Growth\\s+Raise', 'Crossover\\s+Round',
+      '\\d{4}-\\d{2}-\\d{2}',
+    ].join('|') +
+    ')\\s*$', 'i'
+  );
+  let prev;
+  do { prev = name; name = name.replace(SUFFIX, '').trim(); } while (name && name !== prev);
+  return name || null;
 }
 
 export function parseDealLogFile(filePath) {
