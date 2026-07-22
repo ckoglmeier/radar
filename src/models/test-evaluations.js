@@ -517,6 +517,10 @@ test('extractCompanyName: unknown em-dash suffix kept (part of the name)', () =>
   eq(extractCompanyName('# Sword — Shield Robotics\n'), 'Sword — Shield Robotics');
   eq(extractCompanyName('# PolarGrid — CDN for AI Inference\n'), 'PolarGrid — CDN for AI Inference');
 });
+test('extractCompanyName: parenthesized context stripped, real parens kept', () => {
+  eq(extractCompanyName('# Boom Supersonic (Portfolio Review)\n'), 'Boom Supersonic');
+  eq(extractCompanyName('# Hermes Robotics (YC W21) — Portfolio Review 2026-04-14\n'), 'Hermes Robotics (YC W21)');
+});
 test('extractCompanyName: prefix-form vocabulary', () => {
   eq(extractCompanyName('# Investment Evaluation: ClearPath.AI\n'), 'ClearPath.AI');
 });

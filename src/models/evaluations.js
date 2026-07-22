@@ -56,6 +56,9 @@ export function extractCompanyName(content) {
   );
   let prev;
   do { prev = name; name = name.replace(SUFFIX, '').trim(); } while (name && name !== prev);
+  // Parenthesized context: "Boom Supersonic (Portfolio Review)" — strip when
+  // the parenthetical is pure vocabulary (a real "(YC W21)" etc. survives).
+  name = name.replace(/\s*\((?:Portfolio\s+Review|Deal\s+Evaluation|Investment\s+Evaluation|Regrade)\)\s*$/i, '').trim();
   return name || null;
 }
 
