@@ -109,6 +109,9 @@ try {
       const row = vintageTvpi.rows.find(candidate => Number(candidate.group.vintage) === existing.vintage_year);
       assert.ok(row, `registry vintage ${existing.vintage_year} exists`);
       approx(row.value, existing.tvpi);
+      assert.equal(row.details.invested, Number(existing.invested));
+      assert.equal(row.details.current_value, Number(existing.current_value));
+      approx(row.details.current_value / row.details.invested, row.value, 0.001);
     }
 
     const thesisTvpi = await metricQuery({ metric: 'tvpi', groupBy: ['thesis'] });

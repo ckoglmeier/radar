@@ -349,6 +349,12 @@ function sinceInceptionRow(group, metricQuery, asOf) {
     value,
     coverage: descriptiveCoverage(positions),
     underlying: { positions, cash_flows: cashFlows },
+    details: {
+      positions: positions.length,
+      invested,
+      current_value: currentValue,
+      realized,
+    },
   };
 }
 
@@ -386,19 +392,36 @@ async function existingReportValues(metricQuery) {
 
   if (dimensions.length === 0 && RETURN_METRICS.has(metric)) {
     const { summary } = await portfolioSummary();
-    if (metric === 'tvpi') return new Map([['', numeric(summary.tvpi, null)]]);
-    if (metric === 'dpi') {
-      const invested = numeric(summary.total_invested);
-      return new Map([['', invested > 0 ? numeric(summary.total_realized) / invested : null]]);
-    }
-    return new Map([['', summary.irr == null ? null : Number(summary.irr)]]);
+    const invested = numeric(summary.total_invested);
+    const value = metric === 'tvpi'
+      ? numeric(summary.tvpi, null)
+      : metric === 'dpi'
+        ? (invested > 0 ? numeric(summary.total_realized) / invested : null)
+        : (summary.irr == null ? null : Number(summary.irr));
+    return new Map([['', {
+      value,
+      details: {
+        positions: Number(summary.total_investments || 0),
+        invested,
+        current_value: metric === 'tvpi' && value != null ? value * invested : numeric(summary.total_net_value),
+        realized: numeric(summary.total_realized),
+      },
+    }]]);
   }
 
   if (dimensions.length === 1 && dimensions[0] === 'vintage' && RETURN_METRICS.has(metric)) {
     const { byVintageYear } = await performanceWindows();
     return new Map(byVintageYear.map(row => [
       groupKey(dimensions, { vintage: String(row.vintage_year) }),
-      row[metric] == null ? null : Number(row[metric]),
+      {
+        value: row[metric] == null ? null : Number(row[metric]),
+        details: {
+          positions: Number(row.deal_count || 0),
+          invested: numeric(row.invested),
+          current_value: numeric(row.current_value),
+          realized: numeric(row.realized),
+        },
+      },
     ]));
   }
 
@@ -406,7 +429,15 @@ async function existingReportValues(metricQuery) {
     const rows = await thesisPerformance();
     return new Map(rows.map(row => [
       groupKey(dimensions, { thesis: row.thesis }),
-      row[metric] == null ? null : Number(row[metric]),
+      {
+        value: row[metric] == null ? null : Number(row[metric]),
+        details: {
+          positions: Number(row.deal_count || 0),
+          invested: numeric(row.total_invested),
+          current_value: numeric(row.total_net_value),
+          realized: null,
+        },
+      },
     ]));
   }
 
@@ -414,7 +445,15 @@ async function existingReportValues(metricQuery) {
     const { rows } = await gpSummary();
     return new Map(rows.map(row => [
       groupKey(dimensions, { gp: row.gp_name }),
-      row.tvpi == null ? null : Number(row.tvpi),
+      {
+        value: row.tvpi == null ? null : Number(row.tvpi),
+        details: {
+          positions: Number(row.deal_count || 0),
+          invested: numeric(row.total_invested),
+          current_value: numeric(row.total_value),
+          realized: null,
+        },
+      },
     ]));
   }
 
@@ -422,7 +461,15 @@ async function existingReportValues(metricQuery) {
     const { byStage } = await stageBreakdown();
     return new Map(byStage.map(row => [
       groupKey(dimensions, { stage: row.stage_bucket }),
-      row[metric] == null ? null : Number(row[metric]),
+      {
+        value: row[metric] == null ? null : Number(row[metric]),
+        details: {
+          positions: Number(row.deal_count || 0),
+          invested: numeric(row.net_invested),
+          current_value: numeric(row.total_value),
+          realized: numeric(row.realized),
+        },
+      },
     ]));
   }
 
@@ -434,7 +481,9 @@ async function applyExistingReportAdapter(metricQuery, rows) {
   if (!adapted) return rows;
   return rows.map(row => {
     const key = groupKey(metricQuery.groupBy, row.group);
-    return adapted.has(key) ? { ...row, value: adapted.get(key) } : row;
+    if (!adapted.has(key)) return row;
+    const existing = adapted.get(key);
+    return { ...row, value: existing.value, details: existing.details };
   });
 }
 
