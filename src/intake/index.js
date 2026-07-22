@@ -339,9 +339,25 @@ export async function intakePreview({ content, filename, mime }) {
 // which does its own investment matching, dedup by gmail_message_id/
 // deal_slug, and pipeline_events logging — exactly the path a Gmail-synced
 // invite goes through.
-async function insertPipelineInvite(parsed) {
+async function insertPipelineInvite(parsed, overrides = {}) {
   const universe = await loadInvestmentUniverse();
-  const result = await upsertInvite({ ...parsed, source: 'intake' }, { universe });
+  // New-deal override: the artifact didn't parse as an invite (founder
+  // email, pitch PDF, plain text) — synthesize a minimal invite from the
+  // user-supplied company name. deal_slug is required for the app's
+  // /pipeline/[slug] linking; keep it unique + readable.
+  let invite = parsed;
+  if (overrides.company_name && typeof overrides.company_name === 'string') {
+    const name = overrides.company_name.trim();
+    const slugBase = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const stamp = new Date().toISOString().slice(0, 10);
+    invite = {
+      ...(parsed && parsed.company_name ? parsed : {}),
+      company_name: name,
+      deal_slug: `${slugBase}-intake-${stamp}`,
+      status: 'invite',
+    };
+  }
+  const result = await upsertInvite({ ...invite, source: 'intake' }, { universe });
   return { table: 'pipeline_invites', id: result.id };
 }
 
@@ -479,7 +495,7 @@ async function insertCompanyUpdate(parsed, content, preview_id, overrides) {
 }
 
 async function writeDomainRow(effectiveType, parsed, content, preview_id, overrides) {
-  if (effectiveType === 'pipeline_invite') return insertPipelineInvite(parsed);
+  if (effectiveType === 'pipeline_invite') return insertPipelineInvite(parsed, overrides);
   if (effectiveType === 'deal_log_eval') return insertDealLogEval(parsed, content);
   if (effectiveType === 'company_update') return insertCompanyUpdate(parsed, content, preview_id, overrides);
   throw new Error(`intakeCommit: no domain writer for type '${effectiveType}'`);
@@ -517,16 +533,26 @@ export async function intakeCommit({ preview_id, overrides = {} }) {
   const effectiveType = overrides.type || preview.type;
 
   if (overrides.type && overrides.type !== preview.type) {
-    if (!(preview.type === 'unknown' && overrides.type === 'document')) {
+    const toDocument = preview.type === 'unknown' && overrides.type === 'document';
+    // New-deal escape hatch: ANY artifact may become a new pipeline deal —
+    // a founder email that isn't an AngelList invite, a pitch-deck PDF, an
+    // unclassifiable pitch. Requires overrides.company_name (there is no
+    // existing row to match). The artifact rides along as provenance.
+    const toNewDeal = overrides.type === 'pipeline_invite';
+    if (!toDocument && !toNewDeal) {
       throw new Error(
         `intakeCommit: type override to '${overrides.type}' is not supported ` +
-        `(an unclassified artifact can only be overridden to 'document')`
+        `(overrides: 'document' for unclassified artifacts, or 'pipeline_invite' with company_name for new deals)`
       );
     }
   }
 
   const missing = [];
   if (preview.type === 'unknown' && !overrides.type) missing.push('type');
+  if (overrides.type === 'pipeline_invite' && overrides.type !== preview.type
+      && !(typeof overrides.company_name === 'string' && overrides.company_name.trim())) {
+    missing.push('company_name');
+  }
   if (effectiveType === 'document' && !(overrides.entity_type && overrides.entity_id)) missing.push('entity');
   if (effectiveType === 'company_update' && preview.company?.matched_investment_id == null && !(overrides.entity_type && overrides.entity_id)) {
     missing.push('entity');

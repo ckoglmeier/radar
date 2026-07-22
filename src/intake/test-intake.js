@@ -431,6 +431,65 @@ async function run() {
     }
   });
 
+
+  // --- New-deal override (any artifact can become a new pipeline deal) ---
+
+  async function cleanupIntakeInvites() {
+    const rows = await query(`SELECT id FROM pipeline_invites WHERE company_name LIKE 'ZZINTAKE %'`);
+    if (rows.length === 0) return;
+    const ids = rows.map(r => r.id);
+    await query(`DELETE FROM documents WHERE entity_type = 'pipeline_invite' AND entity_id = ANY($1::int[])`, [ids]);
+    await query(`DELETE FROM pipeline_events WHERE invite_id = ANY($1::int[])`, [ids]).catch(() => {});
+    await query(`DELETE FROM pipeline_invites WHERE id = ANY($1::int[])`, [ids]);
+  }
+
+  try {
+    await test('new-deal override: unmatched pitch text (classifies company_update) becomes a new deal', async () => {
+      // The reported gap: a NEW deal arrives as plain founder text — the
+      // residual classifier calls it company_update with NO_COMPANY_MATCH,
+      // and there is no existing entity to attach it to. The new-deal
+      // override is the exit.
+      const before = await query(`SELECT COUNT(*)::int AS n FROM pipeline_invites`);
+      const p = await intakePreview({ content: Buffer.from('random pitch text with no structure'), filename: 'pitch.txt', mime: 'text/plain' });
+      eq(p.type, 'company_update');
+      eq(p.warnings.includes('NO_COMPANY_MATCH'), true);
+      const r = await intakeCommit({ preview_id: p.preview_id, overrides: { type: 'pipeline_invite', company_name: 'ZZINTAKE NewDeal Co' } });
+      eq(r.created.table, 'pipeline_invites');
+      const row = (await query(`SELECT company_name, deal_slug, source FROM pipeline_invites WHERE id = $1`, [r.created.id]))[0];
+      eq(row.company_name, 'ZZINTAKE NewDeal Co');
+      eq(row.source, 'intake');
+      if (!row.deal_slug || !row.deal_slug.startsWith('zzintake-newdeal-co-intake-')) throw new Error(`bad slug: ${row.deal_slug}`);
+      const docs = await query(`SELECT id FROM documents WHERE entity_type = 'pipeline_invite' AND entity_id = $1`, [r.created.id]);
+      eq(docs.length, 1);
+      const after = await query(`SELECT COUNT(*)::int AS n FROM pipeline_invites`);
+      eq(after[0].n, before[0].n + 1);
+    });
+
+    await test('new-deal override without company_name rejected, nothing created', async () => {
+      const before = await query(`SELECT COUNT(*)::int AS n FROM pipeline_invites`);
+      const p = await intakePreview({ content: Buffer.from('another unstructured pitch'), filename: 'p2.txt', mime: 'text/plain' });
+      let threw = false;
+      try { await intakeCommit({ preview_id: p.preview_id, overrides: { type: 'pipeline_invite' } }); }
+      catch (e) { threw = /company_name/.test(e.message); }
+      eq(threw, true);
+      const after = await query(`SELECT COUNT(*)::int AS n FROM pipeline_invites`);
+      eq(after[0].n, before[0].n);
+    });
+
+    await test('new-deal override from document (pitch PDF) creates invite, deck attached', async () => {
+      const pdf = Buffer.concat([Buffer.from('%PDF-1.4 fake deck '), Buffer.from([0, 1, 2])]);
+      const p = await intakePreview({ content: pdf, filename: 'deck.pdf', mime: 'application/pdf' });
+      eq(p.type, 'document');
+      const r = await intakeCommit({ preview_id: p.preview_id, overrides: { type: 'pipeline_invite', company_name: 'ZZINTAKE Deck Co' } });
+      eq(r.created.table, 'pipeline_invites');
+      const docs = await query(`SELECT filename FROM documents WHERE entity_type = 'pipeline_invite' AND entity_id = $1`, [r.created.id]);
+      eq(docs.length, 1);
+      eq(docs[0].filename, 'deck.pdf');
+    });
+  } finally {
+    await cleanupIntakeInvites();
+  }
+
   console.log(`\n  ${passed} passed, ${failed} failed\n`);
   process.exit(failed > 0 ? 1 : 0);
 }
