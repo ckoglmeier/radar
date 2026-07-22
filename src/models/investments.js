@@ -10,6 +10,13 @@
 
 import { query } from '../db/index.js';
 
+/** Infer a default asset class when an import does not supply one. */
+export function inferAssetClass(companyName, explicitAssetClass) {
+  const explicit = explicitAssetClass?.trim();
+  if (explicit) return explicit;
+  return /\bfund\b/i.test(companyName || '') ? 'fund' : 'direct';
+}
+
 // AngelList exports "Closing" status rows with an Invest Date that drifts
 // between exports until the deal actually closes. The (company_name,
 // invest_date) upsert key would create a new row each time the date moves.
@@ -49,6 +56,7 @@ async function findClosingPosition(fields) {
  * AngelList "Invest Date" drift on pending deals from creating duplicate rows.
  */
 export async function upsertInvestment(fields) {
+  const assetClass = inferAssetClass(fields.company_name, fields.asset_class);
   const closingId = await findClosingPosition(fields);
   if (closingId) {
     await query(
@@ -64,10 +72,10 @@ export async function upsertInvestment(fields) {
       realized_value, net_value, multiple, investment_entity, lead,
       investment_type, round, stage_bucket, market, fund_name, allocation,
       instrument, round_size, valuation_cap_type, valuation_cap, discount,
-      carry, share_class, source
+      carry, share_class, source, asset_class
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-      $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+      $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
     )
     ON CONFLICT (company_name, invest_date)
     DO UPDATE SET
@@ -139,6 +147,7 @@ export async function upsertInvestment(fields) {
     fields.carry,
     fields.share_class,
     fields.source,
+    assetClass,
   ]);
 
   return { id: result[0].id, isNew: result[0].is_new };

@@ -22,6 +22,7 @@
   },
   "scripts": {
     "radar": "node src/cli.js",
+    "test:data-dir": "node src/config/test-data-dir.js",
     "setup": "node src/cli.js db:setup",
     "import": "node src/cli.js import angellist",
     "test:metrics": "node src/metrics/test-contract.js && node src/metrics/test-registry.js",

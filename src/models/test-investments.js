@@ -15,6 +15,7 @@ import {
   tagInvestment,
   untagInvestment,
   setConviction,
+  inferAssetClass,
 } from './investments.js';
 
 let passed = 0;
@@ -84,6 +85,29 @@ const BASE_FIELDS = {
 
 async function run() {
   const stamp = Date.now();
+
+  await test('asset class inference recognizes whole-word Fund names', async () => {
+    eq(inferAssetClass('EquityZen Future of Food Fund'), 'fund');
+    eq(inferAssetClass('Calm Company Fund II'), 'fund');
+    eq(inferAssetClass('Fundamental Labs'), 'direct');
+    eq(inferAssetClass('Acme Fund', 'direct'), 'direct', 'explicit class should win');
+  });
+
+  await test('fund-named imports persist as fund positions', async () => {
+    const company = `Test Access Fund ${stamp}`;
+    try {
+      const { id } = await upsertInvestment({
+        ...BASE_FIELDS,
+        status: 'Live',
+        company_name: company,
+        invest_date: '2026-01-15',
+      });
+      const rows = await query(`SELECT asset_class FROM investments WHERE id = $1`, [id]);
+      eq(rows[0].asset_class, 'fund');
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
 
   // Test 1: Closing-status upsert with drifting invest_date hits the same row.
   await test('Closing rows with drifting invest_date update in place', async () => {
