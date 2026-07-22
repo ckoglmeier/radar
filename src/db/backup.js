@@ -1,5 +1,9 @@
 // Local backup of the active database to a JSON file.
 //
+// Relies on query()'s no-ALS-scope fallback to DATABASE_URL (single-tenant
+// only today — see src/db/index.js); must be revisited once multi-tenancy
+// lands.
+//
 // Why JSON through the driver instead of pg_dump: installations can't be
 // assumed to have a version-matched pg_dump (or any Postgres client tools),
 // and the same code must back up PGlite, Neon, or Supabase identically.

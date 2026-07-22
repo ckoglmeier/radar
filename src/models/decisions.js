@@ -94,12 +94,17 @@ export async function updateDecisionDraft(id, fields = {}) {
   setClauses.push('updated_at = NOW()');
   params.push(id);
 
+  // AND sealed = FALSE closes the TOCTOU between the pre-check above and this
+  // UPDATE: a concurrent sealDecision() between the two can otherwise still be
+  // overwritten by this stale write. Zero rows back means someone sealed it
+  // in the gap — treat that the same as the pre-check's sealed error.
   const rows = await query(`
     UPDATE decision_records
     SET ${setClauses.join(', ')}
-    WHERE id = $${nextIndex}
+    WHERE id = $${nextIndex} AND sealed = FALSE
     RETURNING *
   `, params);
+  if (rows.length === 0) throw new Error('cannot update a sealed decision record');
   return rows[0];
 }
 
@@ -114,12 +119,16 @@ export async function sealDecision(id, fields = {}) {
   setClauses.push('updated_at = NOW()');
   params.push(id);
 
+  // AND sealed = FALSE: same TOCTOU guard as updateDecisionDraft — a
+  // concurrent seal between the pre-check and this UPDATE loses the race
+  // instead of re-sealing (and re-timestamping) an already-sealed row.
   const rows = await query(`
     UPDATE decision_records
     SET ${setClauses.join(', ')}
-    WHERE id = $${nextIndex}
+    WHERE id = $${nextIndex} AND sealed = FALSE
     RETURNING *
   `, params);
+  if (rows.length === 0) throw new Error('decision record is already sealed');
   return rows[0];
 }
 

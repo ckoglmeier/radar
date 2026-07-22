@@ -196,6 +196,82 @@ async function run() {
     }
   });
 
+  // P1.1 TOCTOU guard: the pre-check (SELECT then throw) is a friendly-message
+  // convenience, not the enforcement. These tests bypass the pre-check
+  // entirely and hit the same UPDATE statement the model functions issue,
+  // simulating a caller that read the row before a concurrent seal landed.
+  // The `AND sealed = FALSE` WHERE clause must be what actually blocks it.
+
+  await test('updateDecisionDraft: stale write on a sealed row is blocked even if the caller skipped the read', async () => {
+    const company = `Test Decision Race Update ${stamp}-5`;
+    try {
+      const investment = await upsertInvestment({
+        ...BASE_INVESTMENT,
+        company_name: company,
+        invest_date: '2026-07-10',
+      });
+      const draft = await createDecisionDraft({
+        investment_id: investment.id,
+        decision: 'invest',
+        confidence: 3,
+      });
+      await sealDecision(draft.id);
+
+      // Same UPDATE shape updateDecisionDraft issues, run directly without
+      // the read-then-check that normally precedes it.
+      const rows = await query(
+        `UPDATE decision_records
+         SET decision = $1, updated_at = NOW()
+         WHERE id = $2 AND sealed = FALSE
+         RETURNING *`,
+        ['pass', draft.id]
+      );
+      eq(rows.length, 0, 'stale write on a sealed row updates zero rows');
+
+      const [current] = await getDecisionsForInvestment(investment.id);
+      eq(current.decision, 'invest', 'decision left untouched by the blocked race write');
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('sealDecision: a stale re-seal on an already-sealed row is blocked (simulated race)', async () => {
+    const company = `Test Decision Race Seal ${stamp}-6`;
+    try {
+      const investment = await upsertInvestment({
+        ...BASE_INVESTMENT,
+        company_name: company,
+        invest_date: '2026-07-11',
+      });
+      const draft = await createDecisionDraft({
+        investment_id: investment.id,
+        decision: 'invest',
+        confidence: 3,
+      });
+      const sealed = await sealDecision(draft.id);
+
+      // Same UPDATE shape sealDecision issues, run directly without the
+      // read-then-check that normally precedes it.
+      const rows = await query(
+        `UPDATE decision_records
+         SET sealed = TRUE, sealed_at = NOW(), updated_at = NOW()
+         WHERE id = $1 AND sealed = FALSE
+         RETURNING *`,
+        [draft.id]
+      );
+      eq(rows.length, 0, 'stale re-seal on a sealed row updates zero rows');
+
+      const [current] = await getDecisionsForInvestment(investment.id);
+      eq(
+        new Date(current.sealed_at).getTime(),
+        new Date(sealed.sealed_at).getTime(),
+        'sealed_at not overwritten by the blocked race write'
+      );
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
   await test('listDecisions can filter sealed and unsealed records', async () => {
     const company = `Test Decision List ${stamp}-4`;
     try {

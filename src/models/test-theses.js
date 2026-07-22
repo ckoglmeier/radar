@@ -185,6 +185,22 @@ async function run() {
     await test('saveThesis with unknown slug rejects', async () => {
       await expectRejects(() => saveThesis({ slug: 'no-such-slug', name: 'X' }), /no thesis with slug/);
     });
+
+    // P1.2b: the app-level check-then-insert in generateSlug (SELECT then
+    // INSERT) has a TOCTOU window under concurrent inserts. The partial
+    // unique index on theses.lens_thesis_id (migration 025) is the actual
+    // enforcement — verify it rejects a duplicate inserted directly via
+    // query(), bypassing generateSlug entirely.
+    await test('theses.lens_thesis_id UNIQUE index rejects a concurrent-insert collision', async () => {
+      SLUGS.push('tw-race-slug');
+      await query(
+        `INSERT INTO theses (name, lens_thesis_id) VALUES ('TW Race A', 'tw-race-slug')`
+      );
+      await expectRejects(
+        () => query(`INSERT INTO theses (name, lens_thesis_id) VALUES ('TW Race B', 'tw-race-slug')`),
+        /duplicate key value violates unique constraint/
+      );
+    });
   } finally {
     await cleanup();
   }
