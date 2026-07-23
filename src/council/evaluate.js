@@ -31,7 +31,7 @@ import { resolveAuthMode } from '../providers/auth-mode.js';
 import { scoreCouncilChoices } from './scoring.js';
 
 const SKILL_PATH = join(
-  dirname(fileURLToPath(import.meta.url)),
+  dirname(fileURLToPath(String(import.meta.url))),
   '..',
   '..',
   'skills',

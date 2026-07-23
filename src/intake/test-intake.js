@@ -247,6 +247,7 @@ async function run() {
     const commit = await intakeCommit({ preview_id: preview.preview_id, overrides: {} });
     eq(commit.idempotent_replay, false);
     eq(commit.created.table, 'pipeline_invites');
+    eq(commit.created.is_new, true, 'new pipeline intake is marked for downstream scoring');
 
     const inviteRows = await query(`SELECT id, company_name, source FROM pipeline_invites WHERE id = $1`, [commit.created.id]);
     eq(inviteRows.length, 1, 'invite row exists');

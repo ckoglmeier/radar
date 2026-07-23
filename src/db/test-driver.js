@@ -142,6 +142,29 @@ await test('closeDb(): a spawned child process with DATABASE_URL=file:... exits 
   });
   await closeDb();
 
+  // Electron closes the default driver during backup/adoption and then reuses
+  // the same process. The next query must reopen the durable database.
+  execSync(
+    `node -e "import(process.env.RADAR_INDEX_URL).then(async m => {
+      await m.query('CREATE TABLE _test_default_reopen (x INT)');
+      await m.query('INSERT INTO _test_default_reopen (x) VALUES (7)');
+      await m.closeDb();
+      const rows = await m.query('SELECT x FROM _test_default_reopen');
+      if (rows[0]?.x !== 7) throw new Error('default driver did not reopen');
+      await m.closeDb();
+    })"`,
+    {
+      cwd: os.tmpdir(),
+      timeout: 30000,
+      stdio: 'pipe',
+      env: {
+        ...process.env,
+        DATABASE_URL: makeTmpUrl('default-reopen'),
+        RADAR_INDEX_URL: INDEX_URL,
+      },
+    }
+  );
+
   // Spawn a child process that runs a trivial CLI query with DATABASE_URL=file:...
   // The CLI must exit naturally (not hang because PGlite keeps the event loop open).
   const exitedClean = (() => {
