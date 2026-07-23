@@ -357,9 +357,10 @@ async function runDealLogImport(dir, opts = {}) {
             council_bull_score, council_bear_score, council_calibrator_score, council_spread, council_consensus, council_divergence, council_cfo_verdict,
             eval_mode, raw_content, company_name, council_policy, council_policy_version, council_instruction_hash,
             council_lens_hash, council_calibration_hash, council_input_hash, council_artifact_hash,
-            council_session_id, council_model_policy, council_score_adjusted, council_run_key, council_run_type)
+            council_session_id, council_model_policy, council_research_plan_hash, council_research_plan,
+            council_score_adjusted, council_run_key, council_run_type)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-                 $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)`,
+                 $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)`,
         [
           investment_id,
           pipeline_invite_id,
@@ -389,6 +390,8 @@ async function runDealLogImport(dir, opts = {}) {
           provenance.artifactHashes?.[file] || null,
           provenance.sessionId || null,
           provenance.modelPolicy ? JSON.stringify(provenance.modelPolicy) : null,
+          provenance.researchPlanHash || null,
+          provenance.researchPlan ? JSON.stringify(provenance.researchPlan) : null,
           Boolean(parsed.score_validation?.adjusted),
           provenance.runKey || null,
           provenance.runType || null,

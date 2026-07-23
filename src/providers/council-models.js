@@ -8,6 +8,7 @@
 
 export const COUNCIL_ROLES = Object.freeze([
   'orchestrator', // sequences the stages, assembles the artifact
+  'planner',      // decision-critical research plan
   'research',     // cheap web-retrieval legs
   'dossier',      // credibility synthesis over gathered facts
   'bull',         // argue upside + score /50
@@ -18,6 +19,7 @@ export const COUNCIL_ROLES = Object.freeze([
 
 export const DEFAULT_COUNCIL_MODELS = Object.freeze({
   orchestrator: 'sonnet',
+  planner: 'sonnet',
   research: 'haiku',
   dossier: 'sonnet',
   bull: 'sonnet',

@@ -1,10 +1,9 @@
 // evaluate.js — Phase B1: councilEvaluate(), the normalized council path.
 //
-// Runs the vendored headless investment-grading skill as five explicit sessions:
-// research, Bull, Bear, Calibrator, and CFO. Research is frozen before either
-// grader runs, and only Radar writes the final artifact. This makes the actual
-// execution match the Council shown to users instead of relying on optional
-// subagent definitions that the orchestrator may never invoke.
+// Runs the vendored headless investment-grading skill as six explicit sessions:
+// planner, research, Bull, Bear, Calibrator, and CFO. A Sonnet planner freezes
+// the decision-critical questions before Haiku retrieves evidence. Research is
+// frozen before either grader runs, and only Radar writes the final artifact.
 //
 // This module is SDK-free and pure orchestration: the provider is injected, so
 // it is fully unit-testable with a fake. The CLI (C1) constructs the real
@@ -39,6 +38,7 @@ const SKILL_DIR = join(
 );
 const SKILL_PATH = join(SKILL_DIR, 'SKILL.md');
 const ROLE_PATHS = Object.freeze({
+  planner: join(SKILL_DIR, 'references', 'planner.md'),
   research: join(SKILL_DIR, 'references', 'research.md'),
   bull: join(SKILL_DIR, 'references', 'bull.md'),
   bear: join(SKILL_DIR, 'references', 'bear.md'),
@@ -61,8 +61,8 @@ function loadRolePrompt(stage) {
   return _rolePrompts.get(stage);
 }
 
-export const COUNCIL_POLICY_VERSION = 4;
-const EXPLICIT_PIPELINE_VERSION = 'scoped-role-context-v2';
+export const COUNCIL_POLICY_VERSION = 5;
+const EXPLICIT_PIPELINE_VERSION = 'planned-research-v1';
 const inFlightRuns = new Map();
 
 function hash(value) {
@@ -137,6 +137,67 @@ const RESEARCH_SCHEMA = {
   additionalProperties: false,
 };
 
+const RESEARCH_PLAN_SCHEMA = {
+  type: 'object',
+  properties: {
+    deal_identity: { type: 'string' },
+    decision_frame: { type: 'string' },
+    questions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          question_id: { type: 'string' },
+          coverage_area: {
+            type: 'string',
+            enum: [
+              'team',
+              'company_financing',
+              'traction_economics',
+              'product_differentiation',
+              'competition',
+              'market_external',
+            ],
+          },
+          question: { type: 'string' },
+          rubric_dimensions: { type: 'array', items: { type: 'string' } },
+          confirming_evidence: { type: 'string' },
+          disconfirming_evidence: { type: 'string' },
+          preferred_sources: { type: 'array', items: { type: 'string' } },
+          recency_requirement: { type: 'string' },
+          search_queries: { type: 'array', items: { type: 'string' } },
+          required: { type: 'boolean' },
+        },
+        required: [
+          'question_id',
+          'coverage_area',
+          'question',
+          'rubric_dimensions',
+          'confirming_evidence',
+          'disconfirming_evidence',
+          'preferred_sources',
+          'recency_requirement',
+          'search_queries',
+          'required',
+        ],
+        additionalProperties: false,
+      },
+    },
+    critical_unknowns: { type: 'array', items: { type: 'string' } },
+    contradictions_to_resolve: { type: 'array', items: { type: 'string' } },
+    stop_conditions: { type: 'array', items: { type: 'string' } },
+  },
+  required: [
+    'deal_identity',
+    'decision_frame',
+    'questions',
+    'critical_unknowns',
+    'contradictions_to_resolve',
+    'stop_conditions',
+  ],
+  additionalProperties: false,
+};
+
 const CFO_SCHEMA = {
   type: 'object',
   properties: {
@@ -148,8 +209,13 @@ const CFO_SCHEMA = {
 };
 
 const STAGE_PROMPTS = {
+  planner:
+    'STAGE: planner\nDesign the research plan only. Use the deal and authoritative scoring lens to create ' +
+    '8–12 decision-critical questions spanning every required coverage area. For load-bearing claims, require ' +
+    'both confirming and disconfirming evidence. Include concrete search queries, source priorities, recency ' +
+    'requirements, and stopping conditions. Do not search, answer questions, score, or simulate another voice.',
   research:
-    'STAGE: research\nPerform only retrieval. Build one shared factual evidence packet for the deal. ' +
+    'STAGE: research\nExecute the frozen research plan and build one shared factual evidence packet for the deal. ' +
     'Use web search when useful. Label every item as supplied, verified, conflicting, or unavailable, ' +
     'and include its source in the string. Cover every required research area, then stop when additional ' +
     'retrieval is unlikely to change a rubric choice. Merge duplicates. Do not score the deal or simulate another Council voice.',
@@ -192,6 +258,35 @@ async function runStage(stage, request, runtime) {
   };
 }
 
+function frozenPlannerStage(snapshot) {
+  if (
+    !snapshot
+    || typeof snapshot.deal_identity !== 'string'
+    || typeof snapshot.decision_frame !== 'string'
+    || !Array.isArray(snapshot.questions)
+    || !Array.isArray(snapshot.critical_unknowns)
+    || !Array.isArray(snapshot.contradictions_to_resolve)
+    || !Array.isArray(snapshot.stop_conditions)
+  ) {
+    throw new Error('Council planner snapshot does not match the research-plan contract');
+  }
+  return {
+    stage: 'planner',
+    data: snapshot,
+    result: {
+      model: null,
+      numTurns: 0,
+      sessionId: null,
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCostUsd: 0,
+      },
+    },
+    usedFallback: false,
+  };
+}
+
 function frozenResearchStage(snapshot) {
   if (
     !snapshot
@@ -222,7 +317,7 @@ function slug(value) {
   return String(value || 'deal').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-function renderArtifact({ deal, research, bull, bear, calibrator, cfo, rubric, inputHash }) {
+function renderArtifact({ deal, planner, research, bull, bear, calibrator, cfo, rubric, inputHash }) {
   const bullScore = scoreCouncilChoices(bull.dimension_scores, rubric);
   const bearScore = scoreCouncilChoices(bear.dimension_scores, rubric);
   const canonical = scoreCouncilChoices(calibrator.dimension_scores, rubric);
@@ -239,6 +334,10 @@ function renderArtifact({ deal, research, bull, bear, calibrator, cfo, rubric, i
     .map(([name, value]) => `| ${name} | ${value == null || value === '' ? 'Not provided' : value} |`)
     .join('\n');
   const evidence = (research.evidence || []).map(item => `- ${item}`).join('\n');
+  const researchQuestions = (planner.questions || []).map(question => {
+    const dimensions = (question.rubric_dimensions || []).join(', ') || 'general';
+    return `- **${question.question_id}** [${question.coverage_area}; ${dimensions}] ${question.question}`;
+  }).join('\n');
   const list = items => (items || []).map(item => `- ${item}`).join('\n');
   const timestamp = new Date().toISOString();
   const date = timestamp.slice(0, 10);
@@ -251,6 +350,17 @@ function renderArtifact({ deal, research, bull, bear, calibrator, cfo, rubric, i
 | Field | Value |
 |---|---|
 ${fields}
+
+## Research Plan
+**Decision frame:** ${planner.decision_frame}
+
+${researchQuestions}
+
+### Critical unknowns
+${list(planner.critical_unknowns)}
+
+### Contradictions to resolve
+${list(planner.contradictions_to_resolve)}
 
 ## Evidence Ledger
 ${evidence}
@@ -407,6 +517,15 @@ export function assembleContext(deal, lens, calibration, provenance = {}) {
  */
 export function buildCouncilAgents(models) {
   return {
+    planner: {
+      description: 'Planning leg: define the decision-critical research questions.',
+      model: models.planner,
+      prompt:
+        'You design a bounded research plan against the deal and rubric. Include ' +
+        'confirming and falsifying evidence requirements, source priorities, recency, ' +
+        'and concrete search queries. Do not retrieve facts or score the deal.',
+      tools: [],
+    },
     research: {
       description: 'Retrieval leg: produce the shared sourced Evidence Ledger.',
       model: models.research,
@@ -507,6 +626,8 @@ function aggregateStageUsage(stages) {
  * @param {string} [opts.policyId=balanced]
  * @param {object} [opts.calibrationSnapshot] exact historical calibration for
  *   a controlled replay; normal runs derive calibration from Radar.
+ * @param {object} [opts.plannerSnapshot] exact frozen research plan for a
+ *   controlled replay; normal runs ask Sonnet to create the plan.
  * @param {object} [opts.researchSnapshot] exact frozen evidence packet for a
  *   controlled replay; normal runs perform fresh retrieval.
  * @returns {Promise<{result: object, usedFallback: boolean, primaryErrorKind?: string, calibrationMaturity: string, modelPolicy: object}>}
@@ -526,6 +647,7 @@ export async function councilEvaluate(deal, opts = {}) {
     executionId,
     onStage,
     calibrationSnapshot,
+    plannerSnapshot,
     researchSnapshot,
   } = opts;
 
@@ -539,6 +661,7 @@ export async function councilEvaluate(deal, opts = {}) {
   };
   const calibration = calibrationSnapshot || await getCalibration();
   const turnPolicy = {
+    planner: Math.max(3, Math.ceil(maxTurns / 10)),
     research: Math.max(16, Math.ceil(maxTurns / 2)),
     judgment: Math.max(4, Math.ceil(maxTurns / 8)),
   };
@@ -549,7 +672,13 @@ export async function councilEvaluate(deal, opts = {}) {
     ),
     pipeline: EXPLICIT_PIPELINE_VERSION,
     prompts: STAGE_PROMPTS,
-    schemas: { research: RESEARCH_SCHEMA, grader: GRADER_SCHEMA, calibrator: CALIBRATOR_SCHEMA, cfo: CFO_SCHEMA },
+    schemas: {
+      planner: RESEARCH_PLAN_SCHEMA,
+      research: RESEARCH_SCHEMA,
+      grader: GRADER_SCHEMA,
+      calibrator: CALIBRATOR_SCHEMA,
+      cfo: CFO_SCHEMA,
+    },
     turnPolicy,
   });
   const policy = resolveCouncilModels(models);
@@ -560,6 +689,7 @@ export async function councilEvaluate(deal, opts = {}) {
     lensHash: hash(lens),
     calibrationHash: hash(calibration),
     inputHash: hash(deal || {}),
+    plannerSnapshotHash: plannerSnapshot ? hash(plannerSnapshot) : null,
     researchSnapshotHash: researchSnapshot ? hash(researchSnapshot) : null,
   };
   provenance.runKey = hash({
@@ -573,9 +703,15 @@ export async function councilEvaluate(deal, opts = {}) {
   const cfoBaseContext = assembleCfoContext(deal, lens, calibration, provenance);
   const authMode = resolveAuthMode(env);
   const requests = {
+    planner: stageRequest('planner', {
+      model: policy.planner,
+      context: graderBaseContext,
+      schema: RESEARCH_PLAN_SCHEMA,
+      maxTurns: turnPolicy.planner,
+    }),
     research: stageRequest('research', {
       model: policy.research,
-      context: researchContext,
+      context: `${researchContext}\n\nFROZEN RESEARCH PLAN\n  (produced by the planner stage)`,
       schema: RESEARCH_SCHEMA,
       maxTurns: turnPolicy.research,
     }),
@@ -665,10 +801,22 @@ export async function councilEvaluate(deal, opts = {}) {
       if (onStage) await onStage(stage);
     };
 
+    await notifyStage('planning');
+    const planner = plannerSnapshot
+      ? frozenPlannerStage(plannerSnapshot)
+      : await runStage('planner', requests.planner, runtime);
+    provenance.researchPlanHash = hash(planner.data);
+    provenance.researchPlan = planner.data;
+
     await notifyStage('research');
     const research = researchSnapshot
       ? frozenResearchStage(researchSnapshot)
-      : await runStage('research', requests.research, runtime);
+      : await runStage('research', stageRequest('research', {
+        model: policy.research,
+        context: `${researchContext}\n\nFROZEN RESEARCH PLAN\n${JSON.stringify(planner.data)}`,
+        schema: RESEARCH_SCHEMA,
+        maxTurns: turnPolicy.research,
+      }), runtime);
     const frozenResearch = JSON.stringify(research.data);
     const graderContext = `${graderBaseContext}\n\nFROZEN RESEARCH PACKET\n${frozenResearch}`;
 
@@ -734,6 +882,7 @@ export async function councilEvaluate(deal, opts = {}) {
     await notifyStage('finalizing');
     const artifact = renderArtifact({
       deal,
+      planner: planner.data,
       research: research.data,
       bull: bull.data,
       bear: bear.data,
@@ -745,7 +894,7 @@ export async function councilEvaluate(deal, opts = {}) {
     mkdirSync(dealLogDir, { recursive: true });
     writeFileSync(join(dealLogDir, artifact.filename), artifact.content, 'utf8');
 
-    const stages = [research, bull, bear, calibrator, cfo];
+    const stages = [planner, research, bull, bear, calibrator, cfo];
     const usage = aggregateStageUsage(stages);
     const sessionIds = stages.map(stage => stage.result.sessionId).filter(Boolean);
     const result = {

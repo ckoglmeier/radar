@@ -25,6 +25,7 @@ Treat those injected inputs as authoritative.
 
 Radar loads only the contract required for the active stage:
 
+- Research planner: [references/planner.md](references/planner.md)
 - Research: [references/research.md](references/research.md)
 - Bull: [references/bull.md](references/bull.md)
 - Bear: [references/bear.md](references/bear.md)
@@ -36,14 +37,15 @@ Council's cost, consistency, and provenance contract.
 
 ## Workflow
 
-1. Research founders, company, financing, traction, economics,
+1. Plan the decision-critical research questions against the deal and rubric.
+2. Research founders, company, financing, traction, economics,
    differentiation, competition, market, and external forces.
-2. Freeze the sourced Evidence Ledger, Team Dossier, and Company Context.
-3. Run Bull and Bear independently against the same ledger and rubric.
-4. Reconcile their choices against the rubric and investor calibration.
-5. Have Radar calculate canonical scores and the verdict.
-6. Produce the compact portfolio action requested by Radar.
-7. Let Radar render and persist the deal-log artifact.
+3. Freeze the sourced Evidence Ledger, Team Dossier, and Company Context.
+4. Run Bull and Bear independently against the same ledger and rubric.
+5. Reconcile their choices against the rubric and investor calibration.
+6. Have Radar calculate canonical scores and the verdict.
+7. Produce the compact portfolio action requested by Radar.
+8. Let Radar render and persist the deal-log artifact.
 
 ## Evidence and uncertainty
 
