@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
 import {
+  METRIC_PLANNER_JSON_SCHEMA,
+  METRIC_QUERY_JSON_SCHEMA,
   descriptiveCoverage,
   historicalCoverage,
   validateMetricQuery,
+  validateMetricPlannerOutput,
 } from './contract.js';
+
+assert.equal(METRIC_QUERY_JSON_SCHEMA.properties.metric.enum.includes('irr'), true);
+assert.deepEqual(METRIC_PLANNER_JSON_SCHEMA.properties.kind.enum, ['query', 'clarify', 'refuse']);
 
 const query = validateMetricQuery({
   metric: 'dpi',
@@ -24,6 +30,29 @@ assert.deepEqual(query, {
 assert.throws(
   () => validateMetricQuery({ metric: 'made_up' }),
   /metric must be one of/,
+);
+
+assert.deepEqual(
+  validateMetricPlannerOutput({
+    kind: 'query',
+    query: { metric: 'dpi', groupBy: ['gp', 'vintage'] },
+  }),
+  {
+    kind: 'query',
+    query: { metric: 'dpi', groupBy: ['gp', 'vintage'], filters: {}, window: {}, excludeIds: [] },
+  },
+);
+assert.deepEqual(
+  validateMetricPlannerOutput({ kind: 'clarify', question: ' Which return do you mean? ' }),
+  { kind: 'clarify', question: 'Which return do you mean?' },
+);
+assert.deepEqual(
+  validateMetricPlannerOutput({ kind: 'refuse', reason: ' Read-only metrics only. ' }),
+  { kind: 'refuse', reason: 'Read-only metrics only.' },
+);
+assert.throws(
+  () => validateMetricPlannerOutput({ kind: 'query', query: { metric: 'tvpi', sql: 'SELECT 1' } }),
+  /unknown metric query field/,
 );
 assert.throws(
   () => validateMetricQuery({ metric: 'tvpi', groupBy: ['gp', 'gp'] }),

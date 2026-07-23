@@ -25,7 +25,7 @@
     "test:data-dir": "node src/config/test-data-dir.js",
     "setup": "node src/cli.js db:setup",
     "import": "node src/cli.js import angellist",
-    "test:metrics": "node src/metrics/test-contract.js && node src/metrics/test-registry.js",
+    "test:metrics": "node src/metrics/test-contract.js && node src/metrics/test-registry.js && node src/models/test-metric-views.js",
     "pretest": "npm run test:metrics",
     "pretest:local": "npm run test:metrics",
     "test": "node src/utils/test-irr.js && node src/utils/test-matching.js && node src/utils/test-recompute.js && node src/utils/test-format.js && node src/utils/test-stage.js && node src/utils/test-match.js && node src/utils/test-bet-sizing.js && node src/utils/test-analytics.js && node src/providers/test-providers.js && node src/providers/test-auth-mode.js && node src/providers/test-session-errors.js && node src/import/test-transactions.js && node src/import/test-transactions-db.js && node src/models/test-evaluations.js && node src/models/test-investments.js && node src/models/test-decisions.js && node src/models/test-documents.js && node src/intake/test-extraction.js && node src/intake/test-intake.js && node src/intake/test-reextract.js && node src/models/test-settings.js && node src/lenses/test-council-parser.js && node src/lenses/test-lens-loader.js && node src/lenses/test-calibration.js && node src/sync/test-fixtures/test-parser.js && node src/reports/test-reports.js && node src/reports/test-attention.js && node src/db/test-driver.js && python3 src/analytics/test_kelly.py && python3 src/analytics/test_thesis_validation.py",

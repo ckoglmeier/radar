@@ -35,6 +35,101 @@ export const QUERY_SEMANTICS = Object.freeze({
   historical_return_guard: 'A historical return is unavailable when any position with an in-window mark lacks an opening valuation on or before the window start.',
 });
 
+const STRING_OR_STRINGS_SCHEMA = Object.freeze({
+  oneOf: [
+    { type: 'string', minLength: 1 },
+    { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'string', minLength: 1 } },
+  ],
+});
+
+export const METRIC_QUERY_JSON_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['metric'],
+  properties: {
+    metric: { type: 'string', enum: METRIC_NAMES },
+    groupBy: {
+      type: 'array',
+      uniqueItems: true,
+      items: { type: 'string', enum: GROUP_DIMENSIONS },
+    },
+    filters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        thesis: STRING_OR_STRINGS_SCHEMA,
+        market: STRING_OR_STRINGS_SCHEMA,
+        gp: STRING_OR_STRINGS_SCHEMA,
+        status: STRING_OR_STRINGS_SCHEMA,
+        invested_since: { type: 'string', format: 'date' },
+        invested_until: { type: 'string', format: 'date' },
+      },
+    },
+    window: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        since: { type: 'string', format: 'date' },
+        until: { type: 'string', format: 'date' },
+      },
+    },
+    excludeIds: {
+      type: 'array',
+      uniqueItems: true,
+      items: { type: 'integer', minimum: 1 },
+    },
+  },
+});
+
+const METRIC_PLANNER_QUERY_JSON_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['metric'],
+  properties: {
+    metric: { type: 'string', enum: METRIC_NAMES },
+    groupBy: {
+      type: 'array',
+      items: { type: 'string', enum: GROUP_DIMENSIONS },
+    },
+    filters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        thesis: { type: 'array', items: { type: 'string' } },
+        market: { type: 'array', items: { type: 'string' } },
+        gp: { type: 'array', items: { type: 'string' } },
+        status: { type: 'array', items: { type: 'string' } },
+        invested_since: { type: 'string' },
+        invested_until: { type: 'string' },
+      },
+    },
+    window: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        since: { type: 'string' },
+        until: { type: 'string' },
+      },
+    },
+    excludeIds: {
+      type: 'array',
+      items: { type: 'integer' },
+    },
+  },
+});
+
+export const METRIC_PLANNER_JSON_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['kind'],
+  properties: {
+    kind: { type: 'string', enum: ['query', 'clarify', 'refuse'] },
+    query: METRIC_PLANNER_QUERY_JSON_SCHEMA,
+    question: { type: 'string' },
+    reason: { type: 'string' },
+  },
+});
+
 const FILTER_KEYS = new Set([
   'thesis',
   'market',
@@ -140,6 +235,29 @@ export function validateMetricQuery(input) {
     window: { ...(since ? { since } : {}), ...(until ? { until } : {}) },
     excludeIds: [...new Set(excludeIds.map(Number))],
   };
+}
+
+export function validateMetricPlannerOutput(input) {
+  assertPlainObject(input, 'metric planner output');
+  if (input.kind === 'query') {
+    assertKnownKeys(input, new Set(['kind', 'query']), 'metric planner output');
+    return { kind: 'query', query: validateMetricQuery(input.query) };
+  }
+  if (input.kind === 'clarify') {
+    assertKnownKeys(input, new Set(['kind', 'question']), 'metric planner output');
+    if (typeof input.question !== 'string' || input.question.trim() === '' || input.question.trim().length > 240) {
+      throw new TypeError('metric planner clarification must be non-empty');
+    }
+    return { kind: 'clarify', question: input.question.trim() };
+  }
+  if (input.kind === 'refuse') {
+    assertKnownKeys(input, new Set(['kind', 'reason']), 'metric planner output');
+    if (typeof input.reason !== 'string' || input.reason.trim() === '' || input.reason.trim().length > 240) {
+      throw new TypeError('metric planner refusal must be non-empty');
+    }
+    return { kind: 'refuse', reason: input.reason.trim() };
+  }
+  throw new TypeError('metric planner output kind must be query, clarify, or refuse');
 }
 
 export function historicalCoverage(positions, missingPositions) {

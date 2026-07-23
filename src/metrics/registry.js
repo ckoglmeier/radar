@@ -183,6 +183,37 @@ async function loadMetricData(asOf) {
   return { positions };
 }
 
+function uniqueSorted(values) {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+}
+
+/**
+ * Return the finite portfolio vocabulary the planner may use. Values and
+ * metric results stay out of this context; the model receives identifiers for
+ * planning only, then metricQuery performs every calculation.
+ */
+export async function metricPlannerContext() {
+  const asOf = new Date().toISOString().slice(0, 10);
+  const { positions } = await loadMetricData(asOf);
+  const topHolding = positions.reduce((top, position) => (
+    !top || position.current_value > top.current_value ? position : top
+  ), null);
+
+  return {
+    asOf,
+    filterValues: {
+      market: uniqueSorted(positions.map(position => position.market)),
+      gp: uniqueSorted(positions.map(position => position.gp)),
+      status: uniqueSorted(positions.map(position => position.status)),
+      thesis: uniqueSorted(positions.flatMap(position => position.theses.map(thesis => thesis.name))),
+    },
+    positions: positions.map(position => ({ id: position.id, company_name: position.company_name })),
+    topHolding: topHolding
+      ? { id: topHolding.id, company_name: topHolding.company_name }
+      : null,
+  };
+}
+
 function filterPositions(positions, metricQuery) {
   const excluded = new Set(metricQuery.excludeIds);
   const { filters } = metricQuery;
@@ -526,6 +557,7 @@ export async function metricQuery(input) {
     formula: METRIC_FORMULAS[resolved.metric],
     filters: resolved.filters,
     window: resolved.window,
+    excludeIds: resolved.excludeIds,
     semantics: QUERY_SEMANTICS,
     rows,
   };

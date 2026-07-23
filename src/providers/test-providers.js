@@ -102,6 +102,7 @@ function makeFakeQuery(overrides = {}) {
       subtype: 'success',
       is_error: false,
       result: overrides.text ?? 'PONG',
+      structured_output: overrides.structuredOutput,
       num_turns: overrides.numTurns ?? 2,
       total_cost_usd: overrides.cost ?? 0.0123,
       usage: { input_tokens: 100, output_tokens: 20 },
@@ -317,6 +318,19 @@ async function run() {
     eq(res.usage.totalCostUsd, 0.0123);
     ok(res.usage.byModel && res.usage.byModel['claude-opus-4-8'], 'per-model usage present');
     eq(res.usage.byModel['claude-opus-4-8'].costUsd, 0.0113, 'costUSD normalized to costUsd');
+  });
+
+  await testAsync('structured output schema is forwarded and returned', async () => {
+    const structuredOutput = { kind: 'query', query: { metric: 'tvpi' } };
+    const outputFormat = {
+      type: 'json_schema',
+      schema: { type: 'object', properties: { kind: { type: 'string' } } },
+    };
+    const fake = makeFakeQuery({ structuredOutput });
+    const p = new AgentSdkProvider({ authMode: 'api_key', parentEnv: {}, query: fake });
+    const result = await p.runSession({ prompt: 'x', outputFormat });
+    eq(fake.calls[0].options.outputFormat, outputFormat);
+    eq(result.structuredOutput, structuredOutput);
   });
 
   await testAsync('runSession surfaces SDK error results as thrown errors', async () => {

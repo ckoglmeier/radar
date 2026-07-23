@@ -74,6 +74,7 @@ async function collectResult(stream) {
       }
       return {
         text: msg.result ?? '',
+        structuredOutput: msg.structured_output,
         usage: normalizeUsage(msg),
         model: initModel ?? '',
         apiKeySource: initApiKeySource ?? null,
@@ -165,6 +166,7 @@ export class AgentSdkProvider {
     if (req.systemPrompt) options.systemPrompt = req.systemPrompt;
     if (req.skills) options.skills = req.skills;
     if (req.tools) options.tools = req.tools;
+    if (req.outputFormat) options.outputFormat = req.outputFormat;
     if (req.agents) options.agents = req.agents; // subagent defs (per-persona models)
     if (typeof req.maxTurns === 'number') options.maxTurns = req.maxTurns;
     if (this.cwd) options.cwd = this.cwd;

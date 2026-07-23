@@ -8,7 +8,7 @@ import { gpSummary } from '../reports/gp.js';
 import { performanceWindows, cashFlowsInRange } from '../reports/performance.js';
 import { portfolioSummary } from '../reports/portfolio.js';
 import { stageBreakdown, thesisPerformance } from '../reports/thesis.js';
-import { metricQuery } from './registry.js';
+import { metricPlannerContext, metricQuery } from './registry.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-metric-registry-'));
 const databaseUrl = `file:${join(scratch, 'db')}`;
@@ -96,6 +96,11 @@ try {
       asset_class: 'fund', lead: 'Fund Manager', market: 'Diversified', stage_bucket: 'fund',
     });
     await insertFlow(fund, '2023-01-01', 'investment', -1000);
+
+    const plannerContext = await metricPlannerContext();
+    assert.deepEqual(plannerContext.topHolding, { id: orbital, company_name: 'Orbital Forge' });
+    assert.equal(plannerContext.positions.some(position => position.id === fund), false);
+    assert.deepEqual(plannerContext.filterValues.market, ['Aerospace', 'Climate']);
 
     // Adapter differential: the registry must preserve the existing report
     // values for the report shapes it wraps.
