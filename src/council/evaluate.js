@@ -24,6 +24,7 @@ import {
   getRoundParams,
 } from '../lenses/loader.js';
 import { getCalibration } from '../lenses/calibration.js';
+import { query } from '../db/index.js';
 import { resolveCouncilModels } from '../providers/council-models.js';
 import { runWithFallback, resolveFallbackFlag } from '../providers/session-errors.js';
 import { resolveAuthMode } from '../providers/auth-mode.js';
@@ -187,6 +188,8 @@ export async function councilEvaluate(deal, opts = {}) {
     dryRun = false,
     policyId = 'balanced',
     dealLogDir,
+    reuse = true,
+    findExisting,
   } = opts;
 
   const lens = {
@@ -199,6 +202,7 @@ export async function councilEvaluate(deal, opts = {}) {
   };
   const calibration = await getCalibration();
   const instructionHash = hash(loadSkill());
+  const policy = resolveCouncilModels(models);
   const provenance = {
     policyId,
     policyVersion: COUNCIL_POLICY_VERSION,
@@ -207,8 +211,8 @@ export async function councilEvaluate(deal, opts = {}) {
     calibrationHash: hash(calibration),
     inputHash: hash(deal || {}),
   };
+  provenance.runKey = hash({ ...provenance, modelPolicy: policy });
   const context = assembleContext(deal, lens, calibration, provenance);
-  const policy = resolveCouncilModels(models);
   const agents = buildCouncilAgents(policy);
   const authMode = resolveAuthMode(env);
 
@@ -236,6 +240,25 @@ export async function councilEvaluate(deal, opts = {}) {
       modelPolicy: policy,
       provenance: { ...provenance, modelPolicy: policy },
     };
+  }
+
+  if (reuse) {
+    const lookup = findExisting || (runKey => query(
+      `SELECT id FROM deal_evaluations WHERE council_run_key = $1 LIMIT 1`,
+      [runKey],
+    ));
+    const existing = await lookup(provenance.runKey);
+    if (existing?.[0]) {
+      return {
+        reused: true,
+        evaluationId: existing[0].id,
+        usedFallback: false,
+        calibrationMaturity: calibration.maturity,
+        modelPolicy: policy,
+        writtenFiles: [],
+        provenance: { ...provenance, modelPolicy: policy },
+      };
+    }
   }
 
   if (!provider) throw new Error('councilEvaluate requires a provider (inject a ModelProvider)');

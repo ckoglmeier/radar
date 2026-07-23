@@ -90,6 +90,22 @@ test('councilEvaluate: model override flows to the subagents', async () => {
   eq(fake.calls[0].agents.calibrator.model, 'sonnet', 'override applied');
 });
 
+test('councilEvaluate: identical run fingerprint reuses the stored evaluation', async () => {
+  const fake = fakeProvider();
+  const out = await councilEvaluate(
+    { company: 'Repeat Co' },
+    {
+      provider: fake,
+      env: {},
+      findExisting: async () => [{ id: 77 }],
+    },
+  );
+  eq(out.reused, true);
+  eq(out.evaluationId, 77);
+  eq(fake.calls.length, 0, 'no model session for an identical run');
+  ok(out.provenance.runKey, 'stable run fingerprint returned');
+});
+
 test('councilEvaluate: dry run assembles without a provider or a model call', async () => {
   const out = await councilEvaluate({ company: 'Dry Co' }, { dryRun: true, env: {} });
   eq(out.dryRun, true);
@@ -97,6 +113,13 @@ test('councilEvaluate: dry run assembles without a provider or a model call', as
   ok(out.request.systemPrompt.includes('Headless Council'), 'loaded the skill');
   eq(out.modelPolicy.calibrator, 'opus');
   ok(out.calibrationMaturity, 'reports calibration maturity');
+  ok(out.provenance.runKey, 'reports the idempotency fingerprint');
+});
+
+test('councilEvaluate: changed deal input produces a new run fingerprint', async () => {
+  const first = await councilEvaluate({ company: 'Dry Co', round: 'Seed' }, { dryRun: true, env: {} });
+  const changed = await councilEvaluate({ company: 'Dry Co', round: 'Series A' }, { dryRun: true, env: {} });
+  ok(first.provenance.runKey !== changed.provenance.runKey, 'input change must allow a new evaluation');
 });
 
 for (const [name, fn] of tests) {

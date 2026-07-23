@@ -54,6 +54,7 @@ export async function pipelineListWithLatestEval({ status, limit = 100 } = {}) {
        latest.council_session_id AS latest_eval_council_session_id,
        latest.council_model_policy AS latest_eval_council_model_policy,
        latest.council_score_adjusted AS latest_eval_council_score_adjusted,
+       latest.council_run_key AS latest_eval_council_run_key,
        latest.created_at AS latest_eval_created_at
      FROM pipeline_invites pi
      LEFT JOIN LATERAL (
@@ -102,6 +103,7 @@ export async function pipelineListWithLatestEval({ status, limit = 100 } = {}) {
       council_session_id: row.latest_eval_council_session_id,
       council_model_policy: row.latest_eval_council_model_policy,
       council_score_adjusted: row.latest_eval_council_score_adjusted,
+      council_run_key: row.latest_eval_council_run_key,
       created_at: row.latest_eval_created_at,
     };
 

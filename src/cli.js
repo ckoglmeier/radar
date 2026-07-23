@@ -848,6 +848,10 @@ program
         env: process.env,
         policyId: 'balanced',
       });
+      if (out.reused) {
+        console.log(chalk.green(`  ✓ unchanged inputs — reused evaluation ${out.evaluationId}\n`));
+        return;
+      }
       if (out.usedFallback) {
         console.log(chalk.yellow(`  ⚠ fell back to api_key after a ${out.primaryErrorKind} condition on the subscription`));
       }

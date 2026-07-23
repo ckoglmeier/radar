@@ -29,3 +29,10 @@ ALTER TABLE deal_evaluations
 
 ALTER TABLE deal_evaluations
   ADD COLUMN IF NOT EXISTS council_score_adjusted BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE deal_evaluations
+  ADD COLUMN IF NOT EXISTS council_run_key TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_deal_evaluations_council_run_key
+  ON deal_evaluations(council_run_key)
+  WHERE council_run_key IS NOT NULL;

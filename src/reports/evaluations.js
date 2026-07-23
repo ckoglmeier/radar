@@ -96,6 +96,7 @@ export async function evaluationLedger() {
         de.council_session_id,
         de.council_model_policy,
         de.council_score_adjusted,
+        de.council_run_key,
         de.created_at,
         LEFT(de.raw_content, 900) AS source_excerpt,
         pi.company_name AS pipeline_company_name,
