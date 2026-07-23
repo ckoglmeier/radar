@@ -9,7 +9,12 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { councilEvaluate, assembleContext, buildCouncilAgents } from './evaluate.js';
+import {
+  councilEvaluate,
+  assembleContext,
+  buildBaselineResearchPlan,
+  buildCouncilAgents,
+} from './evaluate.js';
 import { resolveCouncilModels } from '../providers/council-models.js';
 import { importDealLogs } from '../models/evaluations.js';
 import { query } from '../db/index.js';
@@ -63,6 +68,27 @@ function researchPlan() {
   };
 }
 
+function plannerAdaptation() {
+  return {
+    deal_identity: 'Acme Autonomy, industrial robotics company',
+    decision_frame: 'Test whether technical differentiation and traction justify the round.',
+    priority_question_ids: ['baseline-product-moat', 'baseline-traction-economics'],
+    custom_questions: [{
+      question_id: 'custom-safety-certification',
+      coverage_area: 'product_differentiation',
+      question: 'Has Acme completed the safety certification required for deployment?',
+      rubric_dimensions: ['Differentiation', 'Business model clarity'],
+      evidence_target: 'Certification record or a disclosed remaining approval path.',
+      preferred_sources: ['Regulator records', 'Company technical documentation'],
+      recency_requirement: 'Current within 12 months.',
+      search_queries: ['Acme Autonomy safety certification deployment'],
+      required: true,
+    }],
+    critical_unknowns: ['Current customer retention'],
+    contradictions_to_resolve: ['Pitch moat claim versus competitor products'],
+  };
+}
+
 function fakeProvider({ delay = 0 } = {}) {
   const calls = [];
   return {
@@ -72,7 +98,7 @@ function fakeProvider({ delay = 0 } = {}) {
       if (delay) await new Promise(resolve => setTimeout(resolve, delay));
       const stage = req.prompt.match(/^STAGE:\s*(\w+)/m)?.[1];
       const outputs = {
-        planner: researchPlan(),
+        planner: plannerAdaptation(),
         research: {
           evidence: ['verified: Example fact — https://example.com/source'],
           team_dossier: 'Team dossier',
@@ -150,7 +176,7 @@ test('assembleContext: missing deal fields render as Not provided', () => {
 // ---- buildCouncilAgents (pure) ----
 test('buildCouncilAgents: planner and graders use Sonnet, research uses Haiku, calibrator uses Opus', () => {
   const a = buildCouncilAgents(resolveCouncilModels());
-  eq(a.planner.model, 'sonnet');
+  eq(a.planner.model, 'claude-sonnet-4-6');
   eq(a.calibrator.model, 'opus');
   eq(a.bull.model, 'sonnet');
   eq(a.bear.model, 'sonnet');
@@ -159,6 +185,17 @@ test('buildCouncilAgents: planner and graders use Sonnet, research uses Haiku, c
   for (const key of ['planner', 'research', 'bull', 'bear', 'calibrator', 'cfo']) {
     ok(a[key].description && a[key].prompt, `${key} has description + prompt`);
   }
+});
+
+test('buildBaselineResearchPlan: creates the same complete question bank without a model', () => {
+  const first = buildBaselineResearchPlan({ company: 'Acme Autonomy' });
+  const second = buildBaselineResearchPlan({ company: 'Acme Autonomy' });
+  eq(JSON.stringify(first), JSON.stringify(second), 'baseline is deterministic');
+  eq(first.seed_version, 'baseline-v1');
+  eq(first.questions.length, 9, 'covers nine durable diligence areas');
+  eq(first.priority_question_ids.length, 9);
+  ok(first.questions.every(question => question.required), 'baseline questions are required');
+  ok(first.questions.some(question => question.question.includes('Acme Autonomy')));
 });
 
 // ---- councilEvaluate (fake provider; needs scratch DB for getCalibration) ----
@@ -183,13 +220,18 @@ test('councilEvaluate: executes six explicit stages against one planned evidence
     ok(byStage.bear.systemPrompt.includes('Council Bear Contract'), 'Bear gets its role contract');
     ok(byStage.calibrator.systemPrompt.includes('Council Calibrator Contract'), 'Calibrator gets its role contract');
     ok(byStage.cfo.systemPrompt.includes('Council Portfolio Action Contract'), 'CFO gets its role contract');
-    eq(byStage.planner.model, 'sonnet', 'planner uses Sonnet');
+    eq(byStage.planner.model, 'claude-sonnet-4-6', 'planner uses Sonnet 4.6');
     eq(byStage.planner.tools.length, 0, 'planner cannot retrieve');
-    eq(byStage.planner.maxTurns, 4, 'planner has a short bounded budget');
+    eq(byStage.planner.maxTurns, 1, 'planner has a one-turn budget');
     ok(byStage.planner.context.includes('SCORING LENS'), 'planner sees the scoring lens');
+    ok(byStage.planner.context.includes('DETERMINISTIC BASELINE RESEARCH PLAN'), 'planner receives Radar baseline');
+    ok(byStage.planner.context.includes('baseline-falsification'), 'baseline includes falsifying diligence');
     ok(!byStage.planner.context.includes('CALIBRATION'), 'planner does not see calibration');
     ok(byStage.research.context.includes('Acme Autonomy'), 'deal in context');
-    ok(byStage.research.context.includes('Acme Autonomy patents benchmark competitors'), 'research sees frozen plan');
+    ok(byStage.research.context.includes('baseline-product-moat'), 'research sees deterministic plan');
+    ok(byStage.research.context.includes('Acme Autonomy safety certification deployment'), 'research sees custom adaptation');
+    ok(byStage.research.prompt.includes('[question_id] STATUS'), 'research gets the evidence-line contract');
+    ok(byStage.research.prompt.includes('Never infer that something did not happen'), 'research cannot turn search absence into a fact');
     ok(!byStage.research.context.includes('CALIBRATION'), 'research does not receive calibration');
     ok(!byStage.research.context.includes('SCORING LENS'), 'research does not receive the scoring lens');
     eq(byStage.research.tools.join(','), 'WebSearch', 'research owns retrieval');
@@ -218,12 +260,12 @@ test('councilEvaluate: executes six explicit stages against one planned evidence
     eq(out.stageMetrics.length, 6, 'returns per-stage usage');
     eq(out.provenance.policyVersion, 5);
     ok(out.provenance.instructionHash && out.provenance.lensHash, 'provenance fingerprints');
+    eq(out.provenance.researchPlanSeedVersion, 'baseline-v1');
+    ok(out.provenance.researchPlanSeedHash, 'fingerprints the deterministic seed plan');
     ok(out.provenance.researchPlanHash, 'fingerprints the generated research plan');
-    eq(
-      JSON.stringify(out.provenance.researchPlan),
-      JSON.stringify(researchPlan()),
-      'persists the structured research plan',
-    );
+    eq(out.provenance.researchPlan.questions.length, 10, 'persists baseline plus one custom question');
+    eq(out.provenance.researchPlan.priority_question_ids[0], 'baseline-product-moat');
+    eq(out.provenance.researchPlan.questions.at(-1).question_id, 'custom-safety-certification');
     eq(out.writtenFiles.length, 1);
     eq(stages.join(','), 'planning,research,bull_bear,calibrator,cfo,finalizing', 'reported durable UI stages');
     const artifact = readFileSync(join(dealLogDir, out.writtenFiles[0]), 'utf8');
@@ -267,7 +309,7 @@ test('councilEvaluate: dry run assembles without a provider or a model call', as
   ok(out.requests.research.context.length < out.requests.calibrator.context.length, 'research context is scoped');
   ok(out.requests.cfo.context.length < out.requests.calibrator.context.length, 'CFO context is scoped');
   eq(Object.keys(out.requests).length, 6, 'previews all enforced stages');
-  eq(out.requests.planner.model, 'sonnet');
+  eq(out.requests.planner.model, 'claude-sonnet-4-6');
   eq(out.modelPolicy.calibrator, 'opus');
   ok(out.calibrationMaturity, 'reports calibration maturity');
   ok(out.provenance.runKey, 'reports the idempotency fingerprint');
@@ -352,10 +394,10 @@ test('councilEvaluate: imported evaluation persists the structured research plan
     );
     eq(rows.length, 1);
     eq(rows[0].council_research_plan_hash, out.provenance.researchPlanHash);
-    eq(rows[0].council_research_plan.deal_identity, researchPlan().deal_identity);
+    eq(rows[0].council_research_plan.deal_identity, plannerAdaptation().deal_identity);
     eq(
-      rows[0].council_research_plan.questions[0].search_queries[0],
-      researchPlan().questions[0].search_queries[0],
+      rows[0].council_research_plan.questions.at(-1).search_queries[0],
+      plannerAdaptation().custom_questions[0].search_queries[0],
     );
   }));
 

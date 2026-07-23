@@ -1,10 +1,8 @@
 // council-models.js — Phase B3: per-role model policy for the council.
 //
-// Least-powerful-per-action (see the plan's runtime tiering table). Values are
-// SDK model *aliases* ('opus'|'sonnet'|'haiku'), which the Agent SDK resolves to
-// the current model for that tier — so a model upgrade needs no change here (no
-// version map to maintain). councilEvaluate executes each active persona as its
-// own session; orchestrator/dossier remain for policy compatibility.
+// Least-powerful-per-action (see the plan's runtime tiering table).
+// councilEvaluate executes each active persona as its own session;
+// orchestrator/dossier remain for policy compatibility.
 
 export const COUNCIL_ROLES = Object.freeze([
   'orchestrator', // sequences the stages, assembles the artifact
@@ -19,7 +17,7 @@ export const COUNCIL_ROLES = Object.freeze([
 
 export const DEFAULT_COUNCIL_MODELS = Object.freeze({
   orchestrator: 'sonnet',
-  planner: 'sonnet',
+  planner: 'claude-sonnet-4-6',
   research: 'haiku',
   dossier: 'sonnet',
   bull: 'sonnet',

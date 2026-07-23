@@ -62,7 +62,8 @@ function loadRolePrompt(stage) {
 }
 
 export const COUNCIL_POLICY_VERSION = 5;
-const EXPLICIT_PIPELINE_VERSION = 'planned-research-v1';
+const EXPLICIT_PIPELINE_VERSION = 'seeded-research-plan-v1';
+const RESEARCH_PLAN_SEED_VERSION = 'baseline-v1';
 const inFlightRuns = new Map();
 
 function hash(value) {
@@ -137,66 +138,236 @@ const RESEARCH_SCHEMA = {
   additionalProperties: false,
 };
 
-const RESEARCH_PLAN_SCHEMA = {
+const CUSTOM_QUESTION_SCHEMA = {
+  type: 'object',
+  properties: {
+    question_id: { type: 'string' },
+    coverage_area: {
+      type: 'string',
+      enum: [
+        'identity_status',
+        'team',
+        'company_financing',
+        'traction_economics',
+        'product_differentiation',
+        'competition',
+        'market_external',
+        'compounding_portfolio',
+        'falsification',
+      ],
+    },
+    question: { type: 'string' },
+    rubric_dimensions: { type: 'array', items: { type: 'string' } },
+    evidence_target: { type: 'string' },
+    preferred_sources: { type: 'array', items: { type: 'string' } },
+    recency_requirement: { type: 'string' },
+    search_queries: { type: 'array', items: { type: 'string' } },
+    required: { type: 'boolean' },
+  },
+  required: [
+    'question_id',
+    'coverage_area',
+    'question',
+    'rubric_dimensions',
+    'evidence_target',
+    'preferred_sources',
+    'recency_requirement',
+    'search_queries',
+    'required',
+  ],
+  additionalProperties: false,
+};
+
+const PLANNER_ADAPTATION_SCHEMA = {
   type: 'object',
   properties: {
     deal_identity: { type: 'string' },
     decision_frame: { type: 'string' },
-    questions: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          question_id: { type: 'string' },
-          coverage_area: {
-            type: 'string',
-            enum: [
-              'team',
-              'company_financing',
-              'traction_economics',
-              'product_differentiation',
-              'competition',
-              'market_external',
-            ],
-          },
-          question: { type: 'string' },
-          rubric_dimensions: { type: 'array', items: { type: 'string' } },
-          confirming_evidence: { type: 'string' },
-          disconfirming_evidence: { type: 'string' },
-          preferred_sources: { type: 'array', items: { type: 'string' } },
-          recency_requirement: { type: 'string' },
-          search_queries: { type: 'array', items: { type: 'string' } },
-          required: { type: 'boolean' },
-        },
-        required: [
-          'question_id',
-          'coverage_area',
-          'question',
-          'rubric_dimensions',
-          'confirming_evidence',
-          'disconfirming_evidence',
-          'preferred_sources',
-          'recency_requirement',
-          'search_queries',
-          'required',
-        ],
-        additionalProperties: false,
-      },
-    },
+    priority_question_ids: { type: 'array', items: { type: 'string' } },
+    custom_questions: { type: 'array', items: CUSTOM_QUESTION_SCHEMA },
     critical_unknowns: { type: 'array', items: { type: 'string' } },
     contradictions_to_resolve: { type: 'array', items: { type: 'string' } },
-    stop_conditions: { type: 'array', items: { type: 'string' } },
   },
   required: [
     'deal_identity',
     'decision_frame',
-    'questions',
+    'priority_question_ids',
+    'custom_questions',
     'critical_unknowns',
     'contradictions_to_resolve',
-    'stop_conditions',
   ],
   additionalProperties: false,
 };
+
+const BASELINE_RESEARCH_QUESTIONS = Object.freeze([
+  {
+    question_id: 'baseline-identity-status',
+    coverage_area: 'identity_status',
+    question: 'Confirm {company} is the correct entity and establish its current operating status, product, location, and any material name ambiguity.',
+    rubric_dimensions: ['Source quality', 'Business model clarity'],
+    confirming_evidence: 'Current first-party records and authoritative third-party records agree on identity and status.',
+    disconfirming_evidence: 'Entity mismatch, stale records, shutdown, pivot, or conflicting company identity.',
+    preferred_sources: ['Official company materials', 'Corporate and regulatory records', 'Current reputable reporting'],
+    recency_requirement: 'Use the newest available source and flag evidence older than 18 months.',
+    search_queries: ['"{company}" company current status', '"{company}" official company founders'],
+    required: true,
+  },
+  {
+    question_id: 'baseline-team',
+    coverage_area: 'team',
+    question: 'Who founded and currently leads {company}, and what verified experience, domain credentials, prior outcomes, or contradictory history bears on team-market fit?',
+    rubric_dimensions: ['Team-market fit', 'Source quality'],
+    confirming_evidence: 'Verified roles, directly relevant operating history, and demonstrated prior execution.',
+    disconfirming_evidence: 'Role ambiguity, unsupported biographies, material turnover, or weak relevant experience.',
+    preferred_sources: ['Company and founder profiles', 'Professional profiles', 'Prior-company records', 'Reputable reporting'],
+    recency_requirement: 'Confirm current leadership; historical evidence may be older when clearly dated.',
+    search_queries: ['"{company}" founders leadership', '"{company}" founder background prior company'],
+    required: true,
+  },
+  {
+    question_id: 'baseline-financing',
+    coverage_area: 'company_financing',
+    question: 'What can be verified about {company}’s current round, valuation, lead, cumulative financing, and the quality of this deal source?',
+    rubric_dimensions: ['Capital efficiency', 'Source quality', 'Portfolio construction fit'],
+    confirming_evidence: 'Round facts and named investors agree across primary or reputable independent sources.',
+    disconfirming_evidence: 'Conflicting round terms, inflated financing claims, weak source connection, or unexplained capitalization.',
+    preferred_sources: ['Financing announcements', 'Regulatory filings', 'Lead investor materials', 'Reputable databases and reporting'],
+    recency_requirement: 'Prioritize the active or most recent financing.',
+    search_queries: ['"{company}" funding round valuation investors', '"{company}" financing lead investor'],
+    required: true,
+  },
+  {
+    question_id: 'baseline-traction-economics',
+    coverage_area: 'traction_economics',
+    question: 'What stage-appropriate evidence exists for {company}’s adoption, revenue, retention, margins, burn, unit economics, and capital required to reach the next proof point?',
+    rubric_dimensions: ['Capital efficiency', 'Business model clarity', 'Compounding structure'],
+    confirming_evidence: 'Current quantified operating evidence with a clear denominator, period, and source.',
+    disconfirming_evidence: 'Unverified vanity metrics, weak retention, poor margins, high burn, or no credible path to the next milestone.',
+    preferred_sources: ['Company disclosures', 'Customer evidence', 'Financial or regulatory records', 'Reputable interviews and reporting'],
+    recency_requirement: 'Prefer evidence from the last 18 months and date every metric.',
+    search_queries: ['"{company}" revenue customers retention', '"{company}" unit economics burn margins'],
+    required: true,
+  },
+  {
+    question_id: 'baseline-product-moat',
+    coverage_area: 'product_differentiation',
+    question: 'How does {company}’s product work, what is actually differentiated, and what IP, data, regulation, distribution, switching cost, or technical evidence makes that advantage durable?',
+    rubric_dimensions: ['Differentiation', 'Domain match', 'Business model clarity'],
+    confirming_evidence: 'Specific technical, customer, IP, regulatory, or distribution evidence supports a hard-to-replicate advantage.',
+    disconfirming_evidence: 'The claimed moat is generic, easily replicated, unsupported, or dependent on a temporary feature lead.',
+    preferred_sources: ['Technical documentation', 'Patents and regulatory records', 'Customer evidence', 'Independent technical reporting'],
+    recency_requirement: 'Use current product evidence; older foundational IP is acceptable when still relevant.',
+    search_queries: ['"{company}" product technology differentiation patents', '"{company}" customer case study technical'],
+    required: true,
+  },
+  {
+    question_id: 'baseline-competition',
+    coverage_area: 'competition',
+    question: 'Which direct competitors, incumbents, and substitutes constrain {company}, and how do their products, traction, capitalization, and distribution compare?',
+    rubric_dimensions: ['Differentiation', 'Structural tailwind', 'Business model clarity'],
+    confirming_evidence: 'Independent comparisons show a meaningful advantage against the strongest realistic alternative.',
+    disconfirming_evidence: 'Better-capitalized or better-distributed alternatives offer equivalent value or customers can avoid the category.',
+    preferred_sources: ['Competitor primary materials', 'Customer and industry sources', 'Financing records', 'Independent comparisons'],
+    recency_requirement: 'Prefer competitive evidence from the last 18 months.',
+    search_queries: ['"{company}" competitors alternatives', '"{company}" versus competitor market'],
+    required: true,
+  },
+  {
+    question_id: 'baseline-market-external',
+    coverage_area: 'market_external',
+    question: 'What independent evidence supports the market need and durable tailwind for {company}, and what regulatory, policy, procurement, or macro forces could accelerate or impair adoption?',
+    rubric_dimensions: ['Structural tailwind', 'Domain match'],
+    confirming_evidence: 'Independent demand, budget, policy, or adoption evidence supports a durable timing advantage.',
+    disconfirming_evidence: 'Market estimates rely on vendor claims or adoption faces material policy, procurement, or macro headwinds.',
+    preferred_sources: ['Government and regulatory sources', 'Industry data', 'Customer budgets and procurement records', 'Independent research'],
+    recency_requirement: 'Use current market and policy evidence, normally within 24 months.',
+    search_queries: ['"{company}" market regulation demand', '"{company}" industry adoption procurement'],
+    required: true,
+  },
+  {
+    question_id: 'baseline-compounding-portfolio',
+    coverage_area: 'compounding_portfolio',
+    question: 'What evidence shows {company} can compound through retention, expansion, data, network, workflow, or distribution effects, and does this deal add or duplicate current portfolio, GP, stage, and concentration exposure?',
+    rubric_dimensions: ['Compounding structure', 'Portfolio construction fit'],
+    confirming_evidence: 'Observed retention or expansion mechanics and a distinct role in the portfolio support durable compounding.',
+    disconfirming_evidence: 'The model is transactional, retention is weak, or the exposure materially duplicates existing concentration.',
+    preferred_sources: ['Customer and operating evidence', 'Product documentation', 'Portfolio records', 'Lead investor materials'],
+    recency_requirement: 'Use current operating and portfolio context.',
+    search_queries: ['"{company}" retention expansion customers', '"{company}" business model recurring revenue'],
+    required: true,
+  },
+  {
+    question_id: 'baseline-falsification',
+    coverage_area: 'falsification',
+    question: 'What is the strongest current evidence against the investment case for {company}, including material litigation, regulatory action, customer loss, layoffs, failed milestones, adverse technical evidence, or recent negative change?',
+    rubric_dimensions: ['Source quality', 'Team-market fit', 'Capital efficiency', 'Differentiation'],
+    confirming_evidence: 'Independent current evidence fails to surface a material undisclosed contradiction after targeted checks.',
+    disconfirming_evidence: 'A credible adverse event or contradiction weakens a load-bearing claim in the deal materials.',
+    preferred_sources: ['Court and regulatory records', 'Company disclosures', 'Customer evidence', 'Reputable investigative and trade reporting'],
+    recency_requirement: 'Prioritize events from the last 24 months while retaining older unresolved matters.',
+    search_queries: ['"{company}" lawsuit regulatory layoffs customer loss', '"{company}" controversy failed milestone'],
+    required: true,
+  },
+]);
+
+function templateForDeal(value, company) {
+  return String(value).replaceAll('{company}', company);
+}
+
+export function buildBaselineResearchPlan(deal = {}) {
+  const company = String(deal.company || deal.company_name || 'the company').trim() || 'the company';
+  return {
+    seed_version: RESEARCH_PLAN_SEED_VERSION,
+    deal_identity: company,
+    decision_frame: `Test the supplied case for ${company} against the active Radar rubric using current, decision-relevant evidence.`,
+    priority_question_ids: BASELINE_RESEARCH_QUESTIONS.map(question => question.question_id),
+    questions: BASELINE_RESEARCH_QUESTIONS.map(question => ({
+      ...question,
+      question: templateForDeal(question.question, company),
+      confirming_evidence: templateForDeal(question.confirming_evidence, company),
+      disconfirming_evidence: templateForDeal(question.disconfirming_evidence, company),
+      search_queries: question.search_queries.map(query => templateForDeal(query, company)),
+    })),
+    critical_unknowns: [],
+    contradictions_to_resolve: [],
+    stop_conditions: [
+      'Every required question is answered with sourced evidence or explicitly marked unavailable.',
+      'Material supplied claims are labeled verified, conflicting, or unavailable.',
+      'Additional retrieval is unlikely to change a rubric choice or resolve a named contradiction.',
+    ],
+  };
+}
+
+function mergeResearchPlan(baseline, adaptation) {
+  const baselineIds = new Set(baseline.questions.map(question => question.question_id));
+  const priorityQuestionIds = [...new Set(adaptation.priority_question_ids || [])]
+    .filter(questionId => baselineIds.has(questionId));
+  const customQuestions = (adaptation.custom_questions || []).slice(0, 3).map((question, index) => ({
+    question_id: question.question_id || `custom-${index + 1}`,
+    coverage_area: question.coverage_area,
+    question: question.question,
+    rubric_dimensions: question.rubric_dimensions,
+    confirming_evidence: question.evidence_target,
+    disconfirming_evidence: question.evidence_target,
+    preferred_sources: question.preferred_sources,
+    recency_requirement: question.recency_requirement,
+    search_queries: question.search_queries,
+    required: question.required,
+  }));
+  return {
+    ...baseline,
+    deal_identity: adaptation.deal_identity || baseline.deal_identity,
+    decision_frame: adaptation.decision_frame || baseline.decision_frame,
+    priority_question_ids: [
+      ...priorityQuestionIds,
+      ...baseline.priority_question_ids.filter(questionId => !priorityQuestionIds.includes(questionId)),
+      ...customQuestions.map(question => question.question_id),
+    ],
+    questions: [...baseline.questions, ...customQuestions],
+    critical_unknowns: adaptation.critical_unknowns || [],
+    contradictions_to_resolve: adaptation.contradictions_to_resolve || [],
+  };
+}
 
 const CFO_SCHEMA = {
   type: 'object',
@@ -210,15 +381,19 @@ const CFO_SCHEMA = {
 
 const STAGE_PROMPTS = {
   planner:
-    'STAGE: planner\nDesign the research plan only. Use the deal and authoritative scoring lens to create ' +
-    '8–12 decision-critical questions spanning every required coverage area. For load-bearing claims, require ' +
-    'both confirming and disconfirming evidence. Include concrete search queries, source priorities, recency ' +
-    'requirements, and stopping conditions. Do not search, answer questions, score, or simulate another voice.',
+    'STAGE: planner\nAdapt Radar’s deterministic baseline research plan; do not rewrite or repeat it. ' +
+    'Prioritize its question IDs, identify only material unknowns and contradictions, and add zero to three ' +
+    'deal-specific questions that the baseline does not cover. Keep every field terse. Do not search, answer ' +
+    'questions, score, or simulate another voice.',
   research:
     'STAGE: research\nExecute the frozen research plan and build one shared factual evidence packet for the deal. ' +
-    'Use web search when useful. Label every item as supplied, verified, conflicting, or unavailable, ' +
-    'and include its source in the string. Cover every required research area, then stop when additional ' +
-    'retrieval is unlikely to change a rubric choice. Merge duplicates. Do not score the deal or simulate another Council voice.',
+    'Use web search when useful. Return at least one evidence line for every required question ID. Format each line as ' +
+    '[question_id] STATUS | narrowly stated fact | event date | source title and publication date | URL. STATUS must be ' +
+    'supplied, verified, conflicting, or unavailable. Verify entity and date before recording a claim; when credible sources ' +
+    'conflict, record both claims instead of choosing silently. Never infer that something did not happen merely because a ' +
+    'search did not find it. Keep the team dossier and company context neutral and sourced—no scoring, risk conclusions, or ' +
+    'guilt by association. Cover every required question, merge exact duplicates, and stop when further retrieval is unlikely ' +
+    'to resolve a named conflict or change the factual packet. Do not score the deal or simulate another Council voice.',
   bull:
     'STAGE: bull\nPerform only the Bull evaluation. Use only the frozen research packet in context; ' +
     'do not search or add facts. Return exactly one 1–5 Likert choice for every rubric dimension, ' +
@@ -518,12 +693,12 @@ export function assembleContext(deal, lens, calibration, provenance = {}) {
 export function buildCouncilAgents(models) {
   return {
     planner: {
-      description: 'Planning leg: define the decision-critical research questions.',
+      description: 'Planning leg: adapt and prioritize Radar’s baseline research questions.',
       model: models.planner,
       prompt:
-        'You design a bounded research plan against the deal and rubric. Include ' +
-        'confirming and falsifying evidence requirements, source priorities, recency, ' +
-        'and concrete search queries. Do not retrieve facts or score the deal.',
+        'You adapt Radar’s deterministic research baseline against the deal and rubric. ' +
+        'Prioritize existing questions, identify material contradictions, and add at most ' +
+        'three missing deal-specific questions. Do not retrieve facts or score the deal.',
       tools: [],
     },
     research: {
@@ -626,8 +801,8 @@ function aggregateStageUsage(stages) {
  * @param {string} [opts.policyId=balanced]
  * @param {object} [opts.calibrationSnapshot] exact historical calibration for
  *   a controlled replay; normal runs derive calibration from Radar.
- * @param {object} [opts.plannerSnapshot] exact frozen research plan for a
- *   controlled replay; normal runs ask Sonnet to create the plan.
+ * @param {object} [opts.plannerSnapshot] exact frozen merged research plan for
+ *   a controlled replay; normal runs ask Sonnet to adapt Radar's baseline.
  * @param {object} [opts.researchSnapshot] exact frozen evidence packet for a
  *   controlled replay; normal runs perform fresh retrieval.
  * @returns {Promise<{result: object, usedFallback: boolean, primaryErrorKind?: string, calibrationMaturity: string, modelPolicy: object}>}
@@ -660,8 +835,9 @@ export async function councilEvaluate(deal, opts = {}) {
     roundParams: getRoundParams(),
   };
   const calibration = calibrationSnapshot || await getCalibration();
+  const baselineResearchPlan = buildBaselineResearchPlan(deal);
   const turnPolicy = {
-    planner: Math.max(3, Math.ceil(maxTurns / 10)),
+    planner: Math.max(1, Math.ceil(maxTurns / 40)),
     research: Math.max(16, Math.ceil(maxTurns / 2)),
     judgment: Math.max(4, Math.ceil(maxTurns / 8)),
   };
@@ -671,9 +847,11 @@ export async function councilEvaluate(deal, opts = {}) {
       Object.keys(ROLE_PATHS).map(stage => [stage, loadRolePrompt(stage)]),
     ),
     pipeline: EXPLICIT_PIPELINE_VERSION,
+    researchPlanSeedVersion: RESEARCH_PLAN_SEED_VERSION,
+    baselineResearchQuestions: BASELINE_RESEARCH_QUESTIONS,
     prompts: STAGE_PROMPTS,
     schemas: {
-      planner: RESEARCH_PLAN_SCHEMA,
+      planner: PLANNER_ADAPTATION_SCHEMA,
       research: RESEARCH_SCHEMA,
       grader: GRADER_SCHEMA,
       calibrator: CALIBRATOR_SCHEMA,
@@ -689,6 +867,8 @@ export async function councilEvaluate(deal, opts = {}) {
     lensHash: hash(lens),
     calibrationHash: hash(calibration),
     inputHash: hash(deal || {}),
+    researchPlanSeedVersion: RESEARCH_PLAN_SEED_VERSION,
+    researchPlanSeedHash: hash(baselineResearchPlan),
     plannerSnapshotHash: plannerSnapshot ? hash(plannerSnapshot) : null,
     researchSnapshotHash: researchSnapshot ? hash(researchSnapshot) : null,
   };
@@ -705,8 +885,8 @@ export async function councilEvaluate(deal, opts = {}) {
   const requests = {
     planner: stageRequest('planner', {
       model: policy.planner,
-      context: graderBaseContext,
-      schema: RESEARCH_PLAN_SCHEMA,
+      context: `${graderBaseContext}\n\nDETERMINISTIC BASELINE RESEARCH PLAN\n${JSON.stringify(baselineResearchPlan)}`,
+      schema: PLANNER_ADAPTATION_SCHEMA,
       maxTurns: turnPolicy.planner,
     }),
     research: stageRequest('research', {
@@ -804,7 +984,11 @@ export async function councilEvaluate(deal, opts = {}) {
     await notifyStage('planning');
     const planner = plannerSnapshot
       ? frozenPlannerStage(plannerSnapshot)
-      : await runStage('planner', requests.planner, runtime);
+      : await runStage('planner', requests.planner, runtime).then(stage => ({
+        ...stage,
+        adaptation: stage.data,
+        data: mergeResearchPlan(baselineResearchPlan, stage.data),
+      }));
     provenance.researchPlanHash = hash(planner.data);
     provenance.researchPlan = planner.data;
 

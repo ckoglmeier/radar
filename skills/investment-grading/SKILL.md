@@ -25,7 +25,8 @@ Treat those injected inputs as authoritative.
 
 Radar loads only the contract required for the active stage:
 
-- Research planner: [references/planner.md](references/planner.md)
+- Research planner: [references/planner.md](references/planner.md) — prioritize
+  Radar's deterministic question bank and add only deal-specific gaps
 - Research: [references/research.md](references/research.md)
 - Bull: [references/bull.md](references/bull.md)
 - Bear: [references/bear.md](references/bear.md)
