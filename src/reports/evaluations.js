@@ -5,6 +5,7 @@ import { query } from '../db/index.js';
 import { calculateIRR } from '../utils/irr.js';
 import { runAnalytics } from '../utils/analytics.js';
 import { getActiveThesisNames } from '../lenses/loader.js';
+import { normalize as normalizeCompanyName } from '../utils/company-names.js';
 
 export async function evalList() {
   return listEvaluations();
@@ -12,6 +13,130 @@ export async function evalList() {
 
 export async function evalDetail(search) {
   return getEvaluationByCompany(search);
+}
+
+function suggestionBasis(evaluation, candidate) {
+  const evalName = normalizeCompanyName(evaluation.company_name);
+  const candidateName = normalizeCompanyName(candidate.company_name);
+  if (!candidateName) return null;
+  if (evalName && evalName === candidateName) return 'normalized-name';
+  if (evalName && (evalName.includes(candidateName) || candidateName.includes(evalName))) {
+    return 'similar-name';
+  }
+  const path = normalizeCompanyName(evaluation.file_path);
+  if (path && path.includes(candidateName)) return 'file-path';
+  return null;
+}
+
+function suggestedMatch(evaluation, candidates) {
+  const matches = candidates
+    .map(candidate => ({ candidate, basis: suggestionBasis(evaluation, candidate) }))
+    .filter(match => match.basis);
+  if (matches.length === 0) return { match: null, count: 0 };
+
+  const priority = ['normalized-name', 'similar-name', 'file-path'];
+  for (const basis of priority) {
+    const ranked = matches.filter(match => match.basis === basis);
+    if (ranked.length === 1) {
+      const { candidate } = ranked[0];
+      return {
+        match: {
+          type: candidate.type,
+          id: candidate.id,
+          company_name: candidate.company_name,
+          deal_slug: candidate.deal_slug || null,
+          basis,
+          confirmed: false,
+        },
+        count: matches.length,
+      };
+    }
+    if (ranked.length > 1) return { match: null, count: matches.length };
+  }
+  return { match: null, count: matches.length };
+}
+
+/**
+ * Chronological evidence ledger for the Pipeline workspace.
+ *
+ * Authoritative destinations come only from persisted foreign keys. The
+ * optional suggested_match is deliberately separate and never changes
+ * link_type or linked_id.
+ */
+export async function evaluationLedger() {
+  const [evaluations, invites, investments] = await Promise.all([
+    query(`
+      SELECT
+        de.id,
+        de.investment_id,
+        de.pipeline_invite_id,
+        de.eval_date,
+        de.file_path,
+        de.company_name,
+        de.thesis_fit_score,
+        de.viability_score,
+        de.total_score,
+        de.verdict,
+        de.invested,
+        de.council_bull_score,
+        de.council_bear_score,
+        de.council_calibrator_score,
+        de.council_spread,
+        de.council_consensus,
+        de.council_divergence,
+        de.council_cfo_verdict,
+        de.eval_mode,
+        de.created_at,
+        LEFT(de.raw_content, 900) AS source_excerpt,
+        pi.company_name AS pipeline_company_name,
+        pi.deal_slug AS pipeline_deal_slug,
+        i.company_name AS investment_company_name
+      FROM deal_evaluations de
+      LEFT JOIN pipeline_invites pi ON pi.id = de.pipeline_invite_id
+      LEFT JOIN investments i ON i.id = de.investment_id
+      ORDER BY de.eval_date DESC NULLS LAST, de.created_at DESC, de.id DESC
+    `),
+    query(`SELECT id, company_name, deal_slug FROM pipeline_invites`),
+    query(`SELECT id, company_name FROM investments`),
+  ]);
+
+  const candidates = [
+    ...invites.map(row => ({ ...row, type: 'pipeline_invite' })),
+    ...investments.map(row => ({ ...row, type: 'investment' })),
+  ];
+
+  return evaluations.map(row => {
+    let linkType = 'unlinked';
+    let linkedId = null;
+    let linkedCompanyName = null;
+    let linkedDealSlug = null;
+    if (row.pipeline_invite_id != null) {
+      linkType = 'pipeline_invite';
+      linkedId = row.pipeline_invite_id;
+      linkedCompanyName = row.pipeline_company_name;
+      linkedDealSlug = row.pipeline_deal_slug;
+    } else if (row.investment_id != null) {
+      linkType = 'investment';
+      linkedId = row.investment_id;
+      linkedCompanyName = row.investment_company_name;
+    }
+
+    const suggestion = linkType === 'unlinked'
+      ? suggestedMatch(row, candidates)
+      : { match: null, count: 0 };
+
+    return {
+      ...row,
+      display_company_name:
+        row.company_name || row.pipeline_company_name || row.investment_company_name || null,
+      link_type: linkType,
+      linked_id: linkedId,
+      linked_company_name: linkedCompanyName,
+      linked_deal_slug: linkedDealSlug,
+      suggested_match: suggestion.match,
+      suggested_match_count: suggestion.count,
+    };
+  });
 }
 
 export async function evalDiscover(opts = {}) {

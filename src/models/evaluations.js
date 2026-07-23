@@ -390,6 +390,17 @@ export async function listEvaluations() {
   );
 }
 
+export async function evaluationHistoryForInvite(inviteId) {
+  const rows = await query(
+    `SELECT de.*
+     FROM deal_evaluations de
+     WHERE de.pipeline_invite_id = $1
+     ORDER BY de.eval_date DESC NULLS LAST, de.created_at DESC, de.id DESC`,
+    [inviteId]
+  );
+  return rows.map(resolveEvalContent);
+}
+
 function resolveEvalContent(row) {
   if (!row) return null;
   let rawText = row.raw_content || null;
