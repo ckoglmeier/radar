@@ -74,9 +74,17 @@ function fakeProvider({ delay = 0 } = {}) {
       return {
         text: JSON.stringify(structuredOutput),
         structuredOutput,
-        usage: {},
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          totalCostUsd: 0.01,
+          byModel: {
+            [req.model]: { inputTokens: 100, outputTokens: 20, costUsd: 0.01 },
+          },
+        },
         model: req.model,
         apiKeySource: 'oauth',
+        numTurns: 1,
         sessionId: `session-${stage}`,
       };
     },
@@ -143,9 +151,14 @@ test('councilEvaluate: executes five explicit stages against one evidence packet
       fake.calls.map(req => [req.prompt.match(/^STAGE:\s*(\w+)/m)?.[1], req]),
     );
     eq(Object.keys(byStage).sort().join(','), 'bear,bull,calibrator,cfo,research');
-    ok(byStage.research.systemPrompt.includes('Headless Council'), 'systemPrompt = vendored skill');
+    ok(byStage.research.systemPrompt.includes('Council Research Contract'), 'research gets its role contract');
+    ok(byStage.bull.systemPrompt.includes('Council Bull Contract'), 'Bull gets its role contract');
+    ok(byStage.bear.systemPrompt.includes('Council Bear Contract'), 'Bear gets its role contract');
+    ok(byStage.calibrator.systemPrompt.includes('Council Calibrator Contract'), 'Calibrator gets its role contract');
+    ok(byStage.cfo.systemPrompt.includes('Council Portfolio Action Contract'), 'CFO gets its role contract');
     ok(byStage.research.context.includes('Acme Autonomy'), 'deal in context');
-    ok(byStage.research.context.includes('CALIBRATION'), 'calibration in context');
+    ok(!byStage.research.context.includes('CALIBRATION'), 'research does not receive calibration');
+    ok(!byStage.research.context.includes('SCORING LENS'), 'research does not receive the scoring lens');
     eq(byStage.research.tools.join(','), 'WebSearch', 'research owns retrieval');
     for (const stage of ['bull', 'bear', 'calibrator', 'cfo']) {
       eq(byStage[stage].tools.length, 0, `${stage} cannot retrieve or write`);
@@ -153,12 +166,22 @@ test('councilEvaluate: executes five explicit stages against one evidence packet
     }
     ok(byStage.bull.context.includes('https://example.com/source'), 'Bull sees frozen research');
     ok(byStage.bear.context.includes('https://example.com/source'), 'Bear sees frozen research');
+    ok(byStage.bull.context.includes('SCORING LENS'), 'Bull sees the scoring lens');
+    ok(!byStage.bull.context.includes('CALIBRATION'), 'Bull does not receive calibration');
+    ok(byStage.calibrator.context.includes('CALIBRATION'), 'Calibrator receives calibration');
+    ok(!byStage.cfo.context.includes('FROZEN BULL OUTPUT'), 'CFO does not receive full grader transcripts');
+    ok(!byStage.cfo.context.includes('FROZEN RESEARCH PACKET'), 'CFO does not receive the evidence packet');
+    ok(byStage.cfo.context.includes('RADAR-COMPUTED CANONICAL SCORE'), 'CFO receives canonical score');
     eq(byStage.calibrator.model, 'opus', 'Calibrator stage uses Opus');
 
     eq(out.usedFallback, false);
     ok(out.calibrationMaturity, 'carries calibration maturity');
     eq(out.modelPolicy.calibrator, 'opus');
-    eq(out.provenance.policyVersion, 3);
+    eq(out.usage.inputTokens, 500, 'aggregates input usage');
+    eq(out.usage.outputTokens, 100, 'aggregates output usage');
+    eq(out.usage.totalCostUsd, 0.05, 'aggregates direct API cost');
+    eq(out.stageMetrics.length, 5, 'returns per-stage usage');
+    eq(out.provenance.policyVersion, 4);
     ok(out.provenance.instructionHash && out.provenance.lensHash, 'provenance fingerprints');
     eq(out.writtenFiles.length, 1);
     eq(stages.join(','), 'research,bull_bear,calibrator,cfo,finalizing', 'reported durable UI stages');
@@ -198,7 +221,9 @@ test('councilEvaluate: dry run assembles without a provider or a model call', as
   const out = await councilEvaluate({ company: 'Dry Co' }, { dryRun: true, env: {} });
   eq(out.dryRun, true);
   ok(out.requests.research.context.includes('Dry Co'), 'assembled the context');
-  ok(out.requests.research.systemPrompt.includes('Headless Council'), 'loaded the skill');
+  ok(out.requests.research.systemPrompt.includes('Council Research Contract'), 'loaded the research role contract');
+  ok(out.requests.research.context.length < out.requests.calibrator.context.length, 'research context is scoped');
+  ok(out.requests.cfo.context.length < out.requests.calibrator.context.length, 'CFO context is scoped');
   eq(Object.keys(out.requests).length, 5, 'previews all enforced stages');
   eq(out.modelPolicy.calibrator, 'opus');
   ok(out.calibrationMaturity, 'reports calibration maturity');

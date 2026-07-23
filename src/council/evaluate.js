@@ -30,14 +30,21 @@ import { runWithFallback, resolveFallbackFlag } from '../providers/session-error
 import { resolveAuthMode } from '../providers/auth-mode.js';
 import { scoreCouncilChoices } from './scoring.js';
 
-const SKILL_PATH = join(
+const SKILL_DIR = join(
   dirname(fileURLToPath(String(import.meta.url))),
   '..',
   '..',
   'skills',
-  'investment-grading',
-  'SKILL.md'
+  'investment-grading'
 );
+const SKILL_PATH = join(SKILL_DIR, 'SKILL.md');
+const ROLE_PATHS = Object.freeze({
+  research: join(SKILL_DIR, 'references', 'research.md'),
+  bull: join(SKILL_DIR, 'references', 'bull.md'),
+  bear: join(SKILL_DIR, 'references', 'bear.md'),
+  calibrator: join(SKILL_DIR, 'references', 'calibrator.md'),
+  cfo: join(SKILL_DIR, 'references', 'cfo.md'),
+});
 
 let _skill;
 function loadSkill() {
@@ -45,8 +52,17 @@ function loadSkill() {
   return _skill;
 }
 
-export const COUNCIL_POLICY_VERSION = 3;
-const EXPLICIT_PIPELINE_VERSION = 'explicit-stages-v1';
+const _rolePrompts = new Map();
+function loadRolePrompt(stage) {
+  if (!ROLE_PATHS[stage]) throw new Error(`Unknown Council stage: ${stage}`);
+  if (!_rolePrompts.has(stage)) {
+    _rolePrompts.set(stage, readFileSync(ROLE_PATHS[stage], 'utf8'));
+  }
+  return _rolePrompts.get(stage);
+}
+
+export const COUNCIL_POLICY_VERSION = 4;
+const EXPLICIT_PIPELINE_VERSION = 'scoped-role-context-v2';
 const inFlightRuns = new Map();
 
 function hash(value) {
@@ -72,7 +88,7 @@ const DIMENSION_ARRAY = {
     properties: {
       name: { type: 'string' },
       likert: { type: 'number', minimum: 1, maximum: 5 },
-      rationale: { type: 'string' },
+      rationale: { type: 'string', maxLength: 600 },
     },
     required: ['name', 'likert', 'rationale'],
     additionalProperties: false,
@@ -83,7 +99,7 @@ const GRADER_SCHEMA = {
   type: 'object',
   properties: {
     dimension_scores: DIMENSION_ARRAY,
-    key_argument: { type: 'string' },
+    key_argument: { type: 'string', maxLength: 1600 },
   },
   required: ['dimension_scores', 'key_argument'],
   additionalProperties: false,
@@ -93,15 +109,27 @@ const CALIBRATOR_SCHEMA = {
   type: 'object',
   properties: {
     dimension_scores: DIMENSION_ARRAY,
-    key_argument: { type: 'string' },
-    kill_criteria: { type: 'string' },
-    primary_thesis: { type: 'string' },
-    moves_up: { type: 'array', items: { type: 'string' } },
-    moves_down: { type: 'array', items: { type: 'string' } },
-    net_assessment: { type: 'string' },
-    key_questions: { type: 'array', items: { type: 'string' } },
-    email: { type: 'string' },
-    linkedin: { type: 'string' },
+    key_argument: { type: 'string', maxLength: 1600 },
+    kill_criteria: { type: 'string', maxLength: 1000 },
+    primary_thesis: { type: 'string', maxLength: 500 },
+    moves_up: {
+      type: 'array',
+      maxItems: 5,
+      items: { type: 'string', maxLength: 700 },
+    },
+    moves_down: {
+      type: 'array',
+      maxItems: 5,
+      items: { type: 'string', maxLength: 700 },
+    },
+    net_assessment: { type: 'string', maxLength: 1200 },
+    key_questions: {
+      type: 'array',
+      maxItems: 5,
+      items: { type: 'string', maxLength: 500 },
+    },
+    email: { type: 'string', maxLength: 1200 },
+    linkedin: { type: 'string', maxLength: 700 },
   },
   required: [
     'dimension_scores', 'key_argument', 'kill_criteria', 'primary_thesis',
@@ -113,9 +141,12 @@ const CALIBRATOR_SCHEMA = {
 const RESEARCH_SCHEMA = {
   type: 'object',
   properties: {
-    evidence: { type: 'array', items: { type: 'string' } },
-    team_dossier: { type: 'string' },
-    company_context: { type: 'string' },
+    evidence: {
+      type: 'array',
+      items: { type: 'string', maxLength: 900 },
+    },
+    team_dossier: { type: 'string', maxLength: 6000 },
+    company_context: { type: 'string', maxLength: 5000 },
   },
   required: ['evidence', 'team_dossier', 'company_context'],
   additionalProperties: false,
@@ -125,7 +156,7 @@ const CFO_SCHEMA = {
   type: 'object',
   properties: {
     verdict: { type: 'string', enum: ['Deploy', 'Defer', 'Pass'] },
-    reason: { type: 'string' },
+    reason: { type: 'string', maxLength: 900 },
   },
   required: ['verdict', 'reason'],
   additionalProperties: false,
@@ -157,7 +188,7 @@ const STAGE_PROMPTS = {
 function stageRequest(stage, { model, context, schema, maxTurns }) {
   return {
     prompt: STAGE_PROMPTS[stage],
-    systemPrompt: loadSkill(),
+    systemPrompt: loadRolePrompt(stage),
     context,
     model,
     tools: stage === 'research' ? ['WebSearch'] : [],
@@ -260,29 +291,89 @@ function fmtValue(v) {
   return typeof v === 'string' ? v : JSON.stringify(v);
 }
 
+function contractBlock(
+  deal,
+  lens,
+  calibration,
+  provenance = {},
+  { includeLens = true, includeCalibration = true } = {},
+) {
+  const lines = [
+    'COUNCIL RUN CONTRACT',
+    `  Policy version: ${provenance.policyVersion || COUNCIL_POLICY_VERSION}`,
+    `  Instruction hash: ${provenance.instructionHash || hash(loadSkill())}`,
+    `  Input hash: ${provenance.inputHash || hash(deal || {})}`,
+    '  Research produces one shared Evidence Ledger. Later roles cannot add facts.',
+    '  Models choose 1–5 dimension values. Radar computes points and verdicts.',
+  ];
+  if (includeLens) lines.splice(3, 0, `  Lens hash: ${provenance.lensHash || hash(lens || {})}`);
+  if (includeCalibration) {
+    const insertAt = includeLens ? 4 : 3;
+    lines.splice(insertAt, 0, `  Calibration hash: ${provenance.calibrationHash || hash(calibration || {})}`);
+  }
+  return lines.join('\n');
+}
+
+function dealBlock(deal) {
+  const lines =
+    Object.entries(deal || {})
+      .map(([k, v]) => `  ${k}: ${fmtValue(v)}`)
+      .join('\n') || '  (no fields provided)';
+  return `DEAL\n${lines}`;
+}
+
+function assembleResearchContext(deal, lens, calibration, provenance) {
+  return [
+    contractBlock(deal, lens, calibration, provenance, {
+      includeLens: false,
+      includeCalibration: false,
+    }),
+    '',
+    dealBlock(deal),
+  ].join('\n');
+}
+
+function assembleGraderContext(deal, lens, calibration, provenance) {
+  return [
+    contractBlock(deal, lens, calibration, provenance, {
+      includeCalibration: false,
+    }),
+    '',
+    dealBlock(deal),
+    '',
+    'SCORING LENS',
+    `  Rubric: ${JSON.stringify(lens.rubric)}`,
+    `  Kill criteria: ${JSON.stringify(lens.kill)}`,
+    `  GP tiers: ${JSON.stringify(lens.gpTiers)}`,
+    `  Theses: ${JSON.stringify(lens.theses)}`,
+    `  Thesis clusters: ${JSON.stringify(lens.clusters)}`,
+  ].join('\n');
+}
+
+function assembleCfoContext(deal, lens, calibration, provenance) {
+  return [
+    contractBlock(deal, lens, calibration, provenance, {
+      includeCalibration: false,
+    }),
+    '',
+    dealBlock(deal),
+    '',
+    'PORTFOLIO POLICY',
+    `  GP tiers: ${JSON.stringify(lens.gpTiers)}`,
+    `  Round params: ${JSON.stringify(lens.roundParams)}`,
+  ].join('\n');
+}
+
 /**
  * Build the single injected context block: DEAL + LENS (authoritative) +
  * CALIBRATION. Lens/calibration are emitted as JSON — precise and lossless for
  * the model to read, versus prose transcription which could drift.
  */
 export function assembleContext(deal, lens, calibration, provenance = {}) {
-  const dealLines =
-    Object.entries(deal || {})
-      .map(([k, v]) => `  ${k}: ${fmtValue(v)}`)
-      .join('\n') || '  (no fields provided)';
-
   return [
-    'COUNCIL RUN CONTRACT',
-    `  Policy version: ${provenance.policyVersion || COUNCIL_POLICY_VERSION}`,
-    `  Instruction hash: ${provenance.instructionHash || hash(loadSkill())}`,
-    `  Lens hash: ${provenance.lensHash || hash(lens)}`,
-    `  Calibration hash: ${provenance.calibrationHash || hash(calibration)}`,
-    `  Input hash: ${provenance.inputHash || hash(deal || {})}`,
-    '  Research produces one shared Evidence Ledger. Bull, Bear, Calibrator, and CFO must use only that ledger.',
-    '  The model chooses 1–5 dimension values. Radar computes weighted points and verdict bands in code.',
+    contractBlock(deal, lens, calibration, provenance),
     '',
-    'DEAL',
-    dealLines,
+    dealBlock(deal),
     '',
     'LENS (authoritative — score against THIS, not general knowledge)',
     `  Rubric: ${JSON.stringify(lens.rubric)}`,
@@ -351,6 +442,41 @@ export function buildCouncilAgents(models) {
   };
 }
 
+function aggregateStageUsage(stages) {
+  const total = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalCostUsd: 0,
+    byModel: {},
+  };
+  const perStage = stages.map(stage => {
+    const usage = stage.result.usage || {};
+    total.inputTokens += Number(usage.inputTokens || 0);
+    total.outputTokens += Number(usage.outputTokens || 0);
+    total.totalCostUsd += Number(usage.totalCostUsd || 0);
+    for (const [model, modelUsage] of Object.entries(usage.byModel || {})) {
+      if (!total.byModel[model]) {
+        total.byModel[model] = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+      }
+      total.byModel[model].inputTokens += Number(modelUsage.inputTokens || 0);
+      total.byModel[model].outputTokens += Number(modelUsage.outputTokens || 0);
+      total.byModel[model].costUsd += Number(modelUsage.costUsd || 0);
+    }
+    return {
+      stage: stage.stage,
+      model: stage.result.model || null,
+      numTurns: Number(stage.result.numTurns || 0),
+      usage: {
+        inputTokens: Number(usage.inputTokens || 0),
+        outputTokens: Number(usage.outputTokens || 0),
+        totalCostUsd: Number(usage.totalCostUsd || 0),
+      },
+    };
+  });
+  if (Object.keys(total.byModel).length === 0) delete total.byModel;
+  return { total, perStage };
+}
+
 /**
  * Grade one opportunity through the council and write its deal-log diagnosis.
  *
@@ -396,6 +522,9 @@ export async function councilEvaluate(deal, opts = {}) {
   const calibration = await getCalibration();
   const instructionHash = hash({
     skill: loadSkill(),
+    roles: Object.fromEntries(
+      Object.keys(ROLE_PATHS).map(stage => [stage, loadRolePrompt(stage)]),
+    ),
     pipeline: EXPLICIT_PIPELINE_VERSION,
     prompts: STAGE_PROMPTS,
     schemas: { research: RESEARCH_SCHEMA, grader: GRADER_SCHEMA, calibrator: CALIBRATOR_SCHEMA, cfo: CFO_SCHEMA },
@@ -415,24 +544,27 @@ export async function councilEvaluate(deal, opts = {}) {
     executionId: executionId || null,
   });
   const context = assembleContext(deal, lens, calibration, provenance);
+  const researchContext = assembleResearchContext(deal, lens, calibration, provenance);
+  const graderBaseContext = assembleGraderContext(deal, lens, calibration, provenance);
+  const cfoBaseContext = assembleCfoContext(deal, lens, calibration, provenance);
   const authMode = resolveAuthMode(env);
   const stageTurns = Math.max(6, Math.ceil(maxTurns / 4));
   const requests = {
     research: stageRequest('research', {
       model: policy.research,
-      context,
+      context: researchContext,
       schema: RESEARCH_SCHEMA,
       maxTurns: stageTurns,
     }),
     bull: stageRequest('bull', {
       model: policy.bull,
-      context: `${context}\n\nFROZEN RESEARCH PACKET\n  (produced by the research stage)`,
+      context: `${graderBaseContext}\n\nFROZEN RESEARCH PACKET\n  (produced by the research stage)`,
       schema: GRADER_SCHEMA,
       maxTurns: stageTurns,
     }),
     bear: stageRequest('bear', {
       model: policy.bear,
-      context: `${context}\n\nFROZEN RESEARCH PACKET\n  (produced by the research stage)`,
+      context: `${graderBaseContext}\n\nFROZEN RESEARCH PACKET\n  (produced by the research stage)`,
       schema: GRADER_SCHEMA,
       maxTurns: stageTurns,
     }),
@@ -444,7 +576,7 @@ export async function councilEvaluate(deal, opts = {}) {
     }),
     cfo: stageRequest('cfo', {
       model: policy.cfo,
-      context: `${context}\n\nFROZEN COUNCIL OUTPUTS AND RADAR-COMPUTED SCORE\n  (produced by prior stages)`,
+      context: `${cfoBaseContext}\n\nCALIBRATED DECISION SUMMARY AND RADAR-COMPUTED SCORE\n  (produced by prior stages)`,
       schema: CFO_SCHEMA,
       maxTurns: stageTurns,
     }),
@@ -513,7 +645,7 @@ export async function councilEvaluate(deal, opts = {}) {
     await notifyStage('research');
     const research = await runStage('research', requests.research, runtime);
     const frozenResearch = JSON.stringify(research.data);
-    const graderContext = `${context}\n\nFROZEN RESEARCH PACKET\n${frozenResearch}`;
+    const graderContext = `${graderBaseContext}\n\nFROZEN RESEARCH PACKET\n${frozenResearch}`;
 
     await notifyStage('bull_bear');
     const [bull, bear] = await Promise.all([
@@ -554,10 +686,15 @@ export async function councilEvaluate(deal, opts = {}) {
     }), runtime);
     const canonical = scoreCouncilChoices(calibrator.data.dimension_scores, lens.rubric);
 
+    const cfoDecisionSummary = {
+      key_argument: calibrator.data.key_argument,
+      primary_thesis: calibrator.data.primary_thesis,
+      net_assessment: calibrator.data.net_assessment,
+    };
     const cfoContext = [
-      calibratorContext,
-      'FROZEN CALIBRATOR OUTPUT',
-      JSON.stringify(calibrator.data),
+      cfoBaseContext,
+      'CALIBRATED DECISION SUMMARY',
+      JSON.stringify(cfoDecisionSummary),
       'RADAR-COMPUTED CANONICAL SCORE',
       JSON.stringify(canonical),
     ].join('\n\n');
@@ -584,6 +721,7 @@ export async function councilEvaluate(deal, opts = {}) {
     writeFileSync(join(dealLogDir, artifact.filename), artifact.content, 'utf8');
 
     const stages = [research, bull, bear, calibrator, cfo];
+    const usage = aggregateStageUsage(stages);
     const sessionIds = stages.map(stage => stage.result.sessionId).filter(Boolean);
     const result = {
       text: `Council complete: ${artifact.scores.canonical.totalScore}/50 · ${artifact.scores.canonical.verdict}`,
@@ -591,9 +729,13 @@ export async function councilEvaluate(deal, opts = {}) {
       sessionId: sessionIds.join(',') || null,
       model: policy.calibrator,
       apiKeySource: calibrator.result.apiKeySource || null,
+      usage: usage.total,
+      stageMetrics: usage.perStage,
     };
     return {
       result,
+      usage: usage.total,
+      stageMetrics: usage.perStage,
       usedFallback: stages.some(stage => stage.usedFallback),
       primaryErrorKind: stages.find(stage => stage.primaryErrorKind)?.primaryErrorKind,
       calibrationMaturity: calibration.maturity,
