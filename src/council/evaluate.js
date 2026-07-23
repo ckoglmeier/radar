@@ -381,6 +381,8 @@ export async function councilEvaluate(deal, opts = {}) {
     dealLogDir,
     reuse = true,
     findExisting,
+    executionId,
+    onStage,
   } = opts;
 
   const lens = {
@@ -407,7 +409,11 @@ export async function councilEvaluate(deal, opts = {}) {
     calibrationHash: hash(calibration),
     inputHash: hash(deal || {}),
   };
-  provenance.runKey = hash({ ...provenance, modelPolicy: policy });
+  provenance.runKey = hash({
+    ...provenance,
+    modelPolicy: policy,
+    executionId: executionId || null,
+  });
   const context = assembleContext(deal, lens, calibration, provenance);
   const authMode = resolveAuthMode(env);
   const stageTurns = Math.max(6, Math.ceil(maxTurns / 4));
@@ -500,10 +506,16 @@ export async function councilEvaluate(deal, opts = {}) {
       env,
     };
 
+    const notifyStage = async stage => {
+      if (onStage) await onStage(stage);
+    };
+
+    await notifyStage('research');
     const research = await runStage('research', requests.research, runtime);
     const frozenResearch = JSON.stringify(research.data);
     const graderContext = `${context}\n\nFROZEN RESEARCH PACKET\n${frozenResearch}`;
 
+    await notifyStage('bull_bear');
     const [bull, bear] = await Promise.all([
       runStage('bull', stageRequest('bull', {
         model: policy.bull,
@@ -533,6 +545,7 @@ export async function councilEvaluate(deal, opts = {}) {
       'FROZEN BEAR OUTPUT',
       JSON.stringify(bear.data),
     ].join('\n\n');
+    await notifyStage('calibrator');
     const calibrator = await runStage('calibrator', stageRequest('calibrator', {
       model: policy.calibrator,
       context: calibratorContext,
@@ -548,6 +561,7 @@ export async function councilEvaluate(deal, opts = {}) {
       'RADAR-COMPUTED CANONICAL SCORE',
       JSON.stringify(canonical),
     ].join('\n\n');
+    await notifyStage('cfo');
     const cfo = await runStage('cfo', stageRequest('cfo', {
       model: policy.cfo,
       context: cfoContext,
@@ -555,6 +569,7 @@ export async function councilEvaluate(deal, opts = {}) {
       maxTurns: stageTurns,
     }), runtime);
 
+    await notifyStage('finalizing');
     const artifact = renderArtifact({
       deal,
       research: research.data,

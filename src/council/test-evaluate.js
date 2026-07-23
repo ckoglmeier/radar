@@ -133,9 +133,10 @@ test('councilEvaluate: requires a provider', () => throwsAsync(() => councilEval
 test('councilEvaluate: executes five explicit stages against one evidence packet', async () =>
   withTempDir(async dealLogDir => {
     const fake = fakeProvider();
+    const stages = [];
     const out = await councilEvaluate(
       { company: 'Acme Autonomy', stage: 'Series A' },
-      { provider: fake, env: {}, dealLogDir },
+      { provider: fake, env: {}, dealLogDir, onStage: stage => stages.push(stage) },
     );
     eq(fake.calls.length, 5, 'ran five sessions');
     const byStage = Object.fromEntries(
@@ -160,6 +161,7 @@ test('councilEvaluate: executes five explicit stages against one evidence packet
     eq(out.provenance.policyVersion, 3);
     ok(out.provenance.instructionHash && out.provenance.lensHash, 'provenance fingerprints');
     eq(out.writtenFiles.length, 1);
+    eq(stages.join(','), 'research,bull_bear,calibrator,cfo,finalizing', 'reported durable UI stages');
     const artifact = readFileSync(join(dealLogDir, out.writtenFiles[0]), 'utf8');
     ok(artifact.includes('## Council Evaluation'), 'Radar wrote Council table');
     ok(artifact.includes('| Calibrator | 30/50 |'), 'Radar computed the canonical total');
@@ -225,6 +227,19 @@ test('councilEvaluate: changed deal input produces a new run fingerprint', async
   const first = await councilEvaluate({ company: 'Dry Co', round: 'Seed' }, { dryRun: true, env: {} });
   const changed = await councilEvaluate({ company: 'Dry Co', round: 'Series A' }, { dryRun: true, env: {} });
   ok(first.provenance.runKey !== changed.provenance.runKey, 'input change must allow a new evaluation');
+});
+
+test('councilEvaluate: explicit execution id permits a controlled fresh run', async () => {
+  const first = await councilEvaluate(
+    { company: 'Fresh Co' },
+    { dryRun: true, env: {}, executionId: 'run-1' },
+  );
+  const second = await councilEvaluate(
+    { company: 'Fresh Co' },
+    { dryRun: true, env: {}, executionId: 'run-2' },
+  );
+  ok(first.provenance.inputHash === second.provenance.inputHash, 'same deal input');
+  ok(first.provenance.runKey !== second.provenance.runKey, 'fresh executions have distinct run keys');
 });
 
 for (const [name, fn] of tests) {
