@@ -3,8 +3,8 @@
 // Least-powerful-per-action (see the plan's runtime tiering table). Values are
 // SDK model *aliases* ('opus'|'sonnet'|'haiku'), which the Agent SDK resolves to
 // the current model for that tier — so a model upgrade needs no change here (no
-// version map to maintain). Each council persona runs as a subagent
-// (AgentDefinition.model); the orchestrator is the top-level session model.
+// version map to maintain). councilEvaluate executes each active persona as its
+// own session; orchestrator/dossier remain for policy compatibility.
 
 export const COUNCIL_ROLES = Object.freeze([
   'orchestrator', // sequences the stages, assembles the artifact

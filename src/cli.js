@@ -823,9 +823,10 @@ program
         console.log(`  Auth mode:   ${out.authMode}`);
         console.log(`  Calibration: ${out.calibrationMaturity}`);
         console.log(`  Models:      ${JSON.stringify(out.modelPolicy)}`);
-        console.log(`  Tools:       ${out.request.tools.join(', ')}`);
-        console.log(`  Subagents:   ${Object.keys(out.request.agents).join(', ')}`);
-        console.log(`  Context:     ${out.request.context.length} chars assembled`);
+        console.log(`  Stages:      ${Object.keys(out.requests).join(' → ')}`);
+        console.log(`  Research:    ${out.requests.research.tools.join(', ') || 'no tools'}`);
+        console.log(`  Other tools: none`);
+        console.log(`  Context:     ${out.requests.research.context.length} chars assembled`);
         console.log(chalk.dim(`\n  (dry run — no model call, no deal-log written)\n`));
         return;
       }
