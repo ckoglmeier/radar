@@ -8,6 +8,8 @@ import { query } from '../db/index.js';
 import { withSyncRun } from '../db/sync-runs.js';
 import { matchCompanyToInvestment, loadInvestmentUniverse } from '../utils/match.js';
 import { matchCompanyToPipelineInvite } from './pipeline.js';
+import { getRubric } from '../lenses/loader.js';
+import { scoreCouncilArtifact } from '../council/scoring.js';
 
 const DEAL_LOG_DIR = process.env.DEAL_LOG_DIR || null;
 
@@ -95,10 +97,10 @@ export function extractCompanyName(content) {
   return name || null;
 }
 
-export function parseDealLogFile(filePath) {
+export function parseDealLogFile(filePath, opts = {}) {
   const content = readFileSync(filePath, 'utf-8');
   const filename = basename(filePath);
-  const parsed = parseDealLogContent(content, filename);
+  const parsed = parseDealLogContent(content, filename, opts);
   if (!parsed) return null;
   return { ...parsed, file_path: filePath };
 }
@@ -109,7 +111,7 @@ export function parseDealLogFile(filePath) {
 // scoring/verdict/council regexes instead of duplicating them. filename is
 // optional and only used for the YYYY-MM-DD-company.md date-from-filename
 // convention; pass null/undefined to skip it.
-export function parseDealLogContent(content, filename) {
+export function parseDealLogContent(content, filename, opts = {}) {
   // Extract eval_date from filename (YYYY-MM-DD-company.md) or from content
   let eval_date = null;
   const dateFromFilename = filename && filename.match(/^(\d{4}-\d{2}-\d{2})-/);
@@ -188,6 +190,29 @@ export function parseDealLogContent(content, filename) {
     }
   }
 
+  let score_validation = null;
+  if (opts.rubric) {
+    const computed = scoreCouncilArtifact(content, opts.rubric);
+    score_validation = {
+      adjusted:
+        thesis_fit_score !== computed.thesisFitScore ||
+        viability_score !== computed.viabilityScore ||
+        total_score !== computed.totalScore ||
+        verdict !== computed.verdict,
+      declared: {
+        thesis_fit_score,
+        viability_score,
+        total_score,
+        verdict,
+      },
+      computed,
+    };
+    thesis_fit_score = computed.thesisFitScore;
+    viability_score = computed.viabilityScore;
+    total_score = computed.totalScore;
+    verdict = computed.verdict;
+  }
+
   // Extract council scores from Stage 5c synthesis table
   // Format: "| Bull | XX/50 | ... |" or "| **Bull** | **XX/50** | ... |"
   let council_bull = null, council_bear = null, council_calibrator = null;
@@ -200,6 +225,7 @@ export function parseDealLogContent(content, filename) {
 
   const calMatch = content.match(/\|\s*\*{0,2}Calibrator\*{0,2}\s*\|\s*\*{0,2}(\d+(?:\.\d+)?)\s*\/\s*50\*{0,2}/i);
   if (calMatch) council_calibrator = parseFloat(calMatch[1]);
+  if (score_validation) council_calibrator = total_score;
 
   // Extract CFO verdict from council output
   // Format: "| CFO | — | Deploy ... |" or "Verdict: Deploy — ..." in CFO section
@@ -238,6 +264,7 @@ export function parseDealLogContent(content, filename) {
     council_consensus,
     council_divergence,
     council_cfo_verdict,
+    score_validation,
   };
 }
 
@@ -258,7 +285,13 @@ export async function importDealLogs(dir = DEAL_LOG_DIR, opts = {}) {
 
 async function runDealLogImport(dir, opts = {}) {
   const evalMode = opts.mode || 'standard';
-  const files = readdirSync(dir).filter(f => f.endsWith('.md'));
+  const requestedFiles = opts.files
+    ? new Set(opts.files.map(file => basename(file)))
+    : null;
+  const files = readdirSync(dir).filter(file =>
+    file.endsWith('.md') && (!requestedFiles || requestedFiles.has(file)));
+  const rubric = evalMode === 'council' ? getRubric() : null;
+  const provenance = opts.provenance || {};
   const results = {
     total: files.length,
     imported: 0,
@@ -291,7 +324,7 @@ async function runDealLogImport(dir, opts = {}) {
         continue;
       }
 
-      const parsed = parseDealLogFile(filePath);
+      const parsed = parseDealLogFile(filePath, { rubric });
       if (!parsed) {
         results.errors++;
         results.details.push({ file, company: null, status: 'parse_error', error: 'Could not parse file' });
@@ -322,8 +355,11 @@ async function runDealLogImport(dir, opts = {}) {
         `INSERT INTO deal_evaluations
            (investment_id, pipeline_invite_id, eval_date, file_path, thesis_fit_score, viability_score, total_score, verdict, invested,
             council_bull_score, council_bear_score, council_calibrator_score, council_spread, council_consensus, council_divergence, council_cfo_verdict,
-            eval_mode, raw_content, company_name)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+            eval_mode, raw_content, company_name, council_policy, council_policy_version, council_instruction_hash,
+            council_lens_hash, council_calibration_hash, council_input_hash, council_artifact_hash,
+            council_session_id, council_model_policy, council_score_adjusted)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+                 $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)`,
         [
           investment_id,
           pipeline_invite_id,
@@ -344,6 +380,16 @@ async function runDealLogImport(dir, opts = {}) {
           evalMode,
           raw_content,
           parsed.company_name,
+          provenance.policyId || null,
+          provenance.policyVersion || null,
+          provenance.instructionHash || null,
+          provenance.lensHash || null,
+          provenance.calibrationHash || null,
+          provenance.inputHash || null,
+          provenance.artifactHashes?.[file] || null,
+          provenance.sessionId || null,
+          provenance.modelPolicy ? JSON.stringify(provenance.modelPolicy) : null,
+          Boolean(parsed.score_validation?.adjusted),
         ]
       );
 
@@ -357,6 +403,7 @@ async function runDealLogImport(dir, opts = {}) {
         invested,
         total_score: parsed.total_score,
         verdict: parsed.verdict,
+        score_adjusted: Boolean(parsed.score_validation?.adjusted),
       });
     } catch (err) {
       results.errors++;
@@ -395,7 +442,7 @@ export async function evaluationHistoryForInvite(inviteId) {
     `SELECT de.*
      FROM deal_evaluations de
      WHERE de.pipeline_invite_id = $1
-     ORDER BY de.eval_date DESC NULLS LAST, de.created_at DESC, de.id DESC`,
+     ORDER BY de.eval_date DESC NULLS LAST, de.created_at ASC, de.id ASC`,
     [inviteId]
   );
   return rows.map(resolveEvalContent);
@@ -430,7 +477,7 @@ export async function getEvaluationByCompany(search) {
      FROM deal_evaluations de
      LEFT JOIN investments i ON de.investment_id = i.id
      WHERE de.company_name ILIKE $1
-     ORDER BY de.eval_date DESC NULLS LAST
+     ORDER BY de.eval_date DESC NULLS LAST, de.created_at ASC, de.id ASC
      LIMIT 1`,
     [`%${search}%`]
   );

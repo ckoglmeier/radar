@@ -39,6 +39,8 @@ test('assembleContext: has DEAL/LENS/CALIBRATION and the deal facts + rubric', (
   ok(ctx.includes('LENS'), 'LENS block');
   ok(ctx.includes('verdict_bands'), 'rubric injected');
   ok(ctx.includes('CALIBRATION') && ctx.includes('default'), 'calibration injected');
+  ok(ctx.includes('COUNCIL RUN CONTRACT'), 'run contract injected');
+  ok(ctx.includes('Evidence Ledger'), 'shared evidence requirement injected');
 });
 test('assembleContext: missing deal fields render as Not provided', () => {
   const ctx = assembleContext({ company: 'X', valuation: '' }, { rubric: {}, kill: [], gpTiers: [], theses: [], clusters: [], roundParams: {} }, {});
@@ -69,7 +71,8 @@ test('councilEvaluate: assembles the session request correctly', async () => {
   ok(req.systemPrompt.includes('Headless Council'), 'systemPrompt = vendored skill');
   ok(req.context.includes('Acme Autonomy'), 'deal in context');
   ok(req.context.includes('CALIBRATION'), 'calibration in context');
-  ok(req.tools.includes('WebSearch') && req.tools.includes('Write'), 'tool grants');
+  eq(req.tools.join(','), 'Write', 'only the research subagent can retrieve evidence');
+  eq(req.agents.research.tools.join(','), 'WebSearch', 'research owns retrieval');
   eq(req.agents.calibrator.model, 'opus', 'calibrator tier wired into subagents');
   eq(req.model, 'sonnet', 'orchestrator model');
   // Return shape
@@ -77,6 +80,8 @@ test('councilEvaluate: assembles the session request correctly', async () => {
   eq(out.usedFallback, false);
   ok(out.calibrationMaturity, 'carries calibration maturity');
   eq(out.modelPolicy.calibrator, 'opus');
+  eq(out.provenance.policyVersion, 2);
+  ok(out.provenance.instructionHash && out.provenance.lensHash, 'provenance fingerprints');
 });
 
 test('councilEvaluate: model override flows to the subagents', async () => {

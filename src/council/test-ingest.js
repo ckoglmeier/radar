@@ -10,7 +10,7 @@
 import { writeFileSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { parseDealLogFile } from '../models/evaluations.js';
+import { parseDealLogContent, parseDealLogFile } from '../models/evaluations.js';
 
 let passed = 0, failed = 0;
 function test(name, fn) { try { fn(); console.log(`  ✓ ${name}`); passed++; } catch (e) { console.log(`  ✗ ${name}: ${e.message}`); failed++; } }
@@ -95,6 +95,73 @@ test('CFO verdict extracted from table row', () => eq(p.council_cfo_verdict, 'De
 test('spread computed (43-37=6)', () => eq(p.council_spread, 6));
 test('consensus computed (mean 43/37/39)', () => approx(p.council_consensus, (43 + 37 + 39) / 3));
 test('divergence MODERATE (spread 6 > 5)', () => eq(p.council_divergence, 'MODERATE'));
+
+const RUBRIC = {
+  sections: [
+    {
+      name: 'Thesis Fit',
+      dimensions: [
+        { name: 'Domain match', max_points: 8, scale: [1, 5] },
+        { name: 'Compounding structure', max_points: 7, scale: [1, 5] },
+        { name: 'Structural tailwind', max_points: 5, scale: [1, 5] },
+        { name: 'Portfolio construction fit', max_points: 5, scale: [1, 5] },
+      ],
+    },
+    {
+      name: 'Viability',
+      dimensions: [
+        { name: 'Team-market fit', max_points: 8, scale: [1, 5] },
+        { name: 'Capital efficiency', max_points: 5, scale: [1, 5] },
+        { name: 'Business model clarity', max_points: 5, scale: [1, 5] },
+        { name: 'Differentiation', max_points: 5, scale: [1, 5] },
+        { name: 'Source quality', max_points: 2, scale: [1, 5] },
+      ],
+    },
+  ],
+  verdict_bands: [
+    { range: [44, 50], verdict: 'Fund' },
+    { range: [39, 43], verdict: 'Review' },
+    { range: [0, 38], verdict: 'Pass' },
+  ],
+};
+
+const BAD_MATH = `# Deal Log: Archera
+
+## Thesis Fit
+- Domain match: 2/5 (points: 2/8)
+- Compounding structure: 4/5 (points: 4/7)
+- Structural tailwind: 3/5 (points: 3/5)
+- Portfolio construction fit: 2/5 (points: 2/5)
+- **Thesis Fit subtotal: 11/25**
+
+## Viability
+- Team-market fit: 4/5
+- Capital efficiency: 4/5
+- Business model clarity: 4/5
+- Differentiation: 3/5
+- Source quality: 5/5
+- **Viability subtotal: 19/25**
+
+## Total: 30/50
+## Verdict: Pass
+
+| Voice | Score | Key argument |
+|---|---|---|
+| Bull | 37/50 | Upside |
+| Bear | 22/50 | Risk |
+| Calibrator | 30/50 | Reconcile |
+| CFO | — | Pass — off thesis |
+`;
+
+const corrected = parseDealLogContent(BAD_MATH, null, { rubric: RUBRIC });
+test('Council arithmetic is recomputed from dimension choices', () => {
+  eq(corrected.thesis_fit_score, 14);
+  eq(corrected.viability_score, 19);
+  eq(corrected.total_score, 33);
+  eq(corrected.council_calibrator, 33);
+  eq(corrected.verdict, 'Pass');
+  eq(corrected.score_validation.adjusted, true);
+});
 
 console.log(`\n  ${passed} passed, ${failed} failed\n`);
 process.exit(failed > 0 ? 1 : 0);

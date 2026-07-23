@@ -818,7 +818,7 @@ program
       };
 
       if (opts.dryRun) {
-        const out = await councilEvaluate(deal, { dryRun: true });
+        const out = await councilEvaluate(deal, { dryRun: true, policyId: 'balanced' });
         console.log(chalk.bold(`\n  Council dry run — ${deal.company}\n`));
         console.log(`  Auth mode:   ${out.authMode}`);
         console.log(`  Calibration: ${out.calibrationMaturity}`);
@@ -841,12 +841,22 @@ program
       const buildFallback = () => new AgentSdkProvider({ authMode: 'api_key', cwd: dealLogDir });
 
       console.log(chalk.dim(`\n  Running council (${authMode}) on ${deal.company}…\n`));
-      const out = await councilEvaluate(deal, { provider, buildFallback, dealLogDir, env: process.env });
+      const out = await councilEvaluate(deal, {
+        provider,
+        buildFallback,
+        dealLogDir,
+        env: process.env,
+        policyId: 'balanced',
+      });
       if (out.usedFallback) {
         console.log(chalk.yellow(`  ⚠ fell back to api_key after a ${out.primaryErrorKind} condition on the subscription`));
       }
 
-      const imp = await importDealLogs(dealLogDir);
+      const imp = await importDealLogs(dealLogDir, {
+        mode: 'council',
+        files: out.writtenFiles,
+        provenance: out.provenance,
+      });
       console.log(chalk.green(`  ✓ graded and ingested (${imp.imported} imported, ${imp.skipped} already present)`));
       console.log(`  Calibration: ${out.calibrationMaturity} · session: ${out.result.sessionId || 'n/a'}\n`);
     } catch (err) {

@@ -86,6 +86,16 @@ export async function evaluationLedger() {
         de.council_divergence,
         de.council_cfo_verdict,
         de.eval_mode,
+        de.council_policy,
+        de.council_policy_version,
+        de.council_instruction_hash,
+        de.council_lens_hash,
+        de.council_calibration_hash,
+        de.council_input_hash,
+        de.council_artifact_hash,
+        de.council_session_id,
+        de.council_model_policy,
+        de.council_score_adjusted,
         de.created_at,
         LEFT(de.raw_content, 900) AS source_excerpt,
         pi.company_name AS pipeline_company_name,
@@ -94,7 +104,7 @@ export async function evaluationLedger() {
       FROM deal_evaluations de
       LEFT JOIN pipeline_invites pi ON pi.id = de.pipeline_invite_id
       LEFT JOIN investments i ON i.id = de.investment_id
-      ORDER BY de.eval_date DESC NULLS LAST, de.created_at DESC, de.id DESC
+      ORDER BY de.eval_date DESC NULLS LAST, de.created_at ASC, de.id ASC
     `),
     query(`SELECT id, company_name, deal_slug FROM pipeline_invites`),
     query(`SELECT id, company_name FROM investments`),

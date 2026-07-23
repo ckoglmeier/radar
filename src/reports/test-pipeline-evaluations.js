@@ -120,6 +120,11 @@ async function run() {
       path: `/fixtures/2026-03-01-${PREFIX.toLowerCase()}-alpha.md`, inviteId: alphaId,
       mode: 'council',
     });
+    const alphaSameDayRerun = await insertEvaluation({
+      company: `${PREFIX} Alpha`, date: '2026-03-01', score: 35,
+      path: `/fixtures/2026-03-01-${PREFIX.toLowerCase()}-alpha-rerun.md`, inviteId: alphaId,
+      mode: 'council',
+    });
     await insertEvaluation({
       company: `${PREFIX} Alpha`, date: '2026-02-01', score: 36,
       path: `/fixtures/2026-02-01-${PREFIX.toLowerCase()}-alpha.md`, inviteId: alphaId,
@@ -129,12 +134,13 @@ async function run() {
       path: `/fixtures/2026-04-01-${PREFIX.toLowerCase()}-range.md`,
     });
 
-    await test('latest evaluation is joined by foreign key and drives the deal row', async () => {
+    await test('first completed evaluation stays canonical across same-day reruns', async () => {
       const rows = await pipelineListWithLatestEval({ limit: 200 });
       const alpha = rows.find(row => row.id === alphaId);
       eq(alpha.latest_evaluation.id, alphaLatest);
       eq(Number(alpha.latest_evaluation.total_score), 42);
       eq(alpha.latest_evaluation.eval_mode, 'council');
+      ok(alpha.latest_evaluation.id !== alphaSameDayRerun);
     });
 
     await test('zero evaluations returns a plain null latest_evaluation', async () => {
@@ -151,9 +157,10 @@ async function run() {
 
     await test('history returns every version newest-first', async () => {
       const history = await evaluationHistoryForInvite(alphaId);
-      eq(history.length, 3);
+      eq(history.length, 4);
       eq(history[0].id, alphaLatest);
-      eq(history[2].id, alphaOld);
+      eq(history[1].id, alphaSameDayRerun);
+      eq(history[3].id, alphaOld);
       eq(dateOnly(history[0].eval_date), '2026-03-01');
     });
 
@@ -220,11 +227,29 @@ async function run() {
 
     const rescoreCompany = `${PREFIX} Rescore`;
     const rescoreInviteId = await insertInvite(rescoreCompany, `${PREFIX.toLowerCase()}-rescore`);
-    const evalBody = (score) => [
-      `# Deal Log: ${rescoreCompany}`,
-      `## Total: ${score}/50`,
-      `## Verdict: ${score >= 39 ? 'Strong Fit' : 'Worth Exploring'}`,
-    ].join('\n');
+    const evalBody = (score) => {
+      const choices = score === 32
+        ? { domain: 2, compounding: 3, tailwind: 3, portfolio: 3, team: 4, capital: 4, business: 4, differentiation: 3, source: 5 }
+        : { domain: 5, compounding: 5, tailwind: 3, portfolio: 3, team: 5, capital: 4, business: 3, differentiation: 3, source: 5 };
+      return [
+        `# Deal Log: ${rescoreCompany}`,
+        '## Thesis Fit',
+        `- Domain match: ${choices.domain}/5`,
+        `- Compounding structure: ${choices.compounding}/5`,
+        `- Structural tailwind: ${choices.tailwind}/5`,
+        `- Portfolio construction fit: ${choices.portfolio}/5`,
+        '- **Thesis Fit subtotal: 0/25**',
+        '## Viability',
+        `- Team-market fit: ${choices.team}/5`,
+        `- Capital efficiency: ${choices.capital}/5`,
+        `- Business model clarity: ${choices.business}/5`,
+        `- Differentiation: ${choices.differentiation}/5`,
+        `- Source quality: ${choices.source}/5`,
+        '- **Viability subtotal: 0/25**',
+        `## Total: ${score}/50`,
+        '## Verdict: Pass',
+      ].join('\n');
+    };
     writeFileSync(join(tempEvalDir, `2026-07-01-${PREFIX.toLowerCase()}-rescore.md`), evalBody(32));
     writeFileSync(join(tempEvalDir, `2026-07-02-${PREFIX.toLowerCase()}-rescore.md`), evalBody(41));
 

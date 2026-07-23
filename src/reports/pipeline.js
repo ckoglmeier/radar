@@ -44,13 +44,26 @@ export async function pipelineListWithLatestEval({ status, limit = 100 } = {}) {
        latest.council_divergence AS latest_eval_council_divergence,
        latest.council_cfo_verdict AS latest_eval_council_cfo_verdict,
        latest.eval_mode AS latest_eval_mode,
+       latest.council_policy AS latest_eval_council_policy,
+       latest.council_policy_version AS latest_eval_council_policy_version,
+       latest.council_instruction_hash AS latest_eval_council_instruction_hash,
+       latest.council_lens_hash AS latest_eval_council_lens_hash,
+       latest.council_calibration_hash AS latest_eval_council_calibration_hash,
+       latest.council_input_hash AS latest_eval_council_input_hash,
+       latest.council_artifact_hash AS latest_eval_council_artifact_hash,
+       latest.council_session_id AS latest_eval_council_session_id,
+       latest.council_model_policy AS latest_eval_council_model_policy,
+       latest.council_score_adjusted AS latest_eval_council_score_adjusted,
        latest.created_at AS latest_eval_created_at
      FROM pipeline_invites pi
      LEFT JOIN LATERAL (
        SELECT de.*
        FROM deal_evaluations de
        WHERE de.pipeline_invite_id = pi.id
-       ORDER BY de.eval_date DESC NULLS LAST, de.created_at DESC, de.id DESC
+       -- A later evaluation date supersedes an earlier one. On the same date,
+       -- the first completed run stays canonical; reruns remain history and
+       -- never silently replace the score.
+       ORDER BY de.eval_date DESC NULLS LAST, de.created_at ASC, de.id ASC
        LIMIT 1
      ) latest ON TRUE
      ${where}
@@ -79,6 +92,16 @@ export async function pipelineListWithLatestEval({ status, limit = 100 } = {}) {
       council_divergence: row.latest_eval_council_divergence,
       council_cfo_verdict: row.latest_eval_council_cfo_verdict,
       eval_mode: row.latest_eval_mode,
+      council_policy: row.latest_eval_council_policy,
+      council_policy_version: row.latest_eval_council_policy_version,
+      council_instruction_hash: row.latest_eval_council_instruction_hash,
+      council_lens_hash: row.latest_eval_council_lens_hash,
+      council_calibration_hash: row.latest_eval_council_calibration_hash,
+      council_input_hash: row.latest_eval_council_input_hash,
+      council_artifact_hash: row.latest_eval_council_artifact_hash,
+      council_session_id: row.latest_eval_council_session_id,
+      council_model_policy: row.latest_eval_council_model_policy,
+      council_score_adjusted: row.latest_eval_council_score_adjusted,
       created_at: row.latest_eval_created_at,
     };
 

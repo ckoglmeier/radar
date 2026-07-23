@@ -10,7 +10,8 @@
 // it is fully unit-testable with a fake. The CLI (C1) constructs the real
 // AgentSdkProvider + api_key fallback factory and passes them in.
 
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
+import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -42,6 +43,24 @@ function loadSkill() {
   return _skill;
 }
 
+export const COUNCIL_POLICY_VERSION = 2;
+
+function hash(value) {
+  const content = typeof value === 'string' || Buffer.isBuffer(value)
+    ? value
+    : JSON.stringify(value);
+  return createHash('sha256').update(content).digest('hex');
+}
+
+function artifactSnapshot(dir) {
+  if (!dir || !existsSync(dir)) return {};
+  return Object.fromEntries(
+    readdirSync(dir)
+      .filter(file => file.endsWith('.md'))
+      .map(file => [file, hash(readFileSync(join(dir, file)))]),
+  );
+}
+
 function fmtValue(v) {
   if (v == null || v === '') return 'Not provided';
   return typeof v === 'string' ? v : JSON.stringify(v);
@@ -52,13 +71,22 @@ function fmtValue(v) {
  * CALIBRATION. Lens/calibration are emitted as JSON — precise and lossless for
  * the model to read, versus prose transcription which could drift.
  */
-export function assembleContext(deal, lens, calibration) {
+export function assembleContext(deal, lens, calibration, provenance = {}) {
   const dealLines =
     Object.entries(deal || {})
       .map(([k, v]) => `  ${k}: ${fmtValue(v)}`)
       .join('\n') || '  (no fields provided)';
 
   return [
+    'COUNCIL RUN CONTRACT',
+    `  Policy version: ${provenance.policyVersion || COUNCIL_POLICY_VERSION}`,
+    `  Instruction hash: ${provenance.instructionHash || hash(loadSkill())}`,
+    `  Lens hash: ${provenance.lensHash || hash(lens)}`,
+    `  Calibration hash: ${provenance.calibrationHash || hash(calibration)}`,
+    `  Input hash: ${provenance.inputHash || hash(deal || {})}`,
+    '  Research produces one shared Evidence Ledger. Bull, Bear, Calibrator, and CFO must use only that ledger.',
+    '  The model chooses 1–5 dimension values. Radar computes weighted points and verdict bands in code.',
+    '',
     'DEAL',
     dealLines,
     '',
@@ -84,12 +112,13 @@ export function assembleContext(deal, lens, calibration) {
 export function buildCouncilAgents(models) {
   return {
     research: {
-      description: 'Retrieval leg: gather public facts on a named person or company.',
+      description: 'Retrieval leg: produce the shared sourced Evidence Ledger.',
       model: models.research,
       prompt:
         'You gather public facts — LinkedIn history, prior companies and outcomes, ' +
         'domain credentials, press, funding, competitors — and report them plainly ' +
-        'with sources. No judgment, just sourced facts.',
+        'with sources in one Evidence Ledger. Label supplied, verified, conflicting, ' +
+        'and unavailable facts. No judgment, just sourced facts.',
       tools: ['WebSearch'],
     },
     bull: {
@@ -98,7 +127,7 @@ export function buildCouncilAgents(models) {
       prompt:
         'You are the Bull voice of the investment council. Argue the strongest ' +
         'credible upside case and score the deal /50 against the rubric in your ' +
-        'context. Ground every claim in the dossier, not the pitch.',
+        'context. Ground every claim only in the shared Evidence Ledger.',
     },
     bear: {
       description: 'Council Bear: argue the skeptical case and score /50.',
@@ -106,7 +135,7 @@ export function buildCouncilAgents(models) {
       prompt:
         'You are the Bear voice of the investment council. Argue the skeptical ' +
         'case — what breaks, what is unconfirmed — and score /50 against the rubric ' +
-        'in your context.',
+        'in your context. Ground every claim only in the shared Evidence Ledger.',
     },
     calibrator: {
       description: 'Council Calibrator: reconcile Bull and Bear into the canonical score.',
@@ -114,8 +143,9 @@ export function buildCouncilAgents(models) {
       prompt:
         'You are the Calibrator of the investment council. Reconcile the Bull and ' +
         'Bear against the CALIBRATION examples and personalized invest line in your ' +
-        'context. Produce the canonical dimension scores and total /50; state which ' +
-        'voice you weight where they diverge.',
+        'context. Use only the shared Evidence Ledger. Produce the canonical 1–5 ' +
+        'dimension choices; state which voice you weight where they diverge. Radar ' +
+        'will compute weighted points and the verdict deterministically.',
     },
     cfo: {
       description: 'Council CFO: portfolio-construction verdict Deploy/Defer/Pass.',
@@ -144,10 +174,20 @@ export function buildCouncilAgents(models) {
  * @param {Record<string,string>} [opts.models]  council model-policy override.
  * @param {NodeJS.ProcessEnv} [opts.env=process.env]
  * @param {number} [opts.maxTurns=40]
+ * @param {string} [opts.policyId=balanced]
  * @returns {Promise<{result: object, usedFallback: boolean, primaryErrorKind?: string, calibrationMaturity: string, modelPolicy: object}>}
  */
 export async function councilEvaluate(deal, opts = {}) {
-  const { provider, buildFallback, models, env = process.env, maxTurns = 40, dryRun = false } = opts;
+  const {
+    provider,
+    buildFallback,
+    models,
+    env = process.env,
+    maxTurns = 40,
+    dryRun = false,
+    policyId = 'balanced',
+    dealLogDir,
+  } = opts;
 
   const lens = {
     rubric: getRubric(),
@@ -158,7 +198,16 @@ export async function councilEvaluate(deal, opts = {}) {
     roundParams: getRoundParams(),
   };
   const calibration = await getCalibration();
-  const context = assembleContext(deal, lens, calibration);
+  const instructionHash = hash(loadSkill());
+  const provenance = {
+    policyId,
+    policyVersion: COUNCIL_POLICY_VERSION,
+    instructionHash,
+    lensHash: hash(lens),
+    calibrationHash: hash(calibration),
+    inputHash: hash(deal || {}),
+  };
+  const context = assembleContext(deal, lens, calibration, provenance);
   const policy = resolveCouncilModels(models);
   const agents = buildCouncilAgents(policy);
   const authMode = resolveAuthMode(env);
@@ -170,7 +219,7 @@ export async function councilEvaluate(deal, opts = {}) {
     systemPrompt: loadSkill(),
     context,
     model: policy.orchestrator,
-    tools: ['WebSearch', 'Write'],
+    tools: ['Write'],
     agents,
     maxTurns,
   };
@@ -179,11 +228,19 @@ export async function councilEvaluate(deal, opts = {}) {
   // the CLI preview exactly what would be sent (and what it would cost) without
   // a credential. No provider required.
   if (dryRun) {
-    return { dryRun: true, request: req, authMode, calibrationMaturity: calibration.maturity, modelPolicy: policy };
+    return {
+      dryRun: true,
+      request: req,
+      authMode,
+      calibrationMaturity: calibration.maturity,
+      modelPolicy: policy,
+      provenance: { ...provenance, modelPolicy: policy },
+    };
   }
 
   if (!provider) throw new Error('councilEvaluate requires a provider (inject a ModelProvider)');
 
+  const beforeArtifacts = artifactSnapshot(dealLogDir);
   const { result, usedFallback, primaryErrorKind } = await runWithFallback(req, {
     primary: provider,
     currentMode: authMode,
@@ -191,6 +248,13 @@ export async function councilEvaluate(deal, opts = {}) {
     buildFallback,
     env,
   });
+  const afterArtifacts = artifactSnapshot(dealLogDir);
+  const writtenFiles = Object.keys(afterArtifacts).filter(
+    file => beforeArtifacts[file] !== afterArtifacts[file],
+  );
+  if (dealLogDir && writtenFiles.length === 0) {
+    throw new Error('Council completed without writing a new or changed deal-log artifact');
+  }
 
   return {
     result,
@@ -198,5 +262,14 @@ export async function councilEvaluate(deal, opts = {}) {
     primaryErrorKind,
     calibrationMaturity: calibration.maturity,
     modelPolicy: policy,
+    writtenFiles,
+    provenance: {
+      ...provenance,
+      sessionId: result.sessionId || null,
+      modelPolicy: policy,
+      artifactHashes: Object.fromEntries(
+        writtenFiles.map(file => [file, afterArtifacts[file]]),
+      ),
+    },
   };
 }
