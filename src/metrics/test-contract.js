@@ -77,9 +77,9 @@ assert.deepEqual(
     [{ id: 1, company_name: 'Orbital Forge' }],
   ),
   {
-    state: 'unavailable',
+    state: 'available',
     positions: 1,
-    missing_opening_positions: [{ id: 1, company_name: 'Orbital Forge' }],
+    cost_basis_opening_positions: [{ id: 1, company_name: 'Orbital Forge' }],
   },
 );
 

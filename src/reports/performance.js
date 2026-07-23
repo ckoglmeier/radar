@@ -74,54 +74,35 @@ export function computeWindowMetrics(startValue, endValue, cashIn, cashOut) {
 }
 
 /**
- * Name positions that received an in-window valuation but have no valuation
- * at or before the window start. Cost basis is never substituted for an
- * opening mark when a later mark would make that substitution look like gain.
+ * Name positions whose opening value defaults to invested cost because they
+ * have no valuation at or before the window start.
  */
-export async function missingOpeningPositions(startDate, endDate) {
+export async function costBasisOpeningPositions(startDate) {
   const rows = await query(`
     SELECT i.id, i.company_name
     FROM investments i
     WHERE i.asset_class = 'direct'
       AND i.invest_date <= $1
-      AND EXISTS (
-        SELECT 1 FROM valuations later
-        WHERE later.investment_id = i.id
-          AND later.snapshot_date > $1
-          AND later.snapshot_date <= $2
-      )
       AND NOT EXISTS (
         SELECT 1 FROM valuations opening
         WHERE opening.investment_id = i.id
           AND opening.snapshot_date <= $1
       )
     ORDER BY i.company_name, i.id
-  `, [startDate, endDate]);
+  `, [startDate]);
   return rows.map(row => ({ id: Number(row.id), company_name: row.company_name }));
 }
 
-export function guardWindowReturn(window, missingOpening = []) {
-  const missing = missingOpening.map(position => ({
+export function applyOpeningCostBasis(window, costBasisOpening = []) {
+  const carriedAtCost = costBasisOpening.map(position => ({
     id: Number(position.id),
     company_name: position.company_name,
   }));
-  if (missing.length === 0) {
-    return {
-      ...window,
-      return_available: true,
-      missing_opening_marks: 0,
-      missing_opening_positions: [],
-      coverage: { state: 'available', missing_opening_positions: [] },
-    };
-  }
   return {
     ...window,
-    gain: null,
-    value_change_pct: null,
-    return_available: false,
-    missing_opening_marks: missing.length,
-    missing_opening_positions: missing,
-    coverage: { state: 'unavailable', missing_opening_positions: missing },
+    return_available: true,
+    cost_basis_opening_positions: carriedAtCost,
+    coverage: { state: 'available', cost_basis_opening_positions: carriedAtCost },
   };
 }
 
@@ -293,14 +274,14 @@ export async function performanceWindows() {
     };
   });
 
-  const [ytdMissing, trailing12mMissing] = await Promise.all([
-    missingOpeningPositions(ytdStart, today),
-    missingOpeningPositions(trailing12mStart, today),
+  const [ytdCostBasis, trailing12mCostBasis] = await Promise.all([
+    costBasisOpeningPositions(ytdStart),
+    costBasisOpeningPositions(trailing12mStart),
   ]);
 
   return {
-    ytd: guardWindowReturn(ytdRaw, ytdMissing),
-    trailing12m: guardWindowReturn(trailing12mRaw, trailing12mMissing),
+    ytd: applyOpeningCostBasis(ytdRaw, ytdCostBasis),
+    trailing12m: applyOpeningCostBasis(trailing12mRaw, trailing12mCostBasis),
     byVintageYear,
     byQuarter,
   };
