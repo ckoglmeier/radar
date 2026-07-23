@@ -88,7 +88,7 @@ const DIMENSION_ARRAY = {
     properties: {
       name: { type: 'string' },
       likert: { type: 'number', minimum: 1, maximum: 5 },
-      rationale: { type: 'string', maxLength: 600 },
+      rationale: { type: 'string' },
     },
     required: ['name', 'likert', 'rationale'],
     additionalProperties: false,
@@ -99,7 +99,7 @@ const GRADER_SCHEMA = {
   type: 'object',
   properties: {
     dimension_scores: DIMENSION_ARRAY,
-    key_argument: { type: 'string', maxLength: 1600 },
+    key_argument: { type: 'string' },
   },
   required: ['dimension_scores', 'key_argument'],
   additionalProperties: false,
@@ -109,27 +109,15 @@ const CALIBRATOR_SCHEMA = {
   type: 'object',
   properties: {
     dimension_scores: DIMENSION_ARRAY,
-    key_argument: { type: 'string', maxLength: 1600 },
-    kill_criteria: { type: 'string', maxLength: 1000 },
-    primary_thesis: { type: 'string', maxLength: 500 },
-    moves_up: {
-      type: 'array',
-      maxItems: 5,
-      items: { type: 'string', maxLength: 700 },
-    },
-    moves_down: {
-      type: 'array',
-      maxItems: 5,
-      items: { type: 'string', maxLength: 700 },
-    },
-    net_assessment: { type: 'string', maxLength: 1200 },
-    key_questions: {
-      type: 'array',
-      maxItems: 5,
-      items: { type: 'string', maxLength: 500 },
-    },
-    email: { type: 'string', maxLength: 1200 },
-    linkedin: { type: 'string', maxLength: 700 },
+    key_argument: { type: 'string' },
+    kill_criteria: { type: 'string' },
+    primary_thesis: { type: 'string' },
+    moves_up: { type: 'array', items: { type: 'string' } },
+    moves_down: { type: 'array', items: { type: 'string' } },
+    net_assessment: { type: 'string' },
+    key_questions: { type: 'array', items: { type: 'string' } },
+    email: { type: 'string' },
+    linkedin: { type: 'string' },
   },
   required: [
     'dimension_scores', 'key_argument', 'kill_criteria', 'primary_thesis',
@@ -141,12 +129,9 @@ const CALIBRATOR_SCHEMA = {
 const RESEARCH_SCHEMA = {
   type: 'object',
   properties: {
-    evidence: {
-      type: 'array',
-      items: { type: 'string', maxLength: 900 },
-    },
-    team_dossier: { type: 'string', maxLength: 6000 },
-    company_context: { type: 'string', maxLength: 5000 },
+    evidence: { type: 'array', items: { type: 'string' } },
+    team_dossier: { type: 'string' },
+    company_context: { type: 'string' },
   },
   required: ['evidence', 'team_dossier', 'company_context'],
   additionalProperties: false,
@@ -156,7 +141,7 @@ const CFO_SCHEMA = {
   type: 'object',
   properties: {
     verdict: { type: 'string', enum: ['Deploy', 'Defer', 'Pass'] },
-    reason: { type: 'string', maxLength: 900 },
+    reason: { type: 'string' },
   },
   required: ['verdict', 'reason'],
   additionalProperties: false,
@@ -166,7 +151,8 @@ const STAGE_PROMPTS = {
   research:
     'STAGE: research\nPerform only retrieval. Build one shared factual evidence packet for the deal. ' +
     'Use web search when useful. Label every item as supplied, verified, conflicting, or unavailable, ' +
-    'and include its source in the string. Do not score the deal or simulate another Council voice.',
+    'and include its source in the string. Cover every required research area, then stop when additional ' +
+    'retrieval is unlikely to change a rubric choice. Merge duplicates. Do not score the deal or simulate another Council voice.',
   bull:
     'STAGE: bull\nPerform only the Bull evaluation. Use only the frozen research packet in context; ' +
     'do not search or add facts. Return exactly one 1–5 Likert choice for every rubric dimension, ' +
@@ -203,6 +189,32 @@ async function runStage(stage, request, runtime) {
     ...outcome,
     stage,
     data: structured(outcome.result, stage),
+  };
+}
+
+function frozenResearchStage(snapshot) {
+  if (
+    !snapshot
+    || !Array.isArray(snapshot.evidence)
+    || typeof snapshot.team_dossier !== 'string'
+    || typeof snapshot.company_context !== 'string'
+  ) {
+    throw new Error('Council research snapshot does not match the research contract');
+  }
+  return {
+    stage: 'research',
+    data: snapshot,
+    result: {
+      model: null,
+      numTurns: 0,
+      sessionId: null,
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCostUsd: 0,
+      },
+    },
+    usedFallback: false,
   };
 }
 
@@ -493,6 +505,10 @@ function aggregateStageUsage(stages) {
  * @param {NodeJS.ProcessEnv} [opts.env=process.env]
  * @param {number} [opts.maxTurns=40]
  * @param {string} [opts.policyId=balanced]
+ * @param {object} [opts.calibrationSnapshot] exact historical calibration for
+ *   a controlled replay; normal runs derive calibration from Radar.
+ * @param {object} [opts.researchSnapshot] exact frozen evidence packet for a
+ *   controlled replay; normal runs perform fresh retrieval.
  * @returns {Promise<{result: object, usedFallback: boolean, primaryErrorKind?: string, calibrationMaturity: string, modelPolicy: object}>}
  */
 export async function councilEvaluate(deal, opts = {}) {
@@ -509,6 +525,8 @@ export async function councilEvaluate(deal, opts = {}) {
     findExisting,
     executionId,
     onStage,
+    calibrationSnapshot,
+    researchSnapshot,
   } = opts;
 
   const lens = {
@@ -519,7 +537,11 @@ export async function councilEvaluate(deal, opts = {}) {
     clusters: getThesisClusters(),
     roundParams: getRoundParams(),
   };
-  const calibration = await getCalibration();
+  const calibration = calibrationSnapshot || await getCalibration();
+  const turnPolicy = {
+    research: Math.max(16, Math.ceil(maxTurns / 2)),
+    judgment: Math.max(4, Math.ceil(maxTurns / 8)),
+  };
   const instructionHash = hash({
     skill: loadSkill(),
     roles: Object.fromEntries(
@@ -528,6 +550,7 @@ export async function councilEvaluate(deal, opts = {}) {
     pipeline: EXPLICIT_PIPELINE_VERSION,
     prompts: STAGE_PROMPTS,
     schemas: { research: RESEARCH_SCHEMA, grader: GRADER_SCHEMA, calibrator: CALIBRATOR_SCHEMA, cfo: CFO_SCHEMA },
+    turnPolicy,
   });
   const policy = resolveCouncilModels(models);
   const provenance = {
@@ -537,6 +560,7 @@ export async function councilEvaluate(deal, opts = {}) {
     lensHash: hash(lens),
     calibrationHash: hash(calibration),
     inputHash: hash(deal || {}),
+    researchSnapshotHash: researchSnapshot ? hash(researchSnapshot) : null,
   };
   provenance.runKey = hash({
     ...provenance,
@@ -548,37 +572,36 @@ export async function councilEvaluate(deal, opts = {}) {
   const graderBaseContext = assembleGraderContext(deal, lens, calibration, provenance);
   const cfoBaseContext = assembleCfoContext(deal, lens, calibration, provenance);
   const authMode = resolveAuthMode(env);
-  const stageTurns = Math.max(6, Math.ceil(maxTurns / 4));
   const requests = {
     research: stageRequest('research', {
       model: policy.research,
       context: researchContext,
       schema: RESEARCH_SCHEMA,
-      maxTurns: stageTurns,
+      maxTurns: turnPolicy.research,
     }),
     bull: stageRequest('bull', {
       model: policy.bull,
       context: `${graderBaseContext}\n\nFROZEN RESEARCH PACKET\n  (produced by the research stage)`,
       schema: GRADER_SCHEMA,
-      maxTurns: stageTurns,
+      maxTurns: turnPolicy.judgment,
     }),
     bear: stageRequest('bear', {
       model: policy.bear,
       context: `${graderBaseContext}\n\nFROZEN RESEARCH PACKET\n  (produced by the research stage)`,
       schema: GRADER_SCHEMA,
-      maxTurns: stageTurns,
+      maxTurns: turnPolicy.judgment,
     }),
     calibrator: stageRequest('calibrator', {
       model: policy.calibrator,
       context: `${context}\n\nFROZEN RESEARCH, BULL, AND BEAR OUTPUTS\n  (produced by prior stages)`,
       schema: CALIBRATOR_SCHEMA,
-      maxTurns: stageTurns,
+      maxTurns: turnPolicy.judgment,
     }),
     cfo: stageRequest('cfo', {
       model: policy.cfo,
       context: `${cfoBaseContext}\n\nCALIBRATED DECISION SUMMARY AND RADAR-COMPUTED SCORE\n  (produced by prior stages)`,
       schema: CFO_SCHEMA,
-      maxTurns: stageTurns,
+      maxTurns: turnPolicy.judgment,
     }),
   };
 
@@ -643,7 +666,9 @@ export async function councilEvaluate(deal, opts = {}) {
     };
 
     await notifyStage('research');
-    const research = await runStage('research', requests.research, runtime);
+    const research = researchSnapshot
+      ? frozenResearchStage(researchSnapshot)
+      : await runStage('research', requests.research, runtime);
     const frozenResearch = JSON.stringify(research.data);
     const graderContext = `${graderBaseContext}\n\nFROZEN RESEARCH PACKET\n${frozenResearch}`;
 
@@ -653,13 +678,13 @@ export async function councilEvaluate(deal, opts = {}) {
         model: policy.bull,
         context: graderContext,
         schema: GRADER_SCHEMA,
-        maxTurns: stageTurns,
+        maxTurns: turnPolicy.judgment,
       }), runtime),
       runStage('bear', stageRequest('bear', {
         model: policy.bear,
         context: graderContext,
         schema: GRADER_SCHEMA,
-        maxTurns: stageTurns,
+        maxTurns: turnPolicy.judgment,
       }), runtime),
     ]);
 
@@ -682,7 +707,7 @@ export async function councilEvaluate(deal, opts = {}) {
       model: policy.calibrator,
       context: calibratorContext,
       schema: CALIBRATOR_SCHEMA,
-      maxTurns: stageTurns,
+      maxTurns: turnPolicy.judgment,
     }), runtime);
     const canonical = scoreCouncilChoices(calibrator.data.dimension_scores, lens.rubric);
 
@@ -703,7 +728,7 @@ export async function councilEvaluate(deal, opts = {}) {
       model: policy.cfo,
       context: cfoContext,
       schema: CFO_SCHEMA,
-      maxTurns: stageTurns,
+      maxTurns: turnPolicy.judgment,
     }), runtime);
 
     await notifyStage('finalizing');

@@ -160,9 +160,11 @@ test('councilEvaluate: executes five explicit stages against one evidence packet
     ok(!byStage.research.context.includes('CALIBRATION'), 'research does not receive calibration');
     ok(!byStage.research.context.includes('SCORING LENS'), 'research does not receive the scoring lens');
     eq(byStage.research.tools.join(','), 'WebSearch', 'research owns retrieval');
+    eq(byStage.research.maxTurns, 20, 'research keeps a bounded retrieval budget');
     for (const stage of ['bull', 'bear', 'calibrator', 'cfo']) {
       eq(byStage[stage].tools.length, 0, `${stage} cannot retrieve or write`);
       ok(!byStage[stage].agents, `${stage} is not an optional subagent`);
+      eq(byStage[stage].maxTurns, 5, `${stage} has a bounded judgment budget`);
     }
     ok(byStage.bull.context.includes('https://example.com/source'), 'Bull sees frozen research');
     ok(byStage.bear.context.includes('https://example.com/source'), 'Bear sees frozen research');
@@ -229,6 +231,53 @@ test('councilEvaluate: dry run assembles without a provider or a model call', as
   ok(out.calibrationMaturity, 'reports calibration maturity');
   ok(out.provenance.runKey, 'reports the idempotency fingerprint');
 });
+
+test('councilEvaluate: controlled replay can pin an exact calibration snapshot', async () => {
+  const calibrationSnapshot = {
+    maturity: 'pinned-replay',
+    confidence: 1,
+    dealsScored: 1,
+    examples: [],
+    thresholds: {
+      verdictBands: [],
+      investLine: 40,
+      defaultInvestLine: 40,
+      revealedInvestLine: null,
+    },
+    dimensionWeights: {},
+    note: 'Exact historical calibration snapshot.',
+  };
+  const out = await councilEvaluate(
+    { company: 'Pinned Co' },
+    { dryRun: true, env: {}, calibrationSnapshot },
+  );
+  ok(out.requests.calibrator.context.includes('"maturity":"pinned-replay"'));
+  eq(out.calibrationMaturity, 'pinned-replay');
+});
+
+test('councilEvaluate: controlled replay can pin research without retrieving again', async () =>
+  withTempDir(async dealLogDir => {
+    const fake = fakeProvider();
+    const researchSnapshot = {
+      evidence: ['Verified: frozen fact — https://example.com/frozen'],
+      team_dossier: 'Frozen team.',
+      company_context: 'Frozen company.',
+    };
+    const out = await councilEvaluate(
+      { company: 'Frozen Research Co' },
+      {
+        provider: fake,
+        dealLogDir,
+        env: {},
+        reuse: false,
+        researchSnapshot,
+      },
+    );
+    ok(!fake.calls.some(req => req.prompt.startsWith('STAGE: research')));
+    eq(out.result.structuredOutput.research, researchSnapshot);
+    eq(out.stageMetrics.find(stage => stage.stage === 'research').numTurns, 0);
+    ok(out.provenance.researchSnapshotHash, 'fingerprints the pinned research packet');
+  }));
 
 test('councilEvaluate: concurrent identical clicks share one in-flight run', async () =>
   withTempDir(async dealLogDir => {

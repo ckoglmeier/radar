@@ -26,6 +26,12 @@ or a complex regulated market requires them. Do not reduce research coverage to
 save tokens. When the tool supports concurrent calls, retrieve independent
 subjects in parallel and synthesize once.
 
+Stop when every required coverage area has reliable evidence or an explicit
+`Unavailable` finding and additional retrieval is unlikely to change a rubric
+choice. Target 18–30 distinct ledger items; exceed that range only to resolve a
+material contradiction. Merge duplicate facts and sources rather than reporting
+every search result.
+
 ## Evidence rules
 
 - Treat supplied claims as claims until independently verified.
@@ -47,4 +53,3 @@ Return only the schema requested by Radar:
 
 Be complete but economical. Downstream roles receive this packet rather than
 raw search transcripts.
-

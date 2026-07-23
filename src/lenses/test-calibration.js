@@ -222,6 +222,31 @@ async function run() {
       approx(cal.confidence, expectedW, 0.001, 'confidence should equal N/(N+15)');
     });
 
+    await test('equal-score calibration examples break ties by evaluation id', async () => {
+      const before = await getCalibration();
+      const [{ max_id: maxId }] = await query(
+        'SELECT COALESCE(MAX(id), 0) AS max_id FROM deal_evaluations',
+      );
+      const lowerId = Number(maxId) + 100;
+      const higherId = lowerId + 1;
+      const tieScore = before.thresholds.investLine;
+
+      // Insert the higher id first so physical row order disagrees with the
+      // required deterministic ordering.
+      for (const id of [higherId, lowerId]) {
+        await query(
+          `INSERT INTO deal_evaluations
+             (id, eval_date, file_path, total_score, verdict, invested)
+           VALUES ($1, '2026-01-01', $2, $3, 'Tie candidate', false)`,
+          [id, `/tmp/test-deal-log/2026-01-01-${stamp}-tie-${id}.md`, tieScore],
+        );
+      }
+
+      const cal = await getCalibration();
+      const borderline = cal.examples.find(example => example.role === 'borderline');
+      eq(borderline.deal_evaluation_id, lowerId);
+    });
+
     // ==========================================================
     // Many deals -> personal maturity
     // ==========================================================

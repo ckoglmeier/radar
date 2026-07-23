@@ -108,7 +108,7 @@ async function fetchScoredDeals() {
     LEFT JOIN investments i ON de.investment_id = i.id
     LEFT JOIN pipeline_invites pi ON de.pipeline_invite_id = pi.id
     WHERE de.total_score IS NOT NULL
-    ORDER BY de.total_score DESC
+    ORDER BY de.total_score DESC, de.id ASC
   `);
 
   return rows.map(r => ({
