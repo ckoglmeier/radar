@@ -27,7 +27,7 @@ import { matchCompanyToInvestment, loadInvestmentUniverse } from '../utils/match
 import { detectAndLogChanges } from '../models/investments.js';
 import { insertCashFlow } from '../models/cash-flows.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = dirname(fileURLToPath(String(import.meta.url)));
 const LEAD_PREFIXES_PATH = join(__dirname, '../config/lead-prefixes.json');
 
 /** Load GP/syndicate lead prefixes from src/config/lead-prefixes.json, or [] if missing. */

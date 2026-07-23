@@ -159,15 +159,16 @@ try {
       ],
     );
 
-    // Historical windows default missing opening values to invested cost.
-    const costBased = await metricQuery({
+    // Historical windows fail closed when any opening valuation is missing.
+    const unavailable = await metricQuery({
       metric: 'period_return',
       window: { since: '2025-01-01', until: '2026-07-22' },
     });
-    assert.equal(costBased.rows[0].value, 13.33);
-    assert.equal(costBased.rows[0].coverage.state, 'available');
+    assert.equal(unavailable.rows[0].value, null);
+    assert.equal(unavailable.rows[0].details.start_value, null);
+    assert.equal(unavailable.rows[0].coverage.state, 'unavailable');
     assert.deepEqual(
-      costBased.rows[0].coverage.cost_basis_opening_positions,
+      unavailable.rows[0].coverage.missing_opening_positions,
       [
         { id: orbital, company_name: 'Orbital Forge' },
         { id: tidal, company_name: 'Tidal Works' },
@@ -177,13 +178,13 @@ try {
     const available = await metricQuery({
       metric: 'period_return',
       window: { since: '2025-01-01', until: '2026-07-22' },
-      excludeIds: [tidal],
+      excludeIds: [orbital, tidal],
     });
     assert.equal(available.rows[0].coverage.state, 'available');
     assert.notEqual(available.rows[0].value, null);
     assert.deepEqual(
-      available.rows[0].coverage.cost_basis_opening_positions,
-      [{ id: orbital, company_name: 'Orbital Forge' }],
+      available.rows[0].coverage.missing_opening_positions,
+      [],
     );
 
     const deployed = await metricQuery({

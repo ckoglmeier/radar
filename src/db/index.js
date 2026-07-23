@@ -155,6 +155,7 @@ export async function closeDb() {
     try { await db.close(); } catch { /* already closed */ }
   }
   _pgliteInstances.clear();
+  _defaultDriverPromise = null;
 }
 
 /**

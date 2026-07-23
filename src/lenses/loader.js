@@ -10,8 +10,9 @@ import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, resolve, dirname, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
+import { resolveDataDir, resolveLegacyRadarDir } from '../config/data-dir.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = dirname(fileURLToPath(String(import.meta.url)));
 const LENSES_DIR = join(__dirname, '../../lenses');
 
 // Singleton cache — loaded once per process
@@ -75,25 +76,32 @@ function isContainedIn(candidate, root) {
 
 /**
  * Resolve the active lens directory.
- * Priority: project-local .radar/config.json → ~/.radar/config.json → default (_template).
+ * Priority: project-local .radar/config.json → standard data dir →
+ * legacy ~/.radar/config.json → default (_template).
  *
  * Name resolution order for bare names (e.g. "ck-conviction-era"):
- *   1. userLensesRoot (~/.radar/lenses/<name>) — user lenses win over bundled
- *   2. repoLensesRoot (<cwd>/lenses/<name>)    — bundled fallback
+ *   1. dataLensesRoot (<dataDir>/lenses/<name>)
+ *   2. legacyLensesRoot (~/.radar/lenses/<name>)
+ *   3. repoLensesRoot (<cwd>/lenses/<name>)
  */
 function resolveActiveLensDir() {
   const homeDir = process.env.HOME || process.env.USERPROFILE;
   // Legitimate lens roots — active_lens values must resolve within one of these.
   const repoLensesRoot = resolve(process.cwd(), 'lenses');
-  const userLensesRoot = resolve(homeDir, '.radar', 'lenses');
+  const dataDir = resolveDataDir({ home: homeDir });
+  const dataLensesRoot = resolve(dataDir, 'lenses');
+  const legacyDir = resolveLegacyRadarDir({ home: homeDir });
+  const legacyLensesRoot = resolve(legacyDir, 'lenses');
 
   /**
    * Resolve a bare lens name to a directory path.
-   * Checks userLensesRoot first (user lenses win over bundled), then repoLensesRoot.
+   * Checks the standard data dir first, then the legacy and bundled roots.
    */
   function resolveName(name) {
-    const inUser = join(homeDir, '.radar', 'lenses', name);
-    if (existsSync(inUser)) return inUser;
+    const inDataDir = join(dataLensesRoot, name);
+    if (existsSync(inDataDir)) return inDataDir;
+    const inLegacy = join(legacyLensesRoot, name);
+    if (existsSync(inLegacy)) return inLegacy;
     const inRepo = join(process.cwd(), 'lenses', name);
     if (existsSync(inRepo) && isContainedIn(inRepo, repoLensesRoot)) return inRepo;
     return null;
@@ -109,8 +117,17 @@ function resolveActiveLensDir() {
     }
   }
 
+  const dataConfig = join(dataDir, 'config.json');
+  if (existsSync(dataConfig)) {
+    const config = readJson(dataConfig);
+    if (config.active_lens) {
+      const resolved = resolveName(config.active_lens);
+      if (resolved) return resolved;
+    }
+  }
+
   // Check for user-level config
-  const userConfig = join(homeDir, '.radar', 'config.json');
+  const userConfig = join(legacyDir, 'config.json');
   if (existsSync(userConfig)) {
     const config = readJson(userConfig);
     if (config.active_lens) {
@@ -118,7 +135,9 @@ function resolveActiveLensDir() {
       // Absolute paths must resolve within a legitimate lens root.
       const asAbsolute = config.active_lens;
       if (existsSync(asAbsolute) &&
-          (isContainedIn(asAbsolute, repoLensesRoot) || isContainedIn(asAbsolute, userLensesRoot))) {
+          (isContainedIn(asAbsolute, repoLensesRoot) ||
+           isContainedIn(asAbsolute, dataLensesRoot) ||
+           isContainedIn(asAbsolute, legacyLensesRoot))) {
         return resolve(asAbsolute);
       }
       const resolved = resolveName(config.active_lens);
@@ -301,16 +320,22 @@ export function listAvailableLenses() {
     }
   }
 
-  // Also check ~/.radar/lenses/
+  // Also check the standard data dir and legacy ~/.radar/lenses/.
   const homeDir = process.env.HOME || process.env.USERPROFILE;
-  const userLensesDir = join(homeDir, '.radar', 'lenses');
-  if (existsSync(userLensesDir)) {
-    for (const entry of readdirSync(userLensesDir)) {
-      const manifestPath = join(userLensesDir, entry, 'manifest.json');
+  const roots = [
+    join(resolveDataDir({ home: homeDir }), 'lenses'),
+    join(resolveLegacyRadarDir({ home: homeDir }), 'lenses'),
+  ];
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    for (const entry of readdirSync(root)) {
+      const manifestPath = join(root, entry, 'manifest.json');
       if (existsSync(manifestPath)) {
         try {
           const manifest = readJson(manifestPath);
-          lenses.push({ dir: join(userLensesDir, entry), ...manifest });
+          if (!lenses.some(lens => lens.name === manifest.name)) {
+            lenses.push({ dir: join(root, entry), ...manifest });
+          }
         } catch { /* skip */ }
       }
     }

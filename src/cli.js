@@ -40,6 +40,7 @@ import { AgentSdkProvider } from './providers/agent-sdk-provider.js';
 import { resolveAuthMode, validateAuthStartup, formatAuthStatus, probeActiveCredential } from './providers/auth-mode.js';
 import { printUpdatesList, printUpdateDetail, printUpdateTimeline } from './cli/printers/updates.js';
 import { reextractIntake } from './intake/reextract.js';
+import { resolveDataDir } from './config/data-dir.js';
 
 program
   .name('radar')
@@ -1056,7 +1057,7 @@ lens
 lens
   .command('install <path>')
   .description('Install a lens from a local directory and optionally activate it')
-  .option('--global', 'Install to ~/.radar/lenses/ instead of project-local lenses/')
+  .option('--global', 'Install to Radar\'s standard data directory instead of project-local lenses/')
   .option('--activate', 'Set as the active lens after installing (default: true)', true)
   .action((lensPath, opts) => {
     const resolved = resolve(lensPath);
@@ -1076,9 +1077,9 @@ lens
       process.exit(1);
     }
 
-    const homeDir = process.env.HOME || process.env.USERPROFILE;
+    const dataDir = resolveDataDir();
     const destDir = opts.global
-      ? join(homeDir, '.radar', 'lenses', lensId)
+      ? join(dataDir, 'lenses', lensId)
       : join(process.cwd(), 'lenses', lensId);
 
     // Don't overwrite unless source and dest are different directories
@@ -1093,7 +1094,7 @@ lens
 
     if (opts.activate) {
       const configDir = opts.global
-        ? join(homeDir, '.radar')
+        ? dataDir
         : join(process.cwd(), '.radar');
       mkdirSync(configDir, { recursive: true });
       const configPath = join(configDir, 'config.json');

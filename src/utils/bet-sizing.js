@@ -15,7 +15,7 @@ import { dirname } from 'path';
 import { runAnalytics } from './analytics.js';
 import { getDistributions, getThesisClusters, getRoundParams } from '../lenses/loader.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = dirname(fileURLToPath(String(import.meta.url)));
 
 // ---------------------------------------------------------------------------
 // Score → distribution + tier

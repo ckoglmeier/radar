@@ -379,7 +379,7 @@ async function insertPipelineInvite(parsed, overrides = {}) {
     };
   }
   const result = await upsertInvite({ ...invite, source: 'intake' }, { universe });
-  return { table: 'pipeline_invites', id: result.id };
+  return { table: 'pipeline_invites', id: result.id, is_new: result.isNew };
 }
 
 // deal_log_eval: mirrors models/evaluations.js's runDealLogImport insert
