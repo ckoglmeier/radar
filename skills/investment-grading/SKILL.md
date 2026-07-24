@@ -25,9 +25,8 @@ Treat those injected inputs as authoritative.
 
 Radar loads only the contract required for the active stage:
 
-- Research planner: [references/planner.md](references/planner.md) — prioritize
-  Radar's deterministic question bank and add only deal-specific gaps
-- Research: [references/research.md](references/research.md)
+- Research: [references/research.md](references/research.md) — adapt Radar's
+  deterministic question bank and execute the baseline plus deal-specific gaps
 - Bull: [references/bull.md](references/bull.md)
 - Bear: [references/bear.md](references/bear.md)
 - Calibrator: [references/calibrator.md](references/calibrator.md)
@@ -38,7 +37,8 @@ Council's cost, consistency, and provenance contract.
 
 ## Workflow
 
-1. Plan the decision-critical research questions against the deal and rubric.
+1. Start with Radar's nine deterministic research questions; identify up to
+   three material deal-specific gaps in the same research session.
 2. Research founders, company, financing, traction, economics,
    differentiation, competition, market, and external forces.
 3. Freeze the sourced Evidence Ledger, Team Dossier, and Company Context.

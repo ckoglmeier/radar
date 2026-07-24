@@ -1,9 +1,10 @@
 // evaluate.js — Phase B1: councilEvaluate(), the normalized council path.
 //
-// Runs the vendored headless investment-grading skill as six explicit sessions:
-// planner, research, Bull, Bear, Calibrator, and CFO. A Sonnet planner freezes
-// the decision-critical questions before Haiku retrieves evidence. Research is
-// frozen before either grader runs, and only Radar writes the final artifact.
+// Runs the vendored headless investment-grading skill as five explicit sessions:
+// research, Bull, Bear, Calibrator, and CFO. Radar deterministically seeds the
+// research questions; Sonnet adds and executes up to three deal-specific gaps
+// in the same session. Research is frozen before either grader runs, and only
+// Radar writes the final artifact.
 //
 // This module is SDK-free and pure orchestration: the provider is injected, so
 // it is fully unit-testable with a fake. The CLI (C1) constructs the real
@@ -38,7 +39,6 @@ const SKILL_DIR = join(
 );
 const SKILL_PATH = join(SKILL_DIR, 'SKILL.md');
 const ROLE_PATHS = Object.freeze({
-  planner: join(SKILL_DIR, 'references', 'planner.md'),
   research: join(SKILL_DIR, 'references', 'research.md'),
   bull: join(SKILL_DIR, 'references', 'bull.md'),
   bear: join(SKILL_DIR, 'references', 'bear.md'),
@@ -61,8 +61,8 @@ function loadRolePrompt(stage) {
   return _rolePrompts.get(stage);
 }
 
-export const COUNCIL_POLICY_VERSION = 5;
-const EXPLICIT_PIPELINE_VERSION = 'seeded-research-plan-v1';
+export const COUNCIL_POLICY_VERSION = 6;
+const EXPLICIT_PIPELINE_VERSION = 'sonnet-seeded-research-v1';
 const RESEARCH_PLAN_SEED_VERSION = 'baseline-v1';
 const inFlightRuns = new Map();
 
@@ -127,17 +127,6 @@ const CALIBRATOR_SCHEMA = {
   additionalProperties: false,
 };
 
-const RESEARCH_SCHEMA = {
-  type: 'object',
-  properties: {
-    evidence: { type: 'array', items: { type: 'string' } },
-    team_dossier: { type: 'string' },
-    company_context: { type: 'string' },
-  },
-  required: ['evidence', 'team_dossier', 'company_context'],
-  additionalProperties: false,
-};
-
 const CUSTOM_QUESTION_SCHEMA = {
   type: 'object',
   properties: {
@@ -178,20 +167,20 @@ const CUSTOM_QUESTION_SCHEMA = {
   additionalProperties: false,
 };
 
-const PLANNER_ADAPTATION_SCHEMA = {
+const RESEARCH_SCHEMA = {
   type: 'object',
   properties: {
-    deal_identity: { type: 'string' },
-    decision_frame: { type: 'string' },
-    priority_question_ids: { type: 'array', items: { type: 'string' } },
+    evidence: { type: 'array', items: { type: 'string' } },
+    team_dossier: { type: 'string' },
+    company_context: { type: 'string' },
     custom_questions: { type: 'array', items: CUSTOM_QUESTION_SCHEMA },
     critical_unknowns: { type: 'array', items: { type: 'string' } },
     contradictions_to_resolve: { type: 'array', items: { type: 'string' } },
   },
   required: [
-    'deal_identity',
-    'decision_frame',
-    'priority_question_ids',
+    'evidence',
+    'team_dossier',
+    'company_context',
     'custom_questions',
     'critical_unknowns',
     'contradictions_to_resolve',
@@ -380,19 +369,16 @@ const CFO_SCHEMA = {
 };
 
 const STAGE_PROMPTS = {
-  planner:
-    'STAGE: planner\nAdapt Radar’s deterministic baseline research plan; do not rewrite or repeat it. ' +
-    'Prioritize its question IDs, identify only material unknowns and contradictions, and add zero to three ' +
-    'deal-specific questions that the baseline does not cover. Keep every field terse. Do not search, answer ' +
-    'questions, score, or simulate another voice.',
   research:
-    'STAGE: research\nExecute the frozen research plan and build one shared factual evidence packet for the deal. ' +
+    'STAGE: research\nUse Radar’s deterministic baseline as the research plan. Before searching, identify zero to three ' +
+    'material deal-specific questions that the baseline does not cover, then research those gaps in this same session. ' +
+    'Build one shared factual evidence packet for the deal. ' +
     'Use web search when useful. Return at least one evidence line for every required question ID. Format each line as ' +
     '[question_id] STATUS | narrowly stated fact | event date | source title and publication date | URL. STATUS must be ' +
     'supplied, verified, conflicting, or unavailable. Verify entity and date before recording a claim; when credible sources ' +
     'conflict, record both claims instead of choosing silently. Never infer that something did not happen merely because a ' +
     'search did not find it. Keep the team dossier and company context neutral and sourced—no scoring, risk conclusions, or ' +
-    'guilt by association. Cover every required question, merge exact duplicates, and stop when further retrieval is unlikely ' +
+    'guilt by association. Cover every required baseline and custom question, merge exact duplicates, and stop when further retrieval is unlikely ' +
     'to resolve a named conflict or change the factual packet. Do not score the deal or simulate another Council voice.',
   bull:
     'STAGE: bull\nPerform only the Bull evaluation. Use only the frozen research packet in context; ' +
@@ -473,7 +459,12 @@ function frozenResearchStage(snapshot) {
   }
   return {
     stage: 'research',
-    data: snapshot,
+    data: {
+      ...snapshot,
+      custom_questions: snapshot.custom_questions || [],
+      critical_unknowns: snapshot.critical_unknowns || [],
+      contradictions_to_resolve: snapshot.contradictions_to_resolve || [],
+    },
     result: {
       model: null,
       numTurns: 0,
@@ -485,6 +476,14 @@ function frozenResearchStage(snapshot) {
       },
     },
     usedFallback: false,
+  };
+}
+
+function decisionResearchPacket(research) {
+  return {
+    evidence: research.evidence,
+    team_dossier: research.team_dossier,
+    company_context: research.company_context,
   };
 }
 
@@ -692,20 +691,11 @@ export function assembleContext(deal, lens, calibration, provenance = {}) {
  */
 export function buildCouncilAgents(models) {
   return {
-    planner: {
-      description: 'Planning leg: adapt and prioritize Radar’s baseline research questions.',
-      model: models.planner,
-      prompt:
-        'You adapt Radar’s deterministic research baseline against the deal and rubric. ' +
-        'Prioritize existing questions, identify material contradictions, and add at most ' +
-        'three missing deal-specific questions. Do not retrieve facts or score the deal.',
-      tools: [],
-    },
     research: {
-      description: 'Retrieval leg: produce the shared sourced Evidence Ledger.',
+      description: 'Research leg: adapt Radar’s seed questions and produce the shared sourced Evidence Ledger.',
       model: models.research,
       prompt:
-        'You gather public facts — LinkedIn history, prior companies and outcomes, ' +
+        'You identify up to three deal-specific gaps, then gather public facts — LinkedIn history, prior companies and outcomes, ' +
         'domain credentials, press, funding, competitors — and report them plainly ' +
         'with sources in one Evidence Ledger. Label supplied, verified, conflicting, ' +
         'and unavailable facts. No judgment, just sourced facts.',
@@ -802,7 +792,7 @@ function aggregateStageUsage(stages) {
  * @param {object} [opts.calibrationSnapshot] exact historical calibration for
  *   a controlled replay; normal runs derive calibration from Radar.
  * @param {object} [opts.plannerSnapshot] exact frozen merged research plan for
- *   a controlled replay; normal runs ask Sonnet to adapt Radar's baseline.
+ *   a controlled replay; normal runs seed Sonnet with Radar's baseline.
  * @param {object} [opts.researchSnapshot] exact frozen evidence packet for a
  *   controlled replay; normal runs perform fresh retrieval.
  * @returns {Promise<{result: object, usedFallback: boolean, primaryErrorKind?: string, calibrationMaturity: string, modelPolicy: object}>}
@@ -837,7 +827,6 @@ export async function councilEvaluate(deal, opts = {}) {
   const calibration = calibrationSnapshot || await getCalibration();
   const baselineResearchPlan = buildBaselineResearchPlan(deal);
   const turnPolicy = {
-    planner: Math.max(1, Math.ceil(maxTurns / 40)),
     research: Math.max(16, Math.ceil(maxTurns / 2)),
     judgment: Math.max(4, Math.ceil(maxTurns / 8)),
   };
@@ -851,7 +840,6 @@ export async function councilEvaluate(deal, opts = {}) {
     baselineResearchQuestions: BASELINE_RESEARCH_QUESTIONS,
     prompts: STAGE_PROMPTS,
     schemas: {
-      planner: PLANNER_ADAPTATION_SCHEMA,
       research: RESEARCH_SCHEMA,
       grader: GRADER_SCHEMA,
       calibrator: CALIBRATOR_SCHEMA,
@@ -883,15 +871,9 @@ export async function councilEvaluate(deal, opts = {}) {
   const cfoBaseContext = assembleCfoContext(deal, lens, calibration, provenance);
   const authMode = resolveAuthMode(env);
   const requests = {
-    planner: stageRequest('planner', {
-      model: policy.planner,
-      context: `${graderBaseContext}\n\nDETERMINISTIC BASELINE RESEARCH PLAN\n${JSON.stringify(baselineResearchPlan)}`,
-      schema: PLANNER_ADAPTATION_SCHEMA,
-      maxTurns: turnPolicy.planner,
-    }),
     research: stageRequest('research', {
       model: policy.research,
-      context: `${researchContext}\n\nFROZEN RESEARCH PLAN\n  (produced by the planner stage)`,
+      context: `${researchContext}\n\nRADAR RESEARCH PLAN\n${JSON.stringify(plannerSnapshot || baselineResearchPlan)}`,
       schema: RESEARCH_SCHEMA,
       maxTurns: turnPolicy.research,
     }),
@@ -981,27 +963,27 @@ export async function councilEvaluate(deal, opts = {}) {
       if (onStage) await onStage(stage);
     };
 
-    await notifyStage('planning');
-    const planner = plannerSnapshot
-      ? frozenPlannerStage(plannerSnapshot)
-      : await runStage('planner', requests.planner, runtime).then(stage => ({
-        ...stage,
-        adaptation: stage.data,
-        data: mergeResearchPlan(baselineResearchPlan, stage.data),
-      }));
-    provenance.researchPlanHash = hash(planner.data);
-    provenance.researchPlan = planner.data;
-
     await notifyStage('research');
     const research = researchSnapshot
       ? frozenResearchStage(researchSnapshot)
       : await runStage('research', stageRequest('research', {
         model: policy.research,
-        context: `${researchContext}\n\nFROZEN RESEARCH PLAN\n${JSON.stringify(planner.data)}`,
+        context: `${researchContext}\n\nRADAR RESEARCH PLAN\n${JSON.stringify(plannerSnapshot || baselineResearchPlan)}`,
         schema: RESEARCH_SCHEMA,
         maxTurns: turnPolicy.research,
       }), runtime);
-    const frozenResearch = JSON.stringify(research.data);
+    const researchPlan = plannerSnapshot || mergeResearchPlan(baselineResearchPlan, {
+      deal_identity: baselineResearchPlan.deal_identity,
+      decision_frame: baselineResearchPlan.decision_frame,
+      priority_question_ids: baselineResearchPlan.priority_question_ids,
+      custom_questions: research.data.custom_questions,
+      critical_unknowns: research.data.critical_unknowns,
+      contradictions_to_resolve: research.data.contradictions_to_resolve,
+    });
+    const planner = frozenPlannerStage(researchPlan);
+    provenance.researchPlanHash = hash(researchPlan);
+    provenance.researchPlan = researchPlan;
+    const frozenResearch = JSON.stringify(decisionResearchPacket(research.data));
     const graderContext = `${graderBaseContext}\n\nFROZEN RESEARCH PACKET\n${frozenResearch}`;
 
     await notifyStage('bull_bear');

@@ -68,7 +68,7 @@ function researchPlan() {
   };
 }
 
-function plannerAdaptation() {
+function researchAdaptation() {
   return {
     deal_identity: 'Acme Autonomy, industrial robotics company',
     decision_frame: 'Test whether technical differentiation and traction justify the round.',
@@ -98,11 +98,13 @@ function fakeProvider({ delay = 0 } = {}) {
       if (delay) await new Promise(resolve => setTimeout(resolve, delay));
       const stage = req.prompt.match(/^STAGE:\s*(\w+)/m)?.[1];
       const outputs = {
-        planner: plannerAdaptation(),
         research: {
           evidence: ['verified: Example fact — https://example.com/source'],
           team_dossier: 'Team dossier',
           company_context: 'Company context',
+          custom_questions: researchAdaptation().custom_questions,
+          critical_unknowns: researchAdaptation().critical_unknowns,
+          contradictions_to_resolve: researchAdaptation().contradictions_to_resolve,
         },
         bull: { dimension_scores: dimensionScores(4), key_argument: 'Bull case' },
         bear: { dimension_scores: dimensionScores(2), key_argument: 'Bear case' },
@@ -174,15 +176,14 @@ test('assembleContext: missing deal fields render as Not provided', () => {
 });
 
 // ---- buildCouncilAgents (pure) ----
-test('buildCouncilAgents: planner and graders use Sonnet, research uses Haiku, calibrator uses Opus', () => {
+test('buildCouncilAgents: research uses Sonnet 4.6 and calibrator uses Opus', () => {
   const a = buildCouncilAgents(resolveCouncilModels());
-  eq(a.planner.model, 'claude-sonnet-4-6');
   eq(a.calibrator.model, 'opus');
   eq(a.bull.model, 'sonnet');
   eq(a.bear.model, 'sonnet');
   eq(a.cfo.model, 'sonnet');
-  eq(a.research.model, 'haiku');
-  for (const key of ['planner', 'research', 'bull', 'bear', 'calibrator', 'cfo']) {
+  eq(a.research.model, 'claude-sonnet-4-6');
+  for (const key of ['research', 'bull', 'bear', 'calibrator', 'cfo']) {
     ok(a[key].description && a[key].prompt, `${key} has description + prompt`);
   }
 });
@@ -201,7 +202,7 @@ test('buildBaselineResearchPlan: creates the same complete question bank without
 // ---- councilEvaluate (fake provider; needs scratch DB for getCalibration) ----
 test('councilEvaluate: requires a provider', () => throwsAsync(() => councilEvaluate({ company: 'X' }, {}), 'requires a provider'));
 
-test('councilEvaluate: executes six explicit stages against one planned evidence packet', async () =>
+test('councilEvaluate: executes five explicit stages against one seeded evidence packet', async () =>
   withTempDir(async dealLogDir => {
     const fake = fakeProvider();
     const stages = [];
@@ -209,27 +210,21 @@ test('councilEvaluate: executes six explicit stages against one planned evidence
       { company: 'Acme Autonomy', stage: 'Series A' },
       { provider: fake, env: {}, dealLogDir, onStage: stage => stages.push(stage) },
     );
-    eq(fake.calls.length, 6, 'ran six sessions');
+    eq(fake.calls.length, 5, 'ran five sessions');
     const byStage = Object.fromEntries(
       fake.calls.map(req => [req.prompt.match(/^STAGE:\s*(\w+)/m)?.[1], req]),
     );
-    eq(Object.keys(byStage).sort().join(','), 'bear,bull,calibrator,cfo,planner,research');
-    ok(byStage.planner.systemPrompt.includes('Council Research Planner Contract'), 'planner gets its role contract');
+    eq(Object.keys(byStage).sort().join(','), 'bear,bull,calibrator,cfo,research');
     ok(byStage.research.systemPrompt.includes('Council Research Contract'), 'research gets its role contract');
     ok(byStage.bull.systemPrompt.includes('Council Bull Contract'), 'Bull gets its role contract');
     ok(byStage.bear.systemPrompt.includes('Council Bear Contract'), 'Bear gets its role contract');
     ok(byStage.calibrator.systemPrompt.includes('Council Calibrator Contract'), 'Calibrator gets its role contract');
     ok(byStage.cfo.systemPrompt.includes('Council Portfolio Action Contract'), 'CFO gets its role contract');
-    eq(byStage.planner.model, 'claude-sonnet-4-6', 'planner uses Sonnet 4.6');
-    eq(byStage.planner.tools.length, 0, 'planner cannot retrieve');
-    eq(byStage.planner.maxTurns, 1, 'planner has a one-turn budget');
-    ok(byStage.planner.context.includes('SCORING LENS'), 'planner sees the scoring lens');
-    ok(byStage.planner.context.includes('DETERMINISTIC BASELINE RESEARCH PLAN'), 'planner receives Radar baseline');
-    ok(byStage.planner.context.includes('baseline-falsification'), 'baseline includes falsifying diligence');
-    ok(!byStage.planner.context.includes('CALIBRATION'), 'planner does not see calibration');
+    eq(byStage.research.model, 'claude-sonnet-4-6', 'research uses Sonnet 4.6');
     ok(byStage.research.context.includes('Acme Autonomy'), 'deal in context');
-    ok(byStage.research.context.includes('baseline-product-moat'), 'research sees deterministic plan');
-    ok(byStage.research.context.includes('Acme Autonomy safety certification deployment'), 'research sees custom adaptation');
+    ok(byStage.research.context.includes('RADAR RESEARCH PLAN'), 'research receives Radar plan');
+    ok(byStage.research.context.includes('baseline-falsification'), 'research sees deterministic baseline');
+    ok(byStage.research.prompt.includes('zero to three'), 'research identifies deal-specific gaps');
     ok(byStage.research.prompt.includes('[question_id] STATUS'), 'research gets the evidence-line contract');
     ok(byStage.research.prompt.includes('Never infer that something did not happen'), 'research cannot turn search absence into a fact');
     ok(!byStage.research.context.includes('CALIBRATION'), 'research does not receive calibration');
@@ -254,20 +249,20 @@ test('councilEvaluate: executes six explicit stages against one planned evidence
     eq(out.usedFallback, false);
     ok(out.calibrationMaturity, 'carries calibration maturity');
     eq(out.modelPolicy.calibrator, 'opus');
-    eq(out.usage.inputTokens, 600, 'aggregates input usage');
-    eq(out.usage.outputTokens, 120, 'aggregates output usage');
-    eq(out.usage.totalCostUsd, 0.060000000000000005, 'aggregates direct API cost');
+    eq(out.usage.inputTokens, 500, 'aggregates input usage');
+    eq(out.usage.outputTokens, 100, 'aggregates output usage');
+    eq(out.usage.totalCostUsd, 0.05, 'aggregates direct API cost');
     eq(out.stageMetrics.length, 6, 'returns per-stage usage');
-    eq(out.provenance.policyVersion, 5);
+    eq(out.provenance.policyVersion, 6);
     ok(out.provenance.instructionHash && out.provenance.lensHash, 'provenance fingerprints');
     eq(out.provenance.researchPlanSeedVersion, 'baseline-v1');
     ok(out.provenance.researchPlanSeedHash, 'fingerprints the deterministic seed plan');
     ok(out.provenance.researchPlanHash, 'fingerprints the generated research plan');
     eq(out.provenance.researchPlan.questions.length, 10, 'persists baseline plus one custom question');
-    eq(out.provenance.researchPlan.priority_question_ids[0], 'baseline-product-moat');
+    eq(out.provenance.researchPlan.priority_question_ids[0], 'baseline-identity-status');
     eq(out.provenance.researchPlan.questions.at(-1).question_id, 'custom-safety-certification');
     eq(out.writtenFiles.length, 1);
-    eq(stages.join(','), 'planning,research,bull_bear,calibrator,cfo,finalizing', 'reported durable UI stages');
+    eq(stages.join(','), 'research,bull_bear,calibrator,cfo,finalizing', 'reported durable UI stages');
     const artifact = readFileSync(join(dealLogDir, out.writtenFiles[0]), 'utf8');
     ok(artifact.includes('## Research Plan'), 'artifact records the research plan');
     ok(artifact.includes('## Council Evaluation'), 'Radar wrote Council table');
@@ -308,8 +303,8 @@ test('councilEvaluate: dry run assembles without a provider or a model call', as
   ok(out.requests.research.systemPrompt.includes('Council Research Contract'), 'loaded the research role contract');
   ok(out.requests.research.context.length < out.requests.calibrator.context.length, 'research context is scoped');
   ok(out.requests.cfo.context.length < out.requests.calibrator.context.length, 'CFO context is scoped');
-  eq(Object.keys(out.requests).length, 6, 'previews all enforced stages');
-  eq(out.requests.planner.model, 'claude-sonnet-4-6');
+  eq(Object.keys(out.requests).length, 5, 'previews all enforced stages');
+  eq(out.requests.research.model, 'claude-sonnet-4-6');
   eq(out.modelPolicy.calibrator, 'opus');
   ok(out.calibrationMaturity, 'reports calibration maturity');
   ok(out.provenance.runKey, 'reports the idempotency fingerprint');
@@ -361,7 +356,8 @@ test('councilEvaluate: controlled replay can pin planning and research without m
     ok(!fake.calls.some(req => req.prompt.startsWith('STAGE: planner')));
     ok(!fake.calls.some(req => req.prompt.startsWith('STAGE: research')));
     eq(out.result.structuredOutput.planner, plannerSnapshot);
-    eq(out.result.structuredOutput.research, researchSnapshot);
+    eq(out.result.structuredOutput.research.evidence, researchSnapshot.evidence);
+    eq(out.result.structuredOutput.research.custom_questions.length, 0);
     eq(out.stageMetrics.find(stage => stage.stage === 'planner').numTurns, 0);
     eq(out.stageMetrics.find(stage => stage.stage === 'research').numTurns, 0);
     ok(out.provenance.plannerSnapshotHash, 'fingerprints the pinned research plan');
@@ -394,10 +390,10 @@ test('councilEvaluate: imported evaluation persists the structured research plan
     );
     eq(rows.length, 1);
     eq(rows[0].council_research_plan_hash, out.provenance.researchPlanHash);
-    eq(rows[0].council_research_plan.deal_identity, plannerAdaptation().deal_identity);
+    eq(rows[0].council_research_plan.deal_identity, 'Durable Plan Fixture');
     eq(
       rows[0].council_research_plan.questions.at(-1).search_queries[0],
-      plannerAdaptation().custom_questions[0].search_queries[0],
+      researchAdaptation().custom_questions[0].search_queries[0],
     );
   }));
 
@@ -414,7 +410,7 @@ test('councilEvaluate: concurrent identical clicks share one in-flight run', asy
       councilEvaluate({ company: 'Concurrent Co' }, options),
       councilEvaluate({ company: 'Concurrent Co' }, options),
     ]);
-    eq(fake.calls.length, 6, 'only one set of stages ran');
+    eq(fake.calls.length, 5, 'only one set of stages ran');
     ok(first.reusedInFlight || second.reusedInFlight, 'one click joined the active run');
     eq(readdirSync(dealLogDir).filter(file => file.endsWith('.md')).length, 1, 'one artifact written');
   }));
