@@ -6,6 +6,7 @@
 //
 // Options we rely on (all confirmed in sdk.d.ts):
 //   - model:      per-call model id (per-stage tiering)
+//   - effort:     per-call reasoning depth for narrow deterministic stages
 //   - env:        REPLACES the subprocess env wholesale — this is where the
 //                 credential invariant is enforced (see buildSubprocessEnv)
 //   - tools:      string[] of built-in tools, or [] to disable
@@ -169,6 +170,7 @@ export class AgentSdkProvider {
     if (req.outputFormat) options.outputFormat = req.outputFormat;
     if (req.agents) options.agents = req.agents; // subagent defs (per-persona models)
     if (typeof req.maxTurns === 'number') options.maxTurns = req.maxTurns;
+    if (req.effort) options.effort = req.effort;
     if (this.cwd) options.cwd = this.cwd;
 
     if (req.signal) {

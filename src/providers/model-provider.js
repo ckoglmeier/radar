@@ -49,6 +49,8 @@
  *   haiku) is expressed. Optional.
  * @property {number} [maxTurns]
  *   Upper bound on assistant turns before the session is forced to stop.
+ * @property {'low'|'medium'|'high'|'xhigh'|'max'} [effort]
+ *   SDK reasoning effort for the session. Omit to use the SDK default.
  * @property {AbortSignal} [signal]
  *   Cancellation signal for the session.
  */

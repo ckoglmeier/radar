@@ -20,13 +20,20 @@ function sectionBody(content, sectionName, nextSectionName) {
   return match?.[1] || null;
 }
 
-function dimensionScores(body) {
-  const scores = new Map();
+function dimensionChoices(body) {
+  const choices = new Map();
   for (const line of body.split('\n')) {
-    const match = line.match(/^\s*-\s+(?:\*{0,2})([^:*]+?)(?:\*{0,2})\s*:\s*(\d+(?:\.\d+)?)\s*\/\s*5\b/i);
-    if (match) scores.set(normalizeName(match[1]), Number(match[2]));
+    const match = line.match(
+      /^\s*-\s+(?:\*{0,2})([^:*]+?)(?:\*{0,2})\s*:\s*(\d+(?:\.\d+)?)\s*\/\s*5\b(?:\s*[—-]\s*(.*?))?(?:\s+\(points?:[^)]*\))?\s*$/i,
+    );
+    if (match) {
+      choices.set(normalizeName(match[1]), {
+        likert: Number(match[2]),
+        rationale: String(match[3] || '').trim(),
+      });
+    }
   }
-  return scores;
+  return choices;
 }
 
 function verdictFor(total, bands) {
@@ -86,32 +93,28 @@ export function scoreCouncilChoices(choices, rubric) {
   };
 }
 
-/**
- * Recompute the canonical Council score from the model's dimension choices.
- * Throws when a required dimension is absent or outside the configured scale.
- */
-export function scoreCouncilArtifact(content, rubric) {
+export function parseCouncilChoices(content, rubric) {
   const choices = [];
   for (let index = 0; index < rubric.sections.length; index++) {
     const section = rubric.sections[index];
     const nextSection = rubric.sections[index + 1];
     const body = sectionBody(content, section.name, nextSection?.name);
     if (!body) throw new Error(`Council artifact is missing the ${section.name} section`);
-
-    const sectionChoices = dimensionScores(body);
+    const parsed = dimensionChoices(body);
     for (const dimension of section.dimensions || []) {
-      const likert = sectionChoices.get(normalizeName(dimension.name));
-      const [minimum, maximum] = dimension.scale || [1, 5];
-      if (likert == null) {
-        throw new Error(`Council artifact is missing the ${dimension.name} score`);
-      }
-      if (likert < minimum || likert > maximum) {
-        throw new Error(
-          `Council artifact score for ${dimension.name} must be ${minimum}–${maximum}`,
-        );
-      }
-      choices.push({ name: dimension.name, likert });
+      const choice = parsed.get(normalizeName(dimension.name));
+      if (!choice) throw new Error(`Council artifact is missing the ${dimension.name} score`);
+      choices.push({ name: dimension.name, ...choice });
     }
   }
-  return scoreCouncilChoices(choices, rubric);
+  scoreCouncilChoices(choices, rubric);
+  return choices;
+}
+
+/**
+ * Recompute the canonical Council score from the model's dimension choices.
+ * Throws when a required dimension is absent or outside the configured scale.
+ */
+export function scoreCouncilArtifact(content, rubric) {
+  return scoreCouncilChoices(parseCouncilChoices(content, rubric), rubric);
 }

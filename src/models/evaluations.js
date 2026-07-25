@@ -351,16 +351,19 @@ async function runDealLogImport(dir, opts = {}) {
       if (pipeline_status === 'committed' || pipeline_status === 'invested') invested = true;
 
       // Insert
-      await query(
+      const inserted = await query(
         `INSERT INTO deal_evaluations
            (investment_id, pipeline_invite_id, eval_date, file_path, thesis_fit_score, viability_score, total_score, verdict, invested,
             council_bull_score, council_bear_score, council_calibrator_score, council_spread, council_consensus, council_divergence, council_cfo_verdict,
             eval_mode, raw_content, company_name, council_policy, council_policy_version, council_instruction_hash,
             council_lens_hash, council_calibration_hash, council_input_hash, council_artifact_hash,
             council_session_id, council_model_policy, council_research_plan_hash, council_research_plan,
-            council_score_adjusted, council_run_key, council_run_type)
+            council_score_adjusted, council_run_key, council_run_type,
+            council_dimension_scores, council_evidence_assessments, council_parent_evaluation_id,
+            council_rubric_snapshot)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-                 $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)`,
+                 $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
+         RETURNING id`,
         [
           investment_id,
           pipeline_invite_id,
@@ -395,8 +398,39 @@ async function runDealLogImport(dir, opts = {}) {
           Boolean(parsed.score_validation?.adjusted),
           provenance.runKey || null,
           provenance.runType || null,
+          provenance.dimensionScores ? JSON.stringify(provenance.dimensionScores) : null,
+          provenance.evidenceAssessments ? JSON.stringify(provenance.evidenceAssessments) : null,
+          provenance.parentEvaluationId || null,
+          provenance.rubricSnapshot ? JSON.stringify(provenance.rubricSnapshot) : null,
         ]
       );
+      const evaluationId = inserted[0]?.id;
+      if (evaluationId && pipeline_invite_id && Array.isArray(provenance.followupQuestions)) {
+        for (const [index, question] of provenance.followupQuestions.entries()) {
+          await query(
+            `INSERT INTO council_followup_questions
+               (pipeline_invite_id, evaluation_id, question_key, question, why_it_matters,
+                rubric_dimension, priority, current_likert, upside_likert, downside_likert,
+                upside_points, downside_points)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             ON CONFLICT (evaluation_id, question_key) DO NOTHING`,
+            [
+              pipeline_invite_id,
+              evaluationId,
+              question.question_id || `question-${index + 1}`,
+              question.question,
+              question.why_it_matters || null,
+              question.rubric_dimension || null,
+              question.priority || 'helpful',
+              question.current_likert ?? null,
+              question.upside_likert ?? null,
+              question.downside_likert ?? null,
+              question.upside_points ?? null,
+              question.downside_points ?? null,
+            ],
+          );
+        }
+      }
 
       results.imported++;
       results.details.push({
@@ -408,6 +442,7 @@ async function runDealLogImport(dir, opts = {}) {
         invested,
         total_score: parsed.total_score,
         verdict: parsed.verdict,
+        evaluation_id: evaluationId,
         score_adjusted: Boolean(parsed.score_validation?.adjusted),
       });
     } catch (err) {
@@ -447,7 +482,11 @@ export async function evaluationHistoryForInvite(inviteId) {
     `SELECT de.*
      FROM deal_evaluations de
      WHERE de.pipeline_invite_id = $1
-     ORDER BY de.eval_date DESC NULLS LAST, de.created_at ASC, de.id ASC`,
+     ORDER BY de.eval_date DESC NULLS LAST,
+              CASE WHEN de.council_run_type = 'followup' THEN 0 ELSE 1 END,
+              CASE WHEN de.council_run_type = 'followup' THEN de.created_at END DESC,
+              de.created_at ASC,
+              de.id ASC`,
     [inviteId]
   );
   return rows.map(resolveEvalContent);

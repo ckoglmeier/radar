@@ -61,7 +61,7 @@ function loadRolePrompt(stage) {
   return _rolePrompts.get(stage);
 }
 
-export const COUNCIL_POLICY_VERSION = 6;
+export const COUNCIL_POLICY_VERSION = 7;
 const EXPLICIT_PIPELINE_VERSION = 'sonnet-seeded-research-v1';
 const RESEARCH_PLAN_SEED_VERSION = 'baseline-v1';
 const inFlightRuns = new Map();
@@ -106,22 +106,64 @@ const GRADER_SCHEMA = {
   additionalProperties: false,
 };
 
+const EVIDENCE_ASSESSMENT_ARRAY = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      sufficiency: { type: 'string', enum: ['strong', 'partial', 'thin'] },
+      rationale: { type: 'string' },
+      missing_evidence: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['name', 'sufficiency', 'rationale', 'missing_evidence'],
+    additionalProperties: false,
+  },
+};
+
+const FOLLOWUP_QUESTION_ARRAY = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      question_id: { type: 'string' },
+      question: { type: 'string' },
+      why_it_matters: { type: 'string' },
+      rubric_dimension: { type: 'string' },
+      upside_likert: { type: 'number', minimum: 1, maximum: 5 },
+      downside_likert: { type: 'number', minimum: 1, maximum: 5 },
+      priority: { type: 'string', enum: ['critical', 'helpful'] },
+    },
+    required: [
+      'question_id',
+      'question',
+      'why_it_matters',
+      'rubric_dimension',
+      'upside_likert',
+      'downside_likert',
+      'priority',
+    ],
+    additionalProperties: false,
+  },
+};
+
 const CALIBRATOR_SCHEMA = {
   type: 'object',
   properties: {
     dimension_scores: DIMENSION_ARRAY,
+    evidence_assessments: EVIDENCE_ASSESSMENT_ARRAY,
     key_argument: { type: 'string' },
     kill_criteria: { type: 'string' },
     primary_thesis: { type: 'string' },
     moves_up: { type: 'array', items: { type: 'string' } },
     moves_down: { type: 'array', items: { type: 'string' } },
     net_assessment: { type: 'string' },
-    key_questions: { type: 'array', items: { type: 'string' } },
+    key_questions: FOLLOWUP_QUESTION_ARRAY,
     email: { type: 'string' },
     linkedin: { type: 'string' },
   },
   required: [
-    'dimension_scores', 'key_argument', 'kill_criteria', 'primary_thesis',
+    'dimension_scores', 'evidence_assessments', 'key_argument', 'kill_criteria', 'primary_thesis',
     'moves_up', 'moves_down', 'net_assessment', 'key_questions', 'email', 'linkedin',
   ],
   additionalProperties: false,
@@ -392,6 +434,10 @@ const STAGE_PROMPTS = {
     'STAGE: calibrator\nPerform only calibration. Reconcile the frozen Bull and Bear outputs against ' +
     'the authoritative rubric and calibration examples. Do not search or add facts. Return exactly one ' +
     '1–5 Likert choice for every rubric dimension, using each dimension name exactly as written. ' +
+    'Separately rate evidence sufficiency for every dimension as strong, partial, or thin; do not use ' +
+    'evidence sufficiency as a synonym for investment quality. Return no more than five founder follow-up ' +
+    'questions. Each question must name one primary rubric dimension and the plausible 1–5 score if the ' +
+    'founder answer confirms or weakens the current case. Ask for concrete facts, not opinions. ' +
     'Radar—not you—will calculate weighted points and the verdict.',
   cfo:
     'STAGE: cfo\nPerform only the portfolio-construction decision. Do not re-score or add facts. ' +
@@ -487,6 +533,74 @@ function decisionResearchPacket(research) {
   };
 }
 
+function normalizedDimensionName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[–—]/g, '-')
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function enrichCalibratorData(data, rubric) {
+  const expected = rubric.sections.flatMap(section => section.dimensions || []);
+  const expectedByName = new Map(
+    expected.map(dimension => [normalizedDimensionName(dimension.name), dimension.name]),
+  );
+  const choicesByName = new Map(
+    data.dimension_scores.map(choice => [normalizedDimensionName(choice.name), choice]),
+  );
+  const assessments = data.evidence_assessments || [];
+  if (assessments.length !== expected.length) {
+    throw new Error(`Council output must assess evidence for exactly ${expected.length} dimensions`);
+  }
+  const seenAssessments = new Set();
+  const evidenceAssessments = assessments.map(assessment => {
+    const key = normalizedDimensionName(assessment.name);
+    const canonicalName = expectedByName.get(key);
+    if (!canonicalName || seenAssessments.has(key)) {
+      throw new Error(`Council evidence assessment has an unknown or repeated dimension: ${assessment.name}`);
+    }
+    seenAssessments.add(key);
+    return { ...assessment, name: canonicalName };
+  });
+
+  if ((data.key_questions || []).length > 5) {
+    throw new Error('Council output must contain no more than five founder follow-up questions');
+  }
+  const canonical = scoreCouncilChoices(data.dimension_scores, rubric);
+  const seenQuestions = new Set();
+  const followupQuestions = (data.key_questions || []).map(question => {
+    const key = normalizedDimensionName(question.rubric_dimension);
+    const canonicalName = expectedByName.get(key);
+    if (!canonicalName) {
+      throw new Error(`Council follow-up question names an unknown dimension: ${question.rubric_dimension}`);
+    }
+    if (!question.question_id || seenQuestions.has(question.question_id)) {
+      throw new Error(`Council follow-up question has a missing or repeated id: ${question.question_id}`);
+    }
+    seenQuestions.add(question.question_id);
+    const currentLikert = Number(choicesByName.get(key)?.likert);
+    const scoreAt = likert => scoreCouncilChoices(
+      data.dimension_scores.map(choice => (
+        normalizedDimensionName(choice.name) === key ? { ...choice, likert } : choice
+      )),
+      rubric,
+    ).totalScore;
+    return {
+      ...question,
+      rubric_dimension: canonicalName,
+      current_likert: currentLikert,
+      upside_points: scoreAt(Number(question.upside_likert)) - canonical.totalScore,
+      downside_points: scoreAt(Number(question.downside_likert)) - canonical.totalScore,
+    };
+  });
+
+  return {
+    ...data,
+    evidence_assessments: evidenceAssessments,
+    key_questions: followupQuestions,
+  };
+}
+
 function slug(value) {
   return String(value || 'deal').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
@@ -513,6 +627,21 @@ function renderArtifact({ deal, planner, research, bull, bear, calibrator, cfo, 
     return `- **${question.question_id}** [${question.coverage_area}; ${dimensions}] ${question.question}`;
   }).join('\n');
   const list = items => (items || []).map(item => `- ${item}`).join('\n');
+  const evidenceSufficiency = (calibrator.evidence_assessments || []).map(assessment => {
+    const missing = (assessment.missing_evidence || []).length > 0
+      ? ` Missing: ${assessment.missing_evidence.join('; ')}.`
+      : '';
+    return `- **${assessment.name}: ${assessment.sufficiency}** — ${assessment.rationale}${missing}`;
+  }).join('\n');
+  const founderQuestions = (calibrator.key_questions || []).map(question => {
+    const upside = Number(question.upside_points || 0);
+    const downside = Number(question.downside_points || 0);
+    const impact = [
+      `${question.current_likert}→${question.upside_likert} (${upside >= 0 ? '+' : ''}${upside} points)`,
+      `${question.current_likert}→${question.downside_likert} (${downside >= 0 ? '+' : ''}${downside} points)`,
+    ].join(' / ');
+    return `- **${question.question_id}** [${question.priority}; ${question.rubric_dimension}; ${impact}] ${question.question} — ${question.why_it_matters}`;
+  }).join('\n');
   const timestamp = new Date().toISOString();
   const date = timestamp.slice(0, 10);
   return {
@@ -545,6 +674,9 @@ ${research.team_dossier}
 ## Company Context
 ${research.company_context}
 
+## Evidence Sufficiency
+${evidenceSufficiency}
+
 ## Gates
 Kill criteria: ${calibrator.kill_criteria}
 Primary thesis: ${calibrator.primary_thesis}
@@ -572,7 +704,7 @@ ${list(calibrator.moves_down)}
 ${calibrator.net_assessment}
 
 ## Key Questions
-${list(calibrator.key_questions)}
+${founderQuestions}
 
 ## Draft Response
 **Email:** ${calibrator.email}
@@ -1023,6 +1155,7 @@ export async function councilEvaluate(deal, opts = {}) {
       schema: CALIBRATOR_SCHEMA,
       maxTurns: turnPolicy.judgment,
     }), runtime);
+    calibrator.data = enrichCalibratorData(calibrator.data, lens.rubric);
     const canonical = scoreCouncilChoices(calibrator.data.dimension_scores, lens.rubric);
 
     const cfoDecisionSummary = {
@@ -1085,6 +1218,10 @@ export async function councilEvaluate(deal, opts = {}) {
         ...provenance,
         sessionId: result.sessionId,
         modelPolicy: policy,
+        dimensionScores: calibrator.data.dimension_scores,
+        evidenceAssessments: calibrator.data.evidence_assessments,
+        followupQuestions: calibrator.data.key_questions,
+        rubricSnapshot: lens.rubric,
         artifactHashes: { [artifact.filename]: hash(artifact.content) },
       },
     };

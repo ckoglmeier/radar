@@ -46,6 +46,15 @@ function dimensionScores(likert) {
   return DIMENSIONS.map(name => ({ name, likert, rationale: `${name} rationale` }));
 }
 
+function evidenceAssessments() {
+  return DIMENSIONS.map((name, index) => ({
+    name,
+    sufficiency: index === 0 ? 'thin' : 'strong',
+    rationale: `${name} evidence rationale`,
+    missing_evidence: index === 0 ? ['Founder confirmation'] : [],
+  }));
+}
+
 function researchPlan() {
   return {
     deal_identity: 'Acme Autonomy, industrial robotics company',
@@ -110,13 +119,22 @@ function fakeProvider({ delay = 0 } = {}) {
         bear: { dimension_scores: dimensionScores(2), key_argument: 'Bear case' },
         calibrator: {
           dimension_scores: dimensionScores(3),
+          evidence_assessments: evidenceAssessments(),
           key_argument: 'Calibrated case',
           kill_criteria: 'No kill criteria triggered',
           primary_thesis: 'Primary thesis',
           moves_up: ['More proof'],
           moves_down: ['Less proof'],
           net_assessment: 'Balanced',
-          key_questions: ['What is retention?'],
+          key_questions: [{
+            question_id: 'retention-proof',
+            question: 'What is current net revenue retention?',
+            why_it_matters: 'Retention determines whether the model compounds.',
+            rubric_dimension: 'Compounding structure',
+            upside_likert: 5,
+            downside_likert: 2,
+            priority: 'critical',
+          }],
           email: 'Email draft',
           linkedin: 'LinkedIn draft',
         },
@@ -253,7 +271,7 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     eq(out.usage.outputTokens, 100, 'aggregates output usage');
     eq(out.usage.totalCostUsd, 0.05, 'aggregates direct API cost');
     eq(out.stageMetrics.length, 6, 'returns per-stage usage');
-    eq(out.provenance.policyVersion, 6);
+    eq(out.provenance.policyVersion, 7);
     ok(out.provenance.instructionHash && out.provenance.lensHash, 'provenance fingerprints');
     eq(out.provenance.researchPlanSeedVersion, 'baseline-v1');
     ok(out.provenance.researchPlanSeedHash, 'fingerprints the deterministic seed plan');
@@ -261,10 +279,16 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     eq(out.provenance.researchPlan.questions.length, 10, 'persists baseline plus one custom question');
     eq(out.provenance.researchPlan.priority_question_ids[0], 'baseline-identity-status');
     eq(out.provenance.researchPlan.questions.at(-1).question_id, 'custom-safety-certification');
+    eq(out.provenance.evidenceAssessments.length, 9, 'persists evidence sufficiency by dimension');
+    eq(out.provenance.followupQuestions[0].current_likert, 3);
+    eq(out.provenance.followupQuestions[0].upside_points, 3, 'Radar computes question upside');
+    eq(out.provenance.followupQuestions[0].downside_points, -1, 'Radar computes question downside');
     eq(out.writtenFiles.length, 1);
     eq(stages.join(','), 'research,bull_bear,calibrator,cfo,finalizing', 'reported durable UI stages');
     const artifact = readFileSync(join(dealLogDir, out.writtenFiles[0]), 'utf8');
     ok(artifact.includes('## Research Plan'), 'artifact records the research plan');
+    ok(artifact.includes('## Evidence Sufficiency'), 'artifact separates evidence confidence');
+    ok(artifact.includes('retention-proof'), 'artifact records actionable founder questions');
     ok(artifact.includes('## Council Evaluation'), 'Radar wrote Council table');
     ok(artifact.includes('| Calibrator | 30/50 |'), 'Radar computed the canonical total');
   }));
@@ -383,7 +407,8 @@ test('councilEvaluate: imported evaluation persists the structured research plan
     });
     eq(imported.imported, 1);
     const rows = await query(
-      `SELECT council_research_plan_hash, council_research_plan
+      `SELECT id, council_research_plan_hash, council_research_plan,
+              council_dimension_scores, council_evidence_assessments, council_rubric_snapshot
        FROM deal_evaluations
        WHERE file_path = $1`,
       [join(dealLogDir, out.writtenFiles[0])],
@@ -395,6 +420,9 @@ test('councilEvaluate: imported evaluation persists the structured research plan
       rows[0].council_research_plan.questions.at(-1).search_queries[0],
       researchAdaptation().custom_questions[0].search_queries[0],
     );
+    eq(rows[0].council_dimension_scores.length, 9);
+    eq(rows[0].council_evidence_assessments.length, 9);
+    eq(rows[0].council_rubric_snapshot.total_points, 50);
   }));
 
 test('councilEvaluate: concurrent identical clicks share one in-flight run', async () =>

@@ -284,6 +284,13 @@ async function run() {
     eq(fake.calls[0].options.model, 'claude-opus-4-8');
   });
 
+  await testAsync('per-call effort is forwarded to the SDK', async () => {
+    const fake = makeFakeQuery();
+    const p = new AgentSdkProvider({ authMode: 'api_key', parentEnv: {}, query: fake });
+    await p.runSession({ prompt: 'x', effort: 'low' });
+    eq(fake.calls[0].options.effort, 'low');
+  });
+
   await testAsync('default model is used when request omits model', async () => {
     const fake = makeFakeQuery();
     const p = new AgentSdkProvider({ authMode: 'api_key', parentEnv: {}, defaultModel: 'claude-sonnet-5', query: fake });

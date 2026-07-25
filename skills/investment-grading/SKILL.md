@@ -18,6 +18,7 @@ Treat those injected inputs as authoritative.
 - Prevent Bull, Bear, Calibrator, and portfolio action from adding research.
 - Let models choose 1–5 rubric values; let Radar compute points and verdicts.
 - Keep independent evidence, judgment, and deterministic arithmetic separate.
+- Report evidence sufficiency separately from investment attractiveness.
 - Mark missing information rather than inventing it.
 - Keep every output concise enough to serve a decision.
 
@@ -27,6 +28,8 @@ Radar loads only the contract required for the active stage:
 
 - Research: [references/research.md](references/research.md) — adapt Radar's
   deterministic question bank and execute the baseline plus deal-specific gaps
+- Founder follow-up: [references/followup.md](references/followup.md) — apply
+  answered questions only to affected dimensions without new research
 - Bull: [references/bull.md](references/bull.md)
 - Bear: [references/bear.md](references/bear.md)
 - Calibrator: [references/calibrator.md](references/calibrator.md)
@@ -44,9 +47,11 @@ Council's cost, consistency, and provenance contract.
 3. Freeze the sourced Evidence Ledger, Team Dossier, and Company Context.
 4. Run Bull and Bear independently against the same ledger and rubric.
 5. Reconcile their choices against the rubric and investor calibration.
-6. Have Radar calculate canonical scores and the verdict.
-7. Produce the compact portfolio action requested by Radar.
-8. Let Radar render and persist the deal-log artifact.
+6. Turn material evidence gaps into concrete founder follow-up questions with
+   explicit rubric impact.
+7. Have Radar calculate canonical scores and the verdict.
+8. Produce the compact portfolio action requested by Radar.
+9. Let Radar render and persist the deal-log artifact.
 
 ## Evidence and uncertainty
 
