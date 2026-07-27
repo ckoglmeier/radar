@@ -573,6 +573,7 @@ async function run() {
     // must be excluded by TYPE regardless of linkage.
     await insertCashFlow(alphaId, 'deposit', 12345, '1995-07-01');
     await insertCashFlow(alphaId, 'withdrawal', -2345, '1995-07-02');
+    await insertCashFlow(null, 'investment', -4567, '1995-08-01');
 
     await test('portfolioSummary excludes fund positions (total_invested still 29000)', async () => {
       const { summary: s2 } = await portfolioSummary(OPTS);
@@ -588,13 +589,14 @@ async function run() {
       }
     });
 
-    await test('cashFlowsInRange excludes deposits/withdrawals and fund flows', async () => {
+    await test('cashFlowsInRange excludes transfers, fund flows, and unlinked rows', async () => {
       const cf = await cashFlowsInRange('1995-01-01', '1996-12-31');
-      // Direct fixture flows only: no 12345 deposit, no 2345 withdrawal, no 7000 fund call.
+      // Direct fixture flows only: no transfers, fund call, or orphan ledger row.
       if (cf.cash_in >= 12345) throw new Error(`deposit counted as cash_in: ${cf.cash_in}`);
       const directOut = cf.cash_out;
       const withFund = directOut >= 7000 + 29000;
       if (withFund) throw new Error(`fund capital call counted as deployed: ${directOut}`);
+      if (directOut >= 4567 + 29000) throw new Error(`unlinked investment counted as deployed: ${directOut}`);
     });
 
     await test('computeWindowMetrics: contributions are not gains (Modified Dietz)', async () => {

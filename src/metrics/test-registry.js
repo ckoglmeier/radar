@@ -187,12 +187,26 @@ try {
       [],
     );
 
+    // Unlinked ledger rows are real intake records, but cannot be attributed
+    // to the direct portfolio until they are matched to a position.
+    await insertFlow(null, '2026-05-01', 'investment', -999);
+
     const deployed = await metricQuery({
       metric: 'deployed',
       window: { since: '2023-01-01', until: '2026-07-22' },
     });
+    const deployedByVintage = await metricQuery({
+      metric: 'deployed',
+      groupBy: ['vintage'],
+      window: { since: '2023-01-01', until: '2026-07-22' },
+    });
     const existingFlows = await cashFlowsInRange('2023-01-01', '2026-07-22');
     assert.equal(deployed.rows[0].value, existingFlows.cash_out);
+    assert.equal(
+      deployed.rows[0].value,
+      deployedByVintage.rows.reduce((sum, row) => sum + row.value, 0),
+      'scalar and grouped deployed totals use the same linked-position scope',
+    );
     assert.equal(deployed.rows[0].value, 350, 'fund cash flow is excluded');
 
     assert.deepEqual(scalarTvpi.rows[0].coverage, {

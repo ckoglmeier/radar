@@ -46,10 +46,10 @@ export async function cashFlowsInRange(startDate, endDate) {
       COALESCE(SUM(CASE WHEN cf.amount > 0 THEN cf.amount ELSE 0 END), 0) AS cash_in,
       COALESCE(SUM(CASE WHEN cf.amount < 0 THEN ABS(cf.amount) ELSE 0 END), 0) AS cash_out
     FROM cash_flows cf
-    LEFT JOIN investments i ON i.id = cf.investment_id
+    JOIN investments i ON i.id = cf.investment_id
     WHERE cf.flow_date BETWEEN $1 AND $2
       AND cf.type IN ('investment', 'distribution', 'refund')
-      AND COALESCE(i.asset_class, 'direct') = 'direct'
+      AND i.asset_class = 'direct'
   `, [startDate, endDate]);
   return {
     cash_in: Number(rows[0].cash_in),
@@ -254,9 +254,9 @@ export async function performanceWindows() {
         COALESCE(SUM(CASE WHEN cf.amount < 0 THEN ABS(cf.amount) ELSE 0 END), 0) AS deployed,
         COALESCE(SUM(CASE WHEN cf.amount > 0 THEN cf.amount ELSE 0 END), 0) AS distributions
       FROM cash_flows cf
-      LEFT JOIN investments i ON i.id = cf.investment_id
+      JOIN investments i ON i.id = cf.investment_id
       WHERE cf.type IN ('investment', 'distribution', 'refund')
-        AND COALESCE(i.asset_class, 'direct') = 'direct'
+        AND i.asset_class = 'direct'
       GROUP BY date_trunc('quarter', cf.flow_date)
     )
     SELECT
