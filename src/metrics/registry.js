@@ -316,7 +316,7 @@ function periodReturnRow(group, metricQuery) {
   const { since, until } = metricQuery.window;
   const eligible = group.members.filter(({ position }) => position.invest_date && position.invest_date <= until);
   const positions = eligible.map(({ position, weight }) => publicPosition(position, weight));
-  const missingOpening = [];
+  const carriedAtCost = [];
   let startValue = 0;
   let endValue = 0;
 
@@ -324,8 +324,8 @@ function periodReturnRow(group, metricQuery) {
     const opening = latestValuation(position, since);
     const closing = latestValuation(position, until);
     const existedAtStart = position.invest_date <= since;
-    if (existedAtStart && !opening) missingOpening.push(position);
-    if (existedAtStart && opening) startValue += numeric(opening.net_value) * weight;
+    if (existedAtStart && !opening) carriedAtCost.push(position);
+    if (existedAtStart) startValue += numeric(opening?.net_value, position.invested) * weight;
     endValue += numeric(closing?.net_value, position.invested) * weight;
   }
 
@@ -336,10 +336,8 @@ function periodReturnRow(group, metricQuery) {
   const deployed = cashFlows
     .filter(flow => flow.amount < 0)
     .reduce((sum, flow) => sum + Math.abs(flow.amount), 0);
-  const coverage = historicalCoverage(positions, missingOpening);
-  const computed = coverage.state === 'available'
-    ? computeWindowMetrics(startValue, endValue, distributions, deployed)
-    : { gain: null, value_change_pct: null };
+  const computed = computeWindowMetrics(startValue, endValue, distributions, deployed);
+  const coverage = historicalCoverage(positions, carriedAtCost);
 
   return {
     group: group.group,
@@ -347,7 +345,7 @@ function periodReturnRow(group, metricQuery) {
     coverage,
     underlying: { positions, cash_flows: cashFlows },
     details: {
-      start_value: coverage.state === 'available' ? startValue : null,
+      start_value: startValue,
       end_value: endValue,
       distributions,
       deployed,

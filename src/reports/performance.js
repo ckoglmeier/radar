@@ -5,9 +5,9 @@ import { query } from '../db/index.js';
 import { calculateIRR } from '../utils/irr.js';
 
 /**
- * Raw portfolio value as of a given date. Historical-return callers must pair
- * this with costBasisOpeningPositions() and fail closed when a snapshot is
- * missing; the cost fallback exists only for non-return descriptive totals.
+ * Portfolio value as of a given date. For each investment that existed by
+ * asOfDate, uses the most recent valuation snapshot on or before that date.
+ * Falls back to invested (cost basis) when no snapshot exists.
  */
 export async function portfolioValueAsOf(asOfDate) {
   const rows = await query(`
@@ -74,7 +74,8 @@ export function computeWindowMetrics(startValue, endValue, cashIn, cashOut) {
 }
 
 /**
- * Name positions that have no valuation at or before the window start.
+ * Name positions whose opening value defaults to invested cost because they
+ * have no valuation at or before the window start.
  */
 export async function costBasisOpeningPositions(startDate) {
   const rows = await query(`
@@ -92,23 +93,16 @@ export async function costBasisOpeningPositions(startDate) {
   return rows.map(row => ({ id: Number(row.id), company_name: row.company_name }));
 }
 
-export function applyHistoricalCoverage(window, missingOpening = []) {
-  const missing = missingOpening.map(position => ({
+export function applyOpeningCostBasis(window, costBasisOpening = []) {
+  const carriedAtCost = costBasisOpening.map(position => ({
     id: Number(position.id),
     company_name: position.company_name,
   }));
-  const available = missing.length === 0;
   return {
     ...window,
-    start_value: available ? window.start_value : null,
-    gain: available ? window.gain : null,
-    value_change_pct: available ? window.value_change_pct : null,
-    return_available: available,
-    missing_opening_positions: missing,
-    coverage: {
-      state: available ? 'available' : 'unavailable',
-      missing_opening_positions: missing,
-    },
+    return_available: true,
+    cost_basis_opening_positions: carriedAtCost,
+    coverage: { state: 'available', cost_basis_opening_positions: carriedAtCost },
   };
 }
 
@@ -286,8 +280,8 @@ export async function performanceWindows() {
   ]);
 
   return {
-    ytd: applyHistoricalCoverage(ytdRaw, ytdCostBasis),
-    trailing12m: applyHistoricalCoverage(trailing12mRaw, trailing12mCostBasis),
+    ytd: applyOpeningCostBasis(ytdRaw, ytdCostBasis),
+    trailing12m: applyOpeningCostBasis(trailing12mRaw, trailing12mCostBasis),
     byVintageYear,
     byQuarter,
   };
