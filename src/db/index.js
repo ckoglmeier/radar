@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { AsyncLocalStorage } from 'async_hooks';
+import { assertWorkspaceLease } from './workspace-lease.js';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
@@ -32,6 +33,7 @@ const _pgliteInstances = new Map(); // dataDir → PGlite instance
 
 async function getPgliteInstance(dataDir) {
   if (_pgliteInstances.has(dataDir)) return _pgliteInstances.get(dataDir);
+  assertWorkspaceLease(dataDir);
   const { PGlite } = await import('@electric-sql/pglite');
   const db = new PGlite(dataDir);
   await db.waitReady;
