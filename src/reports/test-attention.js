@@ -146,11 +146,14 @@ async function run() {
       const qsbsItem = report.queues.qsbs.find(item => item.company_name === qsbsCompany);
       eq(qsbsItem.qsbs_5yr_date, '2026-01-15');
       eq(qsbsItem.qsbs_5yr_met, false);
+      eq(qsbsItem.signal_key, `qsbs_window:${qsbs.id}:soon`);
 
       ok(report.queues.quiet_founders.some(item => item.company_name === quietCompany), 'quiet founder should be present');
       const quietItem = report.queues.quiet_founders.find(item => item.company_name === quietCompany);
       eq(quietItem.latest_update_date, '2024-01-01');
       ok(quietItem.days_since_update > 120, 'quiet founder should be over threshold');
+      eq(quietItem.signal_key, `quiet_founder:${quiet.id}:2024-01-01`);
+      ok(report.queues.eval_reconcile.signal_key.startsWith('eval_reconcile:39:'));
 
       ok(
         report.queues.room_capital_calls.some(item => item.cells.company === `Capital Call ${stamp}`),

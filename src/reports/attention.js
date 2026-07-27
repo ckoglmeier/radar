@@ -46,6 +46,7 @@ export async function qsbsWindowItems({ today, windowDays }) {
       const daysUntil = daysBetween(today, qsbsDate);
       return {
         type: 'qsbs_window',
+        signal_key: `qsbs_window:${row.id}:${daysUntil <= 0 ? 'met' : 'soon'}`,
         severity: daysUntil <= 0 ? 'ready' : 'soon',
         investment_id: row.id,
         company_name: row.company_name,
@@ -87,6 +88,7 @@ export async function quietFounderItems({ today, quietDays, limit }) {
       const fallbackDue = row.invest_date ? addDays(row.invest_date, quietDays) : null;
       return {
         type: 'quiet_founder',
+        signal_key: `quiet_founder:${row.investment_id}:${latest || 'none'}`,
         severity: !latest || daysSince >= quietDays * 2 ? 'stale' : 'quiet',
         investment_id: row.investment_id,
         company_name: row.company_name,
@@ -240,6 +242,14 @@ export async function attentionReport(opts = {}) {
     evalReconcile({ threshold: thresholds.reconcile_threshold }),
     roomCapitalCallItems({ limit }),
   ]);
+  const reconcileSignature = [...reconcile.linked, ...reconcile.unlinked]
+    .map(item => `${item.invite_id}:${Number(item.total_score)}`)
+    .sort()
+    .join(',');
+  const keyedReconcile = {
+    ...reconcile,
+    signal_key: `eval_reconcile:${thresholds.reconcile_threshold}:${reconcileSignature}`,
+  };
 
   return {
     generated_at: today,
@@ -247,7 +257,7 @@ export async function attentionReport(opts = {}) {
     queues: {
       qsbs,
       quiet_founders: quietFounders,
-      eval_reconcile: reconcile,
+      eval_reconcile: keyedReconcile,
       room_capital_calls: roomCapitalCalls,
     },
     counts: {

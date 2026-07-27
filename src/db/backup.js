@@ -39,6 +39,7 @@ const INSERT_ORDER = [
   'room_pipeline',
   'room_views',
   'metric_views',
+  'attention_dismissals',
   'company_updates',
   'documents', // provenance artifacts; must follow all 4 of its possible parents (investments, pipeline_invites, company_updates, deal_evaluations) above
   'user_settings',
