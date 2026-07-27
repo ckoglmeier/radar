@@ -1,5 +1,6 @@
 import { query, isPgliteActive } from '../db/index.js';
 import { recomputeInvestmentReturns } from '../import/transactions.js';
+import { normalize } from '../utils/company-names.js';
 
 const CASH_FLOW_ACTIONS = new Set(['ignored', 'fund']);
 
@@ -74,7 +75,7 @@ export async function positionDuplicateGroups() {
   const grouped = new Map();
 
   for (const row of rows) {
-    const nameKey = String(row.company_name || '').trim().toLocaleLowerCase();
+    const nameKey = normalize(row.company_name);
     if (!nameKey) continue;
     const group = grouped.get(nameKey) || [];
     group.push(row);
@@ -187,7 +188,7 @@ export async function consolidatePositions({ targetInvestmentId, sourceInvestmen
   if (positions.some(row => row.asset_class !== 'direct')) {
     throw new Error('Only active direct positions can be consolidated');
   }
-  const names = new Set(positions.map(row => String(row.company_name).trim().toLocaleLowerCase()));
+  const names = new Set(positions.map(row => normalize(row.company_name)));
   if (names.size !== 1) throw new Error('Only positions with the same company name can be consolidated');
   if (!await isPgliteActive()) {
     throw new Error('Position consolidation currently requires a local Radar workspace');
