@@ -8,16 +8,26 @@
 
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import {
   councilEvaluate,
   assembleContext,
   buildBaselineResearchPlan,
   buildCouncilAgents,
 } from './evaluate.js';
+import { loadLens, withLens } from '../lenses/loader.js';
 import { resolveCouncilModels } from '../providers/council-models.js';
 import { importDealLogs } from '../models/evaluations.js';
 import { query } from '../db/index.js';
+
+const TEMPLATE_LENS = loadLens(join(
+  dirname(fileURLToPath(String(import.meta.url))),
+  '..',
+  '..',
+  'lenses',
+  '_template',
+));
 
 let passed = 0, failed = 0;
 const tests = [];
@@ -282,7 +292,7 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     eq(out.provenance.evidenceAssessments.length, 9, 'persists evidence sufficiency by dimension');
     eq(out.provenance.followupQuestions[0].current_likert, 3);
     eq(out.provenance.followupQuestions[0].upside_points, 3, 'Radar computes question upside');
-    eq(out.provenance.followupQuestions[0].downside_points, -1, 'Radar computes question downside');
+    eq(out.provenance.followupQuestions[0].downside_points, -1.5, 'Radar computes question downside');
     eq(out.writtenFiles.length, 1);
     eq(stages.join(','), 'research,bull_bear,calibrator,cfo,finalizing', 'reported durable UI stages');
     const artifact = readFileSync(join(dealLogDir, out.writtenFiles[0]), 'utf8');
@@ -325,8 +335,12 @@ test('councilEvaluate: dry run assembles without a provider or a model call', as
   eq(out.dryRun, true);
   ok(out.requests.research.context.includes('Dry Co'), 'assembled the context');
   ok(out.requests.research.systemPrompt.includes('Council Research Contract'), 'loaded the research role contract');
-  ok(out.requests.research.context.length < out.requests.calibrator.context.length, 'research context is scoped');
-  ok(out.requests.cfo.context.length < out.requests.calibrator.context.length, 'CFO context is scoped');
+  ok(!out.requests.research.context.includes('SCORING LENS'), 'research excludes the scoring lens');
+  ok(!out.requests.research.context.includes('CALIBRATION'), 'research excludes calibration');
+  ok(out.requests.calibrator.context.includes('LENS (authoritative'), 'Calibrator receives the scoring lens');
+  ok(out.requests.calibrator.context.includes('CALIBRATION'), 'Calibrator receives calibration');
+  ok(out.requests.cfo.context.includes('PORTFOLIO POLICY'), 'CFO receives portfolio policy');
+  ok(!out.requests.cfo.context.includes('FROZEN RESEARCH'), 'CFO excludes the research packet');
   eq(Object.keys(out.requests).length, 5, 'previews all enforced stages');
   eq(out.requests.research.model, 'claude-sonnet-4-6');
   eq(out.modelPolicy.calibrator, 'opus');
@@ -462,9 +476,11 @@ test('councilEvaluate: explicit execution id permits a controlled fresh run', as
   ok(first.provenance.runKey !== second.provenance.runKey, 'fresh executions have distinct run keys');
 });
 
-for (const [name, fn] of tests) {
-  try { await fn(); console.log(`  ✓ ${name}`); passed++; }
-  catch (e) { console.log(`  ✗ ${name}: ${e.message}`); failed++; }
-}
+await withLens(TEMPLATE_LENS, async () => {
+  for (const [name, fn] of tests) {
+    try { await fn(); console.log(`  ✓ ${name}`); passed++; }
+    catch (e) { console.log(`  ✗ ${name}: ${e.message}`); failed++; }
+  }
+});
 console.log(`\n  ${passed} passed, ${failed} failed\n`);
 process.exit(failed > 0 ? 1 : 0);
