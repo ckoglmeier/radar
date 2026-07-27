@@ -260,15 +260,15 @@ export function validateMetricPlannerOutput(input) {
   throw new TypeError('metric planner output kind must be query, clarify, or refuse');
 }
 
-export function historicalCoverage(positions, costBasisPositions) {
-  const carriedAtCost = costBasisPositions.map(position => ({
+export function historicalCoverage(positions, missingOpeningPositions) {
+  const missing = missingOpeningPositions.map(position => ({
     id: Number(position.id),
     company_name: position.company_name,
   }));
   return {
-    state: 'available',
+    state: missing.length > 0 ? 'unavailable' : 'available',
     positions: positions.length,
-    cost_basis_opening_positions: carriedAtCost,
+    missing_opening_positions: missing,
   };
 }
 
