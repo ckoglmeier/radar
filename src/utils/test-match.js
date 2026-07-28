@@ -144,6 +144,15 @@ async function runTests() {
       { investment_id: null, confidence: 'ambiguous' });
   });
 
+  test('ambiguous — exact company name has multiple investment lots', async () => {
+    const u = [
+      { id: 102, company_name: 'Multi Lot Systems' },
+      { id: 103, company_name: 'Multi Lot Systems' },
+    ];
+    eq(await matchCompanyToInvestment('Multi Lot Systems', { universe: u }),
+      { investment_id: null, confidence: 'ambiguous' });
+  });
+
   test('ambiguous — two companies share discriminating token with input', async () => {
     const u = [
       { id: 11, company_name: 'Acme Widgets' },
@@ -275,16 +284,16 @@ async function runTests() {
       { investment_id: 502, confidence: 'exact' });
   });
 
-  // ─── ID ordering (earliest wins) ──────────────────────────────────
+  // ─── Duplicate investment lots ────────────────────────────────────
 
-  test('exact match picks first row (lowest id) when duplicates exist', async () => {
+  test('exact duplicate lots require an explicit investment choice', async () => {
     const u = [
       { id: 10, company_name: 'Nexar' },
       { id: 20, company_name: 'Nexar' },
       { id: 30, company_name: 'Nexar' },
     ];
     eq(await matchCompanyToInvestment('Nexar', { universe: u }),
-      { investment_id: 10, confidence: 'exact' });
+      { investment_id: null, confidence: 'ambiguous' });
   });
 
   // ─── Real-world scenarios ──────────────────────────────────────────

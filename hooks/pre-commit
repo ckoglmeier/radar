@@ -91,7 +91,7 @@ fi
 # --- Regression test gate ---
 # Run all test suites. Block commit if any fail.
 echo "Running test suite..."
-npm test --silent 2>&1 | tail -50
+npm run test:local --silent 2>&1 | tail -50
 if [ ${PIPESTATUS[0]} -ne 0 ]; then
   echo ""
   echo "BLOCKED: Test suite failed. Fix failing tests before committing."

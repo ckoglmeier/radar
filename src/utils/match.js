@@ -18,7 +18,17 @@ import { normalize, tokenize, STOPWORDS } from './company-names.js';
  * stable across runs and biased toward the earliest record.
  */
 export async function loadInvestmentUniverse() {
-  return query(`SELECT id, company_name FROM investments ORDER BY id`);
+  return query(`
+    SELECT id, company_name
+      FROM investments
+    UNION ALL
+    SELECT i.id, a.alias AS company_name
+      FROM company_aliases a
+      JOIN investments i
+        ON LOWER(BTRIM(i.company_name)) = LOWER(BTRIM(a.canonical_company_name))
+     WHERE i.asset_class = 'direct'
+     ORDER BY id
+  `);
 }
 
 // Returns { investment_id, confidence } or { investment_id: null, confidence: 'unmatched' }
@@ -34,8 +44,9 @@ export async function matchCompanyToInvestment(companyName, { universe } = {}) {
 
   // Try exact normalized match first
   const all = universe || await query(`SELECT id, company_name FROM investments`);
-  const exact = all.find(r => normalize(r.company_name) === norm);
-  if (exact) return { investment_id: exact.id, confidence: 'exact' };
+  const exact = all.filter(r => normalize(r.company_name) === norm);
+  if (exact.length === 1) return { investment_id: exact[0].id, confidence: 'exact' };
+  if (exact.length > 1) return { investment_id: null, confidence: 'ambiguous' };
 
   // Discriminating-token match (e.g. "NovaStar" in a pipeline invite matches
   // "NovaStar Energy Systems" in the portfolio via shared discriminating token).
