@@ -10,6 +10,7 @@
  */
 
 import { query } from '../db/index.js';
+import { applyFrameworkVersion, getActiveFrameworkVersion } from '../models/framework.js';
 
 /**
  * Map one DB thesis row onto the file-shaped thesis object loadLens() yields.
@@ -99,5 +100,10 @@ export async function loadCloudLens(files) {
     );
   }
 
-  return assembleLens({ files, theses, distributions });
+  const framework = await getActiveFrameworkVersion();
+  return assembleLens({
+    files: applyFrameworkVersion(files, framework),
+    theses,
+    distributions,
+  });
 }
