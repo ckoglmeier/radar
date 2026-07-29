@@ -197,6 +197,9 @@ test('assembleContext: has DEAL/LENS/CALIBRATION and the deal facts + rubric', (
   ok(ctx.includes('CALIBRATION') && ctx.includes('default'), 'calibration injected');
   ok(ctx.includes('COUNCIL RUN CONTRACT'), 'run contract injected');
   ok(ctx.includes('Evidence Ledger'), 'shared evidence requirement injected');
+  ok(ctx.includes('authoritative as the terms presently offered'), 'current private terms keep first-party authority');
+  ok(ctx.includes('source or syndicate presenting access'), 'lead semantics distinguish deal source from company round lead');
+  ok(ctx.includes('older public round does not contradict'), 'historical public financing cannot negate a current offering');
 });
 test('assembleContext: missing deal fields render as Not provided', () => {
   const ctx = assembleContext({ company: 'X', valuation: '' }, { rubric: {}, kill: [], gpTiers: [], theses: [], clusters: [], roundParams: {} }, {});
@@ -225,6 +228,9 @@ test('buildBaselineResearchPlan: creates the same complete question bank without
   eq(first.priority_question_ids.length, 9);
   ok(first.questions.every(question => question.required), 'baseline questions are required');
   ok(first.questions.some(question => question.question.includes('Acme Autonomy')));
+  const financing = first.questions.find(question => question.question_id === 'baseline-financing');
+  ok(financing.question.includes('deal source or syndicate'), 'financing research uses access semantics');
+  ok(financing.disconfirming_evidence.includes('not mere absence'), 'public silence is not disconfirming evidence');
 });
 
 // ---- councilEvaluate (fake provider; needs scratch DB for getCalibration) ----
@@ -255,6 +261,10 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     ok(byStage.research.prompt.includes('zero to three'), 'research identifies deal-specific gaps');
     ok(byStage.research.prompt.includes('[question_id] STATUS'), 'research gets the evidence-line contract');
     ok(byStage.research.prompt.includes('Never infer that something did not happen'), 'research cannot turn search absence into a fact');
+    ok(byStage.research.prompt.includes('authoritative as terms being offered'), 'research preserves current private offering facts');
+    ok(byStage.research.prompt.includes('presenting access'), 'research does not confuse syndicate access with company round lead');
+    ok(byStage.bear.systemPrompt.includes('public silence is not itself adverse evidence'), 'Bear cannot penalize missing public disclosure');
+    ok(byStage.calibrator.systemPrompt.includes('missing public corroboration'), 'Calibrator cannot convert public silence into a conflict');
     ok(!byStage.research.context.includes('CALIBRATION'), 'research does not receive calibration');
     ok(!byStage.research.context.includes('SCORING LENS'), 'research does not receive the scoring lens');
     eq(byStage.research.tools.join(','), 'WebSearch', 'research owns retrieval');
@@ -281,7 +291,7 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     eq(out.usage.outputTokens, 100, 'aggregates output usage');
     eq(out.usage.totalCostUsd, 0.05, 'aggregates direct API cost');
     eq(out.stageMetrics.length, 6, 'returns per-stage usage');
-    eq(out.provenance.policyVersion, 7);
+    eq(out.provenance.policyVersion, 8);
     ok(out.provenance.instructionHash && out.provenance.lensHash, 'provenance fingerprints');
     eq(out.provenance.researchPlanSeedVersion, 'baseline-v1');
     ok(out.provenance.researchPlanSeedHash, 'fingerprints the deterministic seed plan');

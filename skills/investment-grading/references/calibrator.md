@@ -23,6 +23,13 @@ Assess evidence sufficiency separately for every rubric dimension:
 Evidence sufficiency is not investment quality. A weak company can have strong
 evidence, and an attractive company can have thin evidence.
 
+Treat current offering terms in the DEAL block as authoritative evidence of
+what is being offered. The named lead is the deal source or syndicate unless
+the materials explicitly identify an institutional company-round lead. Do not
+let missing public corroboration or a different older public round reduce
+Source quality or create a financing conflict. Reserve that treatment for
+explicitly incompatible evidence about the same event.
+
 Also return:
 
 - the strongest calibrated argument;

@@ -61,7 +61,7 @@ function loadRolePrompt(stage) {
   return _rolePrompts.get(stage);
 }
 
-export const COUNCIL_POLICY_VERSION = 7;
+export const COUNCIL_POLICY_VERSION = 8;
 const EXPLICIT_PIPELINE_VERSION = 'sonnet-seeded-research-v1';
 const RESEARCH_PLAN_SEED_VERSION = 'baseline-v1';
 const inFlightRuns = new Map();
@@ -258,10 +258,10 @@ const BASELINE_RESEARCH_QUESTIONS = Object.freeze([
   {
     question_id: 'baseline-financing',
     coverage_area: 'company_financing',
-    question: 'What can be verified about {company}’s current round, valuation, lead, cumulative financing, and the quality of this deal source?',
+    question: 'What can be established about {company}’s current offered round, valuation, deal source or syndicate, cumulative financing, and the quality of this access?',
     rubric_dimensions: ['Capital efficiency', 'Source quality', 'Portfolio construction fit'],
-    confirming_evidence: 'Round facts and named investors agree across primary or reputable independent sources.',
-    disconfirming_evidence: 'Conflicting round terms, inflated financing claims, weak source connection, or unexplained capitalization.',
+    confirming_evidence: 'The submitted current offering establishes the terms being offered; primary or reputable independent sources may corroborate the company and historical financing.',
+    disconfirming_evidence: 'An explicit same-round incompatibility, weak source connection, or unexplained capitalization—not mere absence from public records.',
     preferred_sources: ['Financing announcements', 'Regulatory filings', 'Lead investor materials', 'Reputable databases and reporting'],
     recency_requirement: 'Prioritize the active or most recent financing.',
     search_queries: ['"{company}" funding round valuation investors', '"{company}" financing lead investor'],
@@ -417,7 +417,11 @@ const STAGE_PROMPTS = {
     'Build one shared factual evidence packet for the deal. ' +
     'Use web search when useful. Return at least one evidence line for every required question ID. Format each line as ' +
     '[question_id] STATUS | narrowly stated fact | event date | source title and publication date | URL. STATUS must be ' +
-    'supplied, verified, conflicting, or unavailable. Verify entity and date before recording a claim; when credible sources ' +
+    'supplied, verified, conflicting, or unavailable. Current private-offering facts in the DEAL block are authoritative as terms ' +
+    'being offered and must remain SUPPLIED even when they are not public. The DEAL lead identifies the source or syndicate ' +
+    'presenting access unless the materials explicitly call it the company round lead. Do not turn a prior public round or the ' +
+    'absence of a public announcement into a conflict with a current private offering. Verify entity and date before recording a ' +
+    'claim; reserve CONFLICTING for an explicit, mutually incompatible claim about the same entity, event, and time period. When credible sources ' +
     'conflict, record both claims instead of choosing silently. Never infer that something did not happen merely because a ' +
     'search did not find it. Keep the team dossier and company context neutral and sourced—no scoring, risk conclusions, or ' +
     'guilt by association. Cover every required baseline and custom question, merge exact duplicates, and stop when further retrieval is unlikely ' +
@@ -733,6 +737,9 @@ function contractBlock(
     `  Input hash: ${provenance.inputHash || hash(deal || {})}`,
     '  Research produces one shared Evidence Ledger. Later roles cannot add facts.',
     '  Models choose 1–5 dimension values. Radar computes points and verdicts.',
+    '  Current DEAL fields are first-party intake evidence and authoritative as the terms presently offered.',
+    '  The DEAL lead is the source or syndicate presenting access unless explicitly identified as the company round lead.',
+    '  Public silence or an older public round does not contradict a current private offering; only an explicit same-event incompatibility does.',
   ];
   if (includeLens) lines.splice(3, 0, `  Lens hash: ${provenance.lensHash || hash(lens || {})}`);
   if (includeCalibration) {

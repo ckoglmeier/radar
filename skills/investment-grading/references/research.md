@@ -49,12 +49,24 @@ rather than reporting every search result.
 
 ## Evidence rules
 
-- Treat supplied claims as claims until independently verified.
+- Treat current private-offering facts supplied in the DEAL block as
+  authoritative evidence of the terms being offered. Label them `Supplied`;
+  independent public corroboration is useful but not required for the offering
+  to exist.
+- Interpret the DEAL `lead` as the source, GP, or syndicate presenting access
+  unless the submitted materials explicitly identify that party as the
+  company's institutional round lead.
+- A prior announced financing and a current private offering are different
+  events. Public silence, an older public valuation, or omission of an SPV or
+  syndicate from the company's cap-table announcements is not a conflict.
+- Use `Conflicting` only when credible evidence makes an explicit, mutually
+  incompatible claim about the same entity, event, and time period.
 - Label every ledger item `Supplied`, `Verified`, `Conflicting`, or
   `Unavailable`.
 - Include a source name or URL in every item.
 - Prefer primary sources and current evidence.
-- Preserve decision-relevant conflicts and absences.
+- Preserve decision-relevant conflicts and unavailable facts without turning
+  search absence into negative evidence.
 - Do not repeat the same fact in multiple forms.
 - Keep synthesis neutral. Do not infer founder quality from a former employer's
   later outcome, assign blame, describe investment risk, or make rubric
