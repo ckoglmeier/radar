@@ -469,6 +469,30 @@ async function runStage(stage, request, runtime) {
   };
 }
 
+async function runValidatedStage(stage, request, runtime, validate) {
+  const first = await runStage(stage, request, runtime);
+  try {
+    first.data = validate(first.data) || first.data;
+    return { outcome: first, rejectedAttempts: [] };
+  } catch (error) {
+    const repaired = await runStage(stage, {
+      ...request,
+      prompt: `${request.prompt}
+
+REPAIR REQUIRED
+Your previous response was invalid: ${error.message}
+Return one complete replacement response. Include every rubric dimension exactly
+once, using the exact dimension names in the scoring lens. Do not discuss the
+repair or omit unchanged dimensions.`,
+    }, runtime);
+    repaired.data = validate(repaired.data) || repaired.data;
+    return {
+      outcome: repaired,
+      rejectedAttempts: [{ ...first, stage: `${stage}_invalid` }],
+    };
+  }
+}
+
 function frozenPlannerStage(snapshot) {
   if (
     !snapshot
@@ -1126,25 +1150,32 @@ export async function councilEvaluate(deal, opts = {}) {
     const graderContext = `${graderBaseContext}\n\nFROZEN RESEARCH PACKET\n${frozenResearch}`;
 
     await notifyStage('bull_bear');
-    const [bull, bear] = await Promise.all([
-      runStage('bull', stageRequest('bull', {
+    const [bullRun, bearRun] = await Promise.all([
+      runValidatedStage('bull', stageRequest('bull', {
         model: policy.bull,
         context: graderContext,
         schema: GRADER_SCHEMA,
         maxTurns: turnPolicy.judgment,
-      }), runtime),
-      runStage('bear', stageRequest('bear', {
+      }), runtime, data => {
+        scoreCouncilChoices(data.dimension_scores, lens.rubric);
+        return data;
+      }),
+      runValidatedStage('bear', stageRequest('bear', {
         model: policy.bear,
         context: graderContext,
         schema: GRADER_SCHEMA,
         maxTurns: turnPolicy.judgment,
-      }), runtime),
+      }), runtime, data => {
+        scoreCouncilChoices(data.dimension_scores, lens.rubric);
+        return data;
+      }),
     ]);
-
-    // Validate both graders before calibration so a malformed or incomplete
-    // dimension list fails closed instead of silently changing the weighting.
-    scoreCouncilChoices(bull.data.dimension_scores, lens.rubric);
-    scoreCouncilChoices(bear.data.dimension_scores, lens.rubric);
+    const bull = bullRun.outcome;
+    const bear = bearRun.outcome;
+    const rejectedAttempts = [
+      ...bullRun.rejectedAttempts,
+      ...bearRun.rejectedAttempts,
+    ];
 
     const calibratorContext = [
       context,
@@ -1156,13 +1187,14 @@ export async function councilEvaluate(deal, opts = {}) {
       JSON.stringify(bear.data),
     ].join('\n\n');
     await notifyStage('calibrator');
-    const calibrator = await runStage('calibrator', stageRequest('calibrator', {
+    const calibratorRun = await runValidatedStage('calibrator', stageRequest('calibrator', {
       model: policy.calibrator,
       context: calibratorContext,
       schema: CALIBRATOR_SCHEMA,
       maxTurns: turnPolicy.judgment,
-    }), runtime);
-    calibrator.data = enrichCalibratorData(calibrator.data, lens.rubric);
+    }), runtime, data => enrichCalibratorData(data, lens.rubric));
+    const calibrator = calibratorRun.outcome;
+    rejectedAttempts.push(...calibratorRun.rejectedAttempts);
     const canonical = scoreCouncilChoices(calibrator.data.dimension_scores, lens.rubric);
 
     const cfoDecisionSummary = {
@@ -1201,7 +1233,7 @@ export async function councilEvaluate(deal, opts = {}) {
     writeFileSync(join(dealLogDir, artifact.filename), artifact.content, 'utf8');
 
     const stages = [planner, research, bull, bear, calibrator, cfo];
-    const usage = aggregateStageUsage(stages);
+    const usage = aggregateStageUsage([...rejectedAttempts, ...stages]);
     const sessionIds = stages.map(stage => stage.result.sessionId).filter(Boolean);
     const result = {
       text: `Council complete: ${artifact.scores.canonical.totalScore}/50 · ${artifact.scores.canonical.verdict}`,

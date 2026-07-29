@@ -108,8 +108,9 @@ function researchAdaptation() {
   };
 }
 
-function fakeProvider({ delay = 0 } = {}) {
+function fakeProvider({ delay = 0, malformedOnceStage = null } = {}) {
   const calls = [];
+  const malformedStages = new Set();
   return {
     calls,
     async runSession(req) {
@@ -150,8 +151,17 @@ function fakeProvider({ delay = 0 } = {}) {
         },
         cfo: { verdict: 'Defer', reason: 'Need more proof' },
       };
-      const structuredOutput = outputs[stage];
+      let structuredOutput = outputs[stage];
       if (!structuredOutput) throw new Error(`unexpected stage ${stage}`);
+      if (stage === malformedOnceStage && !malformedStages.has(stage)) {
+        malformedStages.add(stage);
+        structuredOutput = {
+          ...structuredOutput,
+          dimension_scores: structuredOutput.dimension_scores.filter(
+            choice => choice.name !== 'Structural tailwind',
+          ),
+        };
+      }
       return {
         text: JSON.stringify(structuredOutput),
         structuredOutput,
@@ -322,6 +332,21 @@ test('councilEvaluate: model override flows to the explicit Calibrator stage', a
     );
     const calibrator = fake.calls.find(req => req.prompt.startsWith('STAGE: calibrator'));
     eq(calibrator.model, 'sonnet', 'override applied');
+  }));
+
+test('councilEvaluate: repairs one incomplete rubric response and counts both attempts', async () =>
+  withTempDir(async dealLogDir => {
+    const fake = fakeProvider({ malformedOnceStage: 'bull' });
+    const out = await councilEvaluate(
+      { company: 'Repair Co' },
+      { provider: fake, env: {}, dealLogDir },
+    );
+    const bullCalls = fake.calls.filter(req => req.prompt.startsWith('STAGE: bull'));
+    eq(bullCalls.length, 2, 'retries the malformed grader once');
+    ok(bullCalls[1].prompt.includes('REPAIR REQUIRED'), 'repair call names the validation failure');
+    eq(out.usage.inputTokens, 600, 'usage includes the rejected attempt');
+    eq(out.stageMetrics.length, 7, 'stage metrics retain the rejected attempt');
+    eq(out.stageMetrics[0].stage, 'bull_invalid');
   }));
 
 test('councilEvaluate: identical run fingerprint reuses the stored evaluation', async () => {
