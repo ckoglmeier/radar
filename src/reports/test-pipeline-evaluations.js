@@ -74,12 +74,13 @@ async function insertEvaluation({
   inviteId = null,
   investmentId = null,
   mode = 'standard',
+  runType = null,
 }) {
   const rows = await query(
     `INSERT INTO deal_evaluations
        (company_name, eval_date, total_score, verdict, file_path,
-        pipeline_invite_id, investment_id, eval_mode, raw_content)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        pipeline_invite_id, investment_id, eval_mode, raw_content, council_run_type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING id`,
     [
       company,
@@ -91,6 +92,7 @@ async function insertEvaluation({
       investmentId,
       mode,
       `# Deal Evaluation: ${company}\n\nSource fixture for ${company}.`,
+      runType,
     ]
   );
   return rows[0].id;
@@ -162,6 +164,22 @@ async function run() {
       eq(history[1].id, alphaSameDayRerun);
       eq(history[3].id, alphaOld);
       eq(dateOnly(history[0].eval_date), '2026-03-01');
+    });
+
+    const alphaPolicyRefresh = await insertEvaluation({
+      company: `${PREFIX} Alpha`, date: '2026-03-01', score: 45,
+      path: `/fixtures/2026-03-01-${PREFIX.toLowerCase()}-alpha-policy-refresh.md`,
+      inviteId: alphaId,
+      mode: 'council',
+      runType: 'policy_refresh',
+    });
+    await test('explicit same-day policy refresh becomes canonical', async () => {
+      const rows = await pipelineListWithLatestEval({ limit: 200 });
+      const alpha = rows.find(row => row.id === alphaId);
+      eq(alpha.latest_evaluation.id, alphaPolicyRefresh);
+      eq(Number(alpha.latest_evaluation.total_score), 45);
+      const history = await evaluationHistoryForInvite(alphaId);
+      eq(history[0].id, alphaPolicyRefresh);
     });
 
     const suggestionInviteId = await insertInvite(

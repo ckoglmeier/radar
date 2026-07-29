@@ -62,9 +62,13 @@ export async function pipelineListWithLatestEval({ status, limit = 100 } = {}) {
        FROM deal_evaluations de
        WHERE de.pipeline_invite_id = pi.id
        -- A later evaluation date supersedes an earlier one. On the same date,
-       -- the first completed run stays canonical; reruns remain history and
-       -- never silently replace the score.
-       ORDER BY de.eval_date DESC NULLS LAST, de.created_at ASC, de.id ASC
+       -- ordinary reruns remain history, while an explicit follow-up or policy
+       -- refresh is allowed to replace the canonical assessment.
+       ORDER BY de.eval_date DESC NULLS LAST,
+                CASE WHEN de.council_run_type IN ('followup', 'policy_refresh') THEN 0 ELSE 1 END,
+                CASE WHEN de.council_run_type IN ('followup', 'policy_refresh') THEN de.created_at END DESC,
+                de.created_at ASC,
+                de.id ASC
        LIMIT 1
      ) latest ON TRUE
      ${where}

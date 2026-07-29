@@ -483,8 +483,8 @@ export async function evaluationHistoryForInvite(inviteId) {
      FROM deal_evaluations de
      WHERE de.pipeline_invite_id = $1
      ORDER BY de.eval_date DESC NULLS LAST,
-              CASE WHEN de.council_run_type = 'followup' THEN 0 ELSE 1 END,
-              CASE WHEN de.council_run_type = 'followup' THEN de.created_at END DESC,
+              CASE WHEN de.council_run_type IN ('followup', 'policy_refresh') THEN 0 ELSE 1 END,
+              CASE WHEN de.council_run_type IN ('followup', 'policy_refresh') THEN de.created_at END DESC,
               de.created_at ASC,
               de.id ASC`,
     [inviteId]
@@ -521,7 +521,11 @@ export async function getEvaluationByCompany(search) {
      FROM deal_evaluations de
      LEFT JOIN investments i ON de.investment_id = i.id
      WHERE de.company_name ILIKE $1
-     ORDER BY de.eval_date DESC NULLS LAST, de.created_at ASC, de.id ASC
+     ORDER BY de.eval_date DESC NULLS LAST,
+              CASE WHEN de.council_run_type IN ('followup', 'policy_refresh') THEN 0 ELSE 1 END,
+              CASE WHEN de.council_run_type IN ('followup', 'policy_refresh') THEN de.created_at END DESC,
+              de.created_at ASC,
+              de.id ASC
      LIMIT 1`,
     [`%${search}%`]
   );
