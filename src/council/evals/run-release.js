@@ -1,0 +1,144 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { councilEvaluate } from '../evaluate.js';
+import { AgentSdkProvider } from '../../providers/agent-sdk-provider.js';
+import { resolveAuthMode } from '../../providers/auth-mode.js';
+import { substantialRoomFixture } from './fixtures.js';
+
+const RUNS_PER_MODE = 3;
+const MODES = Object.freeze({
+  direct: 120_000,
+  chunk_all: 1_000,
+});
+
+function joinedEvidence(output) {
+  const research = output.provenance?.researchSnapshot || {};
+  return JSON.stringify(research).toLowerCase();
+}
+
+function recall(output, facts) {
+  const evidence = joinedEvidence(output);
+  const found = facts.filter(fact => evidence.includes(fact.marker.toLowerCase()));
+  return {
+    found: found.map(fact => fact.id),
+    missing: facts.filter(fact => !found.includes(fact)).map(fact => fact.id),
+    recall: facts.length ? found.length / facts.length : 1,
+  };
+}
+
+function score(output) {
+  return Number(output.result?.text?.match(/Council complete:\s*([\d.]+)/)?.[1] || NaN);
+}
+
+function dimensionScores(output) {
+  return Object.fromEntries(
+    (output.result?.structuredOutput?.calibrator?.dimension_scores || [])
+      .map(dimension => [dimension.name, Number(dimension.likert)]),
+  );
+}
+
+function range(values) {
+  const finite = values.filter(Number.isFinite);
+  return finite.length ? Math.max(...finite) - Math.min(...finite) : null;
+}
+
+function validate(results, fixture) {
+  const failures = [];
+  for (const result of results) {
+    if (result.critical.recall !== 1) failures.push(`${result.id}: critical recall below 100%`);
+    if (result.important.recall < 0.8) failures.push(`${result.id}: important recall below 80%`);
+    if (!result.competitors.includes('Northstar Relay')) failures.push(`${result.id}: named competitor missing`);
+    if (!result.sameEventConflict) failures.push(`${result.id}: same-event conflict missing`);
+    if (result.publicSilenceConflict) failures.push(`${result.id}: public silence treated as conflict`);
+  }
+  for (const mode of Object.keys(MODES)) {
+    const runs = results.filter(result => result.mode === mode);
+    if (range(runs.map(result => result.score)) > 2) failures.push(`${mode}: total-score variance exceeds 2`);
+    const dimensions = new Set(runs.flatMap(result => Object.keys(result.dimensions)));
+    for (const dimension of dimensions) {
+      if (range(runs.map(result => result.dimensions[dimension])) > 1) {
+        failures.push(`${mode}: ${dimension} variance exceeds 1`);
+      }
+    }
+  }
+  const mean = (mode, field) => {
+    const values = results.filter(result => result.mode === mode).map(result => result[field].recall);
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  };
+  if (Math.abs(mean('direct', 'important') - mean('chunk_all', 'important')) > 0.05) {
+    failures.push('direct/chunk-all important-fact mean recall differs by more than 5 points');
+  }
+  const scores = mode => results.filter(result => result.mode === mode).map(result => result.score);
+  const scoreMean = mode => scores(mode).reduce((sum, value) => sum + value, 0) / RUNS_PER_MODE;
+  if (Math.abs(scoreMean('direct') - scoreMean('chunk_all')) > 2) {
+    failures.push('direct/chunk-all total-score means differ by more than 2');
+  }
+  return failures;
+}
+
+const fixture = substantialRoomFixture();
+const authMode = resolveAuthMode(process.env);
+const outputDir = resolve(process.argv[2] || 'src/council/evals/results');
+mkdirSync(outputDir, { recursive: true });
+const provider = new AgentSdkProvider({ authMode, cwd: outputDir });
+const results = [];
+
+for (const [mode, directContextBudgetTokens] of Object.entries(MODES)) {
+  for (let run = 1; run <= RUNS_PER_MODE; run += 1) {
+    const output = await councilEvaluate(fixture.deal, {
+      provider,
+      env: process.env,
+      dealLogDir: outputDir,
+      policyId: 'balanced',
+      executionId: `v0.3.0-${mode}-${run}`,
+      directContextBudgetTokens,
+      sourceManifest: fixture.manifest,
+      evidenceContractVersion: 1,
+      reuse: false,
+    });
+    const researchText = joinedEvidence(output);
+    const facts = output.provenance?.researchSnapshot?.room_evidence?.facts || [];
+    results.push({
+      id: `${mode}-${run}`,
+      mode,
+      run,
+      score: score(output),
+      dimensions: dimensionScores(output),
+      critical: recall(output, fixture.facts.filter(fact => fact.priority === 'critical')),
+      important: recall(output, fixture.facts.filter(fact => fact.priority === 'important')),
+      competitors: output.provenance?.researchSnapshot?.room_evidence?.named_competitors || (
+        researchText.includes('northstar relay') ? ['Northstar Relay'] : []
+      ),
+      sourceLocatorsComplete: facts
+        .filter(fact => fixture.facts.some(expected => fact.claim.includes(expected.marker)))
+        .every(fact => Boolean(fact.source_locator)),
+      sameEventConflict: researchText.includes('conflict-same-event-23'),
+      publicSilenceConflict: (output.provenance?.researchSnapshot?.room_evidence?.contradictions || [])
+        .some(value => /absence|public silence/i.test(value)),
+      strategy: output.provenance?.sourceCoverage?.strategy,
+      sourceManifestHash: output.provenance?.sourceManifestHash,
+      researchSnapshotHash: output.provenance?.researchSnapshotHash,
+      usage: output.usage,
+      stageMetrics: output.stageMetrics,
+    });
+  }
+}
+
+const failures = validate(results, fixture);
+const report = {
+  contract: 'v0.3.0-evaluation-integrity',
+  generated_at: new Date().toISOString(),
+  fictional_fixture: 'Nimbus Forge',
+  model_policy: results[0]?.modelPolicy,
+  results,
+  failures,
+  passed: failures.length === 0,
+};
+const reportPath = resolve(outputDir, 'v0.3.0-release-eval.json');
+writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+console.log(`${report.passed ? 'PASS' : 'FAIL'} ${reportPath}`);
+if (!report.passed) {
+  for (const failure of failures) console.error(`- ${failure}`);
+  process.exitCode = 1;
+}
+

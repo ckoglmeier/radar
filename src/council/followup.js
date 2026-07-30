@@ -323,7 +323,7 @@ export async function councilFollowupEvaluate({
     inputHash,
     parentEvaluationId: baseEvaluation.id,
     rubricSnapshot: rubric,
-    runType: 'followup',
+    runType: 'founder_followup',
   };
   provenance.runKey = hash({
     ...provenance,

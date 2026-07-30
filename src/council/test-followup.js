@@ -156,7 +156,7 @@ test('uses one retrieval-free Calibrator pass and preserves unrelated dimensions
       'bounded missing evidence',
     );
     ok(provider.calls[0].prompt.startsWith('STAGE: founder_followup'));
-    eq(result.provenance.runType, 'followup');
+    eq(result.provenance.runType, 'founder_followup');
     eq(result.effort, 'low');
     eq(result.provenance.parentEvaluationId, 41);
     eq(result.provenance.dimensionScores.length, 9);
