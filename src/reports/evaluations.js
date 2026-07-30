@@ -6,6 +6,7 @@ import { calculateIRR } from '../utils/irr.js';
 import { runAnalytics } from '../utils/analytics.js';
 import { getActiveThesisNames } from '../lenses/loader.js';
 import { normalize as normalizeCompanyName } from '../utils/company-names.js';
+import { canonicalEvaluationLedger } from '../models/canonical-evaluations.js';
 
 export async function evalList() {
   return listEvaluations();
@@ -63,50 +64,9 @@ function suggestedMatch(evaluation, candidates) {
  * optional suggested_match is deliberately separate and never changes
  * link_type or linked_id.
  */
-export async function evaluationLedger() {
+export async function evaluationLedger(options = {}) {
   const [evaluations, invites, investments] = await Promise.all([
-    query(`
-      SELECT
-        de.id,
-        de.investment_id,
-        de.pipeline_invite_id,
-        de.eval_date,
-        de.file_path,
-        de.company_name,
-        de.thesis_fit_score,
-        de.viability_score,
-        de.total_score,
-        de.verdict,
-        de.invested,
-        de.council_bull_score,
-        de.council_bear_score,
-        de.council_calibrator_score,
-        de.council_spread,
-        de.council_consensus,
-        de.council_divergence,
-        de.council_cfo_verdict,
-        de.eval_mode,
-        de.council_policy,
-        de.council_policy_version,
-        de.council_instruction_hash,
-        de.council_lens_hash,
-        de.council_calibration_hash,
-        de.council_input_hash,
-        de.council_artifact_hash,
-        de.council_session_id,
-        de.council_model_policy,
-        de.council_score_adjusted,
-        de.council_run_key,
-        de.created_at,
-        LEFT(de.raw_content, 900) AS source_excerpt,
-        pi.company_name AS pipeline_company_name,
-        pi.deal_slug AS pipeline_deal_slug,
-        i.company_name AS investment_company_name
-      FROM deal_evaluations de
-      LEFT JOIN pipeline_invites pi ON pi.id = de.pipeline_invite_id
-      LEFT JOIN investments i ON i.id = de.investment_id
-      ORDER BY de.eval_date DESC NULLS LAST, de.created_at ASC, de.id ASC
-    `),
+    canonicalEvaluationLedger({ includeAttempts: Boolean(options.includeAttempts) }),
     query(`SELECT id, company_name, deal_slug FROM pipeline_invites`),
     query(`SELECT id, company_name FROM investments`),
   ]);
@@ -117,6 +77,18 @@ export async function evaluationLedger() {
   ];
 
   return evaluations.map(row => {
+    if (row.record_type === 'attempt') {
+      return {
+        ...row,
+        display_company_name: row.company_name || null,
+        link_type: 'pipeline_invite',
+        linked_id: row.pipeline_invite_id,
+        linked_company_name: row.company_name || null,
+        linked_deal_slug: row.pipeline_deal_slug || null,
+        suggested_match: null,
+        suggested_match_count: 0,
+      };
+    }
     let linkType = 'unlinked';
     let linkedId = null;
     let linkedCompanyName = null;
@@ -146,6 +118,7 @@ export async function evaluationLedger() {
       linked_deal_slug: linkedDealSlug,
       suggested_match: suggestion.match,
       suggested_match_count: suggestion.count,
+      source_excerpt: String(row.raw_content || '').slice(0, 900) || null,
     };
   });
 }

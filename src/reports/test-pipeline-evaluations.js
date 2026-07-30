@@ -11,6 +11,7 @@ import { importDealLogs, evaluationHistoryForInvite } from '../models/evaluation
 import { pipelineListWithLatestEval } from './pipeline.js';
 import { evaluationLedger } from './evaluations.js';
 import { backfillEvaluationLinks } from '../db/backfill-eval-links.js';
+import { annotateCanonicalEvaluations } from '../models/canonical-evaluations.js';
 
 const PREFIX = 'ZZPIPEEVAL';
 let passed = 0;
@@ -78,9 +79,9 @@ async function insertEvaluation({
 }) {
   const rows = await query(
     `INSERT INTO deal_evaluations
-       (company_name, eval_date, total_score, verdict, file_path,
-        pipeline_invite_id, investment_id, eval_mode, raw_content, council_run_type)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      (company_name, eval_date, total_score, verdict, file_path,
+        pipeline_invite_id, investment_id, eval_mode, raw_content, council_run_type, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $2::date)
      RETURNING id`,
     [
       company,
@@ -136,13 +137,13 @@ async function run() {
       path: `/fixtures/2026-04-01-${PREFIX.toLowerCase()}-range.md`,
     });
 
-    await test('first completed evaluation stays canonical across same-day reruns', async () => {
+    await test('newest completed evaluation is current across same-day reruns', async () => {
       const rows = await pipelineListWithLatestEval({ limit: 200 });
       const alpha = rows.find(row => row.id === alphaId);
-      eq(alpha.latest_evaluation.id, alphaLatest);
-      eq(Number(alpha.latest_evaluation.total_score), 42);
+      eq(alpha.latest_evaluation.id, Math.max(alphaLatest, alphaSameDayRerun));
+      eq(Number(alpha.latest_evaluation.total_score), 35);
       eq(alpha.latest_evaluation.eval_mode, 'council');
-      ok(alpha.latest_evaluation.id !== alphaSameDayRerun);
+      eq(alpha.latest_evaluation.is_canonical, true);
     });
 
     await test('zero evaluations returns a plain null latest_evaluation', async () => {
@@ -160,10 +161,12 @@ async function run() {
     await test('history returns every version newest-first', async () => {
       const history = await evaluationHistoryForInvite(alphaId);
       eq(history.length, 4);
-      eq(history[0].id, alphaLatest);
-      eq(history[1].id, alphaSameDayRerun);
+      eq(history[0].id, Math.max(alphaLatest, alphaSameDayRerun));
+      eq(history[1].id, Math.min(alphaLatest, alphaSameDayRerun));
       eq(history[3].id, alphaOld);
       eq(dateOnly(history[0].eval_date), '2026-03-01');
+      eq(history[0].canonical_evaluation_id, Math.max(alphaLatest, alphaSameDayRerun));
+      eq(history[0].earlier_evaluation_count, 3);
     });
 
     const alphaPolicyRefresh = await insertEvaluation({
@@ -180,6 +183,31 @@ async function run() {
       eq(Number(alpha.latest_evaluation.total_score), 45);
       const history = await evaluationHistoryForInvite(alphaId);
       eq(history[0].id, alphaPolicyRefresh);
+    });
+
+    await test('controlled replay stays in history until explicitly promoted', async () => {
+      const rows = annotateCanonicalEvaluations([{
+        id: 10,
+        pipeline_invite_id: alphaId,
+        total_score: 36,
+        verdict: 'Worth exploring',
+        run_type: 'initial',
+        run_status: 'completed',
+        run_completed_at: '2026-07-30T10:00:00Z',
+        promotes_to_canonical: true,
+      }, {
+        id: 11,
+        pipeline_invite_id: alphaId,
+        total_score: 41,
+        verdict: 'Strong fit',
+        run_type: 'controlled_replay',
+        run_status: 'completed',
+        run_completed_at: '2026-07-30T11:00:00Z',
+        promotes_to_canonical: false,
+      }]);
+      eq(rows.find(row => row.id === 10).is_canonical, true);
+      eq(rows.find(row => row.id === 11).is_canonical, false);
+      eq(rows.find(row => row.id === 11).canonical_evaluation_id, 10);
     });
 
     const suggestionInviteId = await insertInvite(

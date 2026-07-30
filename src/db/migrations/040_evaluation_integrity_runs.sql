@@ -167,6 +167,16 @@ SET council_run_type = CASE council_run_type
 END
 WHERE council_run_type IS NOT NULL;
 
+UPDATE deal_evaluations de
+SET promotes_to_canonical = FALSE
+WHERE de.council_run_type IN ('controlled_replay', 'review_import')
+   OR EXISTS (
+     SELECT 1
+     FROM council_runs cr
+     WHERE cr.id = de.council_run_id
+       AND cr.run_type IN ('controlled_replay', 'review_import')
+   );
+
 -- Existing runs become visible as migrated attempt history.
 INSERT INTO council_run_events
   (run_id, attempt_number, sequence, occurred_at, event_type, phase, safe_detail)

@@ -10,6 +10,7 @@ import { matchCompanyToInvestment, loadInvestmentUniverse } from '../utils/match
 import { matchCompanyToPipelineInvite } from './pipeline.js';
 import { getRubric } from '../lenses/loader.js';
 import { scoreCouncilArtifact } from '../council/scoring.js';
+import { canonicalEvaluationsForInvite } from './canonical-evaluations.js';
 
 const DEAL_LOG_DIR = process.env.DEAL_LOG_DIR || null;
 
@@ -478,17 +479,7 @@ export async function listEvaluations() {
 }
 
 export async function evaluationHistoryForInvite(inviteId) {
-  const rows = await query(
-    `SELECT de.*
-     FROM deal_evaluations de
-     WHERE de.pipeline_invite_id = $1
-     ORDER BY de.eval_date DESC NULLS LAST,
-              CASE WHEN de.council_run_type IN ('followup', 'policy_refresh') THEN 0 ELSE 1 END,
-              CASE WHEN de.council_run_type IN ('followup', 'policy_refresh') THEN de.created_at END DESC,
-              de.created_at ASC,
-              de.id ASC`,
-    [inviteId]
-  );
+  const rows = await canonicalEvaluationsForInvite(inviteId);
   return rows.map(resolveEvalContent);
 }
 

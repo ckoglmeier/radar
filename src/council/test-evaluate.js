@@ -118,6 +118,17 @@ function fakeProvider({ delay = 0, malformedOnceStage = null } = {}) {
       if (delay) await new Promise(resolve => setTimeout(resolve, delay));
       const stage = req.prompt.match(/^STAGE:\s*(\w+)/m)?.[1];
       const outputs = {
+        room: {
+          facts: [{
+            claim: 'Critical end fact and Named Rival competitor.',
+            classification: 'supplied',
+            source_locator: 'doc-91-chunk-2:24000-48000',
+          }],
+          contradictions: [],
+          missing_evidence: [],
+          named_entities: ['Full Room Co'],
+          named_competitors: ['Named Rival'],
+        },
         research: {
           evidence: ['verified: Example fact — https://example.com/source'],
           team_dossier: 'Team dossier',
@@ -411,6 +422,51 @@ test('councilEvaluate: full source documents reach Research once and downstream 
   }, { dryRun: true, env: {} });
   ok(out.provenance.inputHash !== changed.provenance.inputHash, 'full source content participates in the input fingerprint');
 });
+
+test('councilEvaluate: chunk-all reads every oversized source chunk before Research', async () =>
+  withTempDir(async dealLogDir => {
+    const marker = 'CRITICAL-END-FACT-NAMED-RIVAL';
+    const fake = fakeProvider();
+    const out = await councilEvaluate({
+      company: 'Oversized Room Co',
+      source_documents: [{
+        document_id: 91,
+        filename: 'oversized-room.html',
+        mime: 'text/html',
+        sha256: 'oversized-room-sha',
+        text: `${'Substantial evidence paragraph. '.repeat(2_000)}${marker}`,
+      }],
+    }, {
+      provider: fake,
+      dealLogDir,
+      env: {
+        RADAR_COUNCIL_DIRECT_CONTEXT_TOKENS: '8000',
+        RADAR_COUNCIL_CHUNK_CHARACTERS: '12000',
+        RADAR_COUNCIL_BATCH_CHARACTERS: '24000',
+      },
+      reuse: false,
+      sourceManifest: [{
+        document_id: 91,
+        filename: 'oversized-room.html',
+        sha256: 'oversized-room-sha',
+        extraction_status: 'included',
+      }],
+      sourceCoverage: { attached: 1, included: 1, scoring_permitted: true },
+      evidenceContractVersion: 1,
+    });
+    const roomCalls = fake.calls.filter(req => req.prompt.startsWith('STAGE: room evidence'));
+    ok(roomCalls.length > 1, 'oversized room is processed in multiple complete batches');
+    eq(roomCalls.filter(call => call.context.includes(marker)).length, 1, 'end fact is read exactly once');
+    const researchCall = fake.calls.find(req => req.prompt.startsWith('STAGE: research'));
+    ok(!researchCall.context.includes(marker), 'Research receives the frozen ledger instead of repeated raw text');
+    ok(researchCall.context.includes('Named Rival'), 'Research receives named competitors from the room ledger');
+    eq(out.provenance.sourceCoverage.strategy, 'chunk_all');
+    eq(out.provenance.sourceCoverage.batches, roomCalls.length);
+    eq(out.provenance.researchSnapshot.room_evidence.named_competitors[0], 'Named Rival');
+    ok(out.provenance.sourceManifestHash);
+    ok(out.provenance.sourceCoverageHash);
+    ok(out.provenance.researchSnapshotHash);
+  }));
 
 test('councilEvaluate: controlled replay can pin an exact calibration snapshot', async () => {
   const calibrationSnapshot = {
