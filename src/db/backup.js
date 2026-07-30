@@ -32,6 +32,8 @@ const INSERT_ORDER = [
   'pipeline_invites',
   'pipeline_events',
   'council_runs',
+  'council_run_events',
+  'council_run_dispatch',
   'deal_evaluations',
   'decision_records',
   'rooms',
