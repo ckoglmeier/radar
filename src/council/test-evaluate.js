@@ -383,6 +383,35 @@ test('councilEvaluate: dry run assembles without a provider or a model call', as
   ok(out.provenance.runKey, 'reports the idempotency fingerprint');
 });
 
+test('councilEvaluate: full source documents reach Research once and downstream stages receive only their manifest', async () => {
+  const sourceMarker = 'PRIVATE-DEAL-ROOM-FACT-ONLY-RESEARCH-SHOULD-READ';
+  const deal = {
+    company: 'Full Room Co',
+    source_documents: [{
+      document_id: 91,
+      filename: 'Full Room Co _ AngelList.html',
+      mime: 'text/html',
+      sha256: 'full-room-sha',
+      size_bytes: 500,
+      text: sourceMarker,
+    }],
+  };
+  const out = await councilEvaluate(deal, { dryRun: true, env: {} });
+
+  ok(out.requests.research.context.includes(sourceMarker), 'Research receives the complete source text');
+  for (const stage of ['bull', 'bear', 'calibrator', 'cfo']) {
+    ok(!out.requests[stage].context.includes(sourceMarker), `${stage} does not receive duplicate source text`);
+    ok(out.requests[stage].context.includes('Full Room Co _ AngelList.html'), `${stage} retains source provenance`);
+    ok(out.requests[stage].context.includes('full-room-sha'), `${stage} retains the source hash`);
+  }
+
+  const changed = await councilEvaluate({
+    ...deal,
+    source_documents: [{ ...deal.source_documents[0], text: `${sourceMarker}-changed` }],
+  }, { dryRun: true, env: {} });
+  ok(out.provenance.inputHash !== changed.provenance.inputHash, 'full source content participates in the input fingerprint');
+});
+
 test('councilEvaluate: controlled replay can pin an exact calibration snapshot', async () => {
   const calibrationSnapshot = {
     maturity: 'pinned-replay',
