@@ -1,0 +1,1044 @@
+{
+  "contract": "v0.3.0-evaluation-integrity",
+  "generated_at": "2026-07-30T23:54:51.180Z",
+  "fictional_fixture": "Nimbus Forge",
+  "model_policy": {
+    "orchestrator": "sonnet",
+    "research": "claude-sonnet-4-6",
+    "dossier": "sonnet",
+    "bull": "sonnet",
+    "bear": "sonnet",
+    "calibrator": "claude-opus-4-6",
+    "cfo": "sonnet"
+  },
+  "results": [
+    {
+      "id": "chunk_all-1",
+      "mode": "chunk_all",
+      "run": 1,
+      "score": 25,
+      "dimensions": {
+        "Domain match": 3,
+        "Compounding structure": 3,
+        "Structural tailwind": 4,
+        "Portfolio construction fit": 3,
+        "Team-market fit": 1,
+        "Capital efficiency": 3,
+        "Business model clarity": 2,
+        "Differentiation": 1,
+        "Source quality": 2
+      },
+      "critical": {
+        "found": [
+          "current-terms",
+          "retention",
+          "same-event-conflict",
+          "competitor"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "important": {
+        "found": [
+          "margin",
+          "deployment",
+          "older-round"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "competitors": [
+        "Northstar Relay"
+      ],
+      "sourceLocatorsComplete": true,
+      "sameEventConflict": true,
+      "publicSilenceConflict": false,
+      "strategy": "chunk_all",
+      "sourceManifestHash": "f3b4e0bd4e3047df146d2fe390ce7031c8c498a07dd9ab02479cd49883f48769",
+      "researchSnapshotHash": "f7e6c8d2ab429272e04f9d71ddb531956d112565e31480458cc581a6015b66cd",
+      "usage": {
+        "inputTokens": 1648,
+        "outputTokens": 31170,
+        "cacheReadInputTokens": 78539,
+        "cacheCreationInputTokens": 129712,
+        "totalCostUsd": 1.3918012000000002,
+        "byModel": {
+          "claude-sonnet-4-6": {
+            "inputTokens": 1639,
+            "outputTokens": 16070,
+            "cacheReadInputTokens": 78539,
+            "cacheCreationInputTokens": 46892,
+            "costUsd": 0.4453737
+          },
+          "claude-haiku-4-5-20251001": {
+            "inputTokens": 126262,
+            "outputTokens": 4740,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "costUsd": 0.269962
+          },
+          "claude-sonnet-5": {
+            "inputTokens": 6,
+            "outputTokens": 6090,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 63117,
+            "costUsd": 0.32805675
+          },
+          "claude-opus-4-6": {
+            "inputTokens": 3,
+            "outputTokens": 9010,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 19703,
+            "costUsd": 0.34840875
+          }
+        }
+      },
+      "stageMetrics": [
+        {
+          "stage": "planner",
+          "model": null,
+          "numTurns": 0,
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "totalCostUsd": 0
+          }
+        },
+        {
+          "stage": "room_evidence_1",
+          "model": "claude-sonnet-4-6",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 3,
+            "outputTokens": 3450,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 19782,
+            "totalCostUsd": 0.12594149999999998
+          }
+        },
+        {
+          "stage": "research",
+          "model": "claude-sonnet-4-6",
+          "numTurns": 14,
+          "usage": {
+            "inputTokens": 1636,
+            "outputTokens": 12620,
+            "cacheReadInputTokens": 78539,
+            "cacheCreationInputTokens": 27110,
+            "totalCostUsd": 0.5893942
+          }
+        },
+        {
+          "stage": "bull",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 3210,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 23522,
+            "totalCostUsd": 0.13636350000000003
+          }
+        },
+        {
+          "stage": "bear",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 2577,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 23681,
+            "totalCostUsd": 0.12746475
+          }
+        },
+        {
+          "stage": "calibrator",
+          "model": "claude-opus-4-6",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 3,
+            "outputTokens": 9010,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 19703,
+            "totalCostUsd": 0.34840875
+          }
+        },
+        {
+          "stage": "cfo",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 303,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 15914,
+            "totalCostUsd": 0.0642285
+          }
+        }
+      ],
+      "modelPolicy": {
+        "orchestrator": "sonnet",
+        "research": "claude-sonnet-4-6",
+        "dossier": "sonnet",
+        "bull": "sonnet",
+        "bear": "sonnet",
+        "calibrator": "claude-opus-4-6",
+        "cfo": "sonnet"
+      }
+    },
+    {
+      "id": "chunk_all-2",
+      "mode": "chunk_all",
+      "run": 2,
+      "score": 26,
+      "dimensions": {
+        "Domain match": 3,
+        "Compounding structure": 3,
+        "Structural tailwind": 4,
+        "Portfolio construction fit": 3,
+        "Team-market fit": 1,
+        "Capital efficiency": 3,
+        "Business model clarity": 3,
+        "Differentiation": 1,
+        "Source quality": 2
+      },
+      "critical": {
+        "found": [
+          "current-terms",
+          "retention",
+          "same-event-conflict",
+          "competitor"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "important": {
+        "found": [
+          "margin",
+          "deployment",
+          "older-round"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "competitors": [
+        "Northstar Relay"
+      ],
+      "sourceLocatorsComplete": true,
+      "sameEventConflict": true,
+      "publicSilenceConflict": false,
+      "strategy": "chunk_all",
+      "sourceManifestHash": "f3b4e0bd4e3047df146d2fe390ce7031c8c498a07dd9ab02479cd49883f48769",
+      "researchSnapshotHash": "76f860da7c22d9045b1d008b5269580109f5a141d755a12ec47db4abf4726973",
+      "usage": {
+        "inputTokens": 19,
+        "outputTokens": 26159,
+        "cacheReadInputTokens": 83540,
+        "cacheCreationInputTokens": 110189,
+        "totalCostUsd": 1.20075525,
+        "byModel": {
+          "claude-sonnet-4-6": {
+            "inputTokens": 8,
+            "outputTokens": 9923,
+            "cacheReadInputTokens": 59519,
+            "cacheCreationInputTokens": 23070,
+            "costUsd": 0.2532372
+          },
+          "claude-haiku-4-5-20251001": {
+            "inputTokens": 113639,
+            "outputTokens": 4105,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "costUsd": 0.24416400000000002
+          },
+          "claude-sonnet-5": {
+            "inputTokens": 8,
+            "outputTokens": 8645,
+            "cacheReadInputTokens": 24021,
+            "cacheCreationInputTokens": 67134,
+            "costUsd": 0.3886578
+          },
+          "claude-opus-4-6": {
+            "inputTokens": 3,
+            "outputTokens": 7591,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 19985,
+            "costUsd": 0.31469625
+          }
+        }
+      },
+      "stageMetrics": [
+        {
+          "stage": "planner",
+          "model": null,
+          "numTurns": 0,
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "totalCostUsd": 0
+          }
+        },
+        {
+          "stage": "room_evidence_1",
+          "model": "claude-sonnet-4-6",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 3,
+            "outputTokens": 2231,
+            "cacheReadInputTokens": 19782,
+            "cacheCreationInputTokens": 0,
+            "totalCostUsd": 0.0394086
+          }
+        },
+        {
+          "stage": "research",
+          "model": "claude-sonnet-4-6",
+          "numTurns": 13,
+          "usage": {
+            "inputTokens": 5,
+            "outputTokens": 7692,
+            "cacheReadInputTokens": 39737,
+            "cacheCreationInputTokens": 23070,
+            "totalCostUsd": 0.4579926000000001
+          }
+        },
+        {
+          "stage": "bull",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 3449,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 23862,
+            "totalCostUsd": 0.1412235
+          }
+        },
+        {
+          "stage": "bear",
+          "model": "claude-sonnet-5",
+          "numTurns": 3,
+          "usage": {
+            "inputTokens": 4,
+            "outputTokens": 4915,
+            "cacheReadInputTokens": 24021,
+            "cacheCreationInputTokens": 27406,
+            "totalCostUsd": 0.18371579999999998
+          }
+        },
+        {
+          "stage": "calibrator",
+          "model": "claude-opus-4-6",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 3,
+            "outputTokens": 7591,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 19985,
+            "totalCostUsd": 0.31469625
+          }
+        },
+        {
+          "stage": "cfo",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 281,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 15866,
+            "totalCostUsd": 0.06371850000000001
+          }
+        }
+      ],
+      "modelPolicy": {
+        "orchestrator": "sonnet",
+        "research": "claude-sonnet-4-6",
+        "dossier": "sonnet",
+        "bull": "sonnet",
+        "bear": "sonnet",
+        "calibrator": "claude-opus-4-6",
+        "cfo": "sonnet"
+      }
+    },
+    {
+      "id": "chunk_all-3",
+      "mode": "chunk_all",
+      "run": 3,
+      "score": 25,
+      "dimensions": {
+        "Domain match": 3,
+        "Compounding structure": 3,
+        "Structural tailwind": 4,
+        "Portfolio construction fit": 3,
+        "Team-market fit": 1,
+        "Capital efficiency": 3,
+        "Business model clarity": 3,
+        "Differentiation": 1,
+        "Source quality": 1
+      },
+      "critical": {
+        "found": [
+          "current-terms",
+          "retention",
+          "same-event-conflict",
+          "competitor"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "important": {
+        "found": [
+          "margin",
+          "deployment",
+          "older-round"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "competitors": [
+        "Northstar Relay"
+      ],
+      "sourceLocatorsComplete": true,
+      "sameEventConflict": true,
+      "publicSilenceConflict": false,
+      "strategy": "chunk_all",
+      "sourceManifestHash": "f3b4e0bd4e3047df146d2fe390ce7031c8c498a07dd9ab02479cd49883f48769",
+      "researchSnapshotHash": "b2fe6fa0291fd3e3a5546a43dcff03efaa461743612ca949181788f4a56a6769",
+      "usage": {
+        "inputTokens": 17,
+        "outputTokens": 29290,
+        "cacheReadInputTokens": 39054,
+        "cacheCreationInputTokens": 132318,
+        "totalCostUsd": 1.3443577000000002,
+        "byModel": {
+          "claude-sonnet-4-6": {
+            "inputTokens": 8,
+            "outputTokens": 15576,
+            "cacheReadInputTokens": 39054,
+            "cacheCreationInputTokens": 46711,
+            "costUsd": 0.42054645
+          },
+          "claude-haiku-4-5-20251001": {
+            "inputTokens": 125022,
+            "outputTokens": 4921,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "costUsd": 0.269627
+          },
+          "claude-sonnet-5": {
+            "inputTokens": 6,
+            "outputTokens": 6093,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 65125,
+            "costUsd": 0.33563175000000006
+          },
+          "claude-opus-4-6": {
+            "inputTokens": 3,
+            "outputTokens": 7621,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 20482,
+            "costUsd": 0.3185525
+          }
+        }
+      },
+      "stageMetrics": [
+        {
+          "stage": "planner",
+          "model": null,
+          "numTurns": 0,
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "totalCostUsd": 0
+          }
+        },
+        {
+          "stage": "room_evidence_1",
+          "model": "claude-sonnet-4-6",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 3,
+            "outputTokens": 3339,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 19782,
+            "totalCostUsd": 0.1242765
+          }
+        },
+        {
+          "stage": "research",
+          "model": "claude-sonnet-4-6",
+          "numTurns": 14,
+          "usage": {
+            "inputTokens": 5,
+            "outputTokens": 12237,
+            "cacheReadInputTokens": 39054,
+            "cacheCreationInputTokens": 26929,
+            "totalCostUsd": 0.5658969500000001
+          }
+        },
+        {
+          "stage": "bull",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 2821,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 24658,
+            "totalCostUsd": 0.1347885
+          }
+        },
+        {
+          "stage": "bear",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 2968,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 24817,
+            "totalCostUsd": 0.13758975
+          }
+        },
+        {
+          "stage": "calibrator",
+          "model": "claude-opus-4-6",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 3,
+            "outputTokens": 7621,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 20482,
+            "totalCostUsd": 0.3185525
+          }
+        },
+        {
+          "stage": "cfo",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 304,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 15650,
+            "totalCostUsd": 0.0632535
+          }
+        }
+      ],
+      "modelPolicy": {
+        "orchestrator": "sonnet",
+        "research": "claude-sonnet-4-6",
+        "dossier": "sonnet",
+        "bull": "sonnet",
+        "bear": "sonnet",
+        "calibrator": "claude-opus-4-6",
+        "cfo": "sonnet"
+      }
+    },
+    {
+      "id": "direct-1",
+      "mode": "direct",
+      "run": 1,
+      "score": 25,
+      "dimensions": {
+        "Domain match": 3,
+        "Compounding structure": 3,
+        "Structural tailwind": 4,
+        "Portfolio construction fit": 3,
+        "Team-market fit": 1,
+        "Capital efficiency": 3,
+        "Business model clarity": 3,
+        "Differentiation": 1,
+        "Source quality": 1
+      },
+      "critical": {
+        "found": [
+          "current-terms",
+          "retention",
+          "same-event-conflict",
+          "competitor"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "important": {
+        "found": [
+          "margin",
+          "deployment",
+          "older-round"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "competitors": [
+        "Northstar Relay"
+      ],
+      "sourceLocatorsComplete": true,
+      "sameEventConflict": true,
+      "publicSilenceConflict": false,
+      "strategy": "direct",
+      "sourceManifestHash": "de33ca59dbc776af2e6a7129114c99ba429e3166d01ba6edce865126aa4eea3f",
+      "researchSnapshotHash": "966c1a6b192bded5cebeabafaad3f768078c16af6f6564a68d7759966cd6444d",
+      "usage": {
+        "inputTokens": 1719,
+        "outputTokens": 25961,
+        "cacheReadInputTokens": 154771,
+        "cacheCreationInputTokens": 120327,
+        "totalCostUsd": 1.31849255,
+        "byModel": {
+          "claude-sonnet-4-6": {
+            "inputTokens": 1706,
+            "outputTokens": 11341,
+            "cacheReadInputTokens": 106956,
+            "cacheCreationInputTokens": 35947,
+            "costUsd": 0.34212105
+          },
+          "claude-haiku-4-5-20251001": {
+            "inputTokens": 139547,
+            "outputTokens": 5447,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "costUsd": 0.296782
+          },
+          "claude-sonnet-5": {
+            "inputTokens": 10,
+            "outputTokens": 6824,
+            "cacheReadInputTokens": 47815,
+            "cacheCreationInputTokens": 63774,
+            "costUsd": 0.35588699999999995
+          },
+          "claude-opus-4-6": {
+            "inputTokens": 3,
+            "outputTokens": 7796,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 20606,
+            "costUsd": 0.3237025
+          }
+        }
+      },
+      "stageMetrics": [
+        {
+          "stage": "planner",
+          "model": null,
+          "numTurns": 0,
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "totalCostUsd": 0
+          }
+        },
+        {
+          "stage": "research",
+          "model": "claude-sonnet-4-6",
+          "numTurns": 15,
+          "usage": {
+            "inputTokens": 1706,
+            "outputTokens": 11341,
+            "cacheReadInputTokens": 106956,
+            "cacheCreationInputTokens": 35947,
+            "totalCostUsd": 0.6389030499999999
+          }
+        },
+        {
+          "stage": "bull",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 4,
+            "outputTokens": 3350,
+            "cacheReadInputTokens": 23828,
+            "cacheCreationInputTokens": 23828,
+            "totalCostUsd": 0.1467654
+          }
+        },
+        {
+          "stage": "bear",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 4,
+            "outputTokens": 3220,
+            "cacheReadInputTokens": 23987,
+            "cacheCreationInputTokens": 23987,
+            "totalCostUsd": 0.14545935
+          }
+        },
+        {
+          "stage": "calibrator",
+          "model": "claude-opus-4-6",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 3,
+            "outputTokens": 7796,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 20606,
+            "totalCostUsd": 0.3237025
+          }
+        },
+        {
+          "stage": "cfo",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 254,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 15959,
+            "totalCostUsd": 0.06366225
+          }
+        }
+      ],
+      "modelPolicy": {
+        "orchestrator": "sonnet",
+        "research": "claude-sonnet-4-6",
+        "dossier": "sonnet",
+        "bull": "sonnet",
+        "bear": "sonnet",
+        "calibrator": "claude-opus-4-6",
+        "cfo": "sonnet"
+      }
+    },
+    {
+      "id": "direct-2",
+      "mode": "direct",
+      "run": 2,
+      "score": 25,
+      "dimensions": {
+        "Domain match": 3,
+        "Compounding structure": 3,
+        "Structural tailwind": 4,
+        "Portfolio construction fit": 3,
+        "Team-market fit": 1,
+        "Capital efficiency": 3,
+        "Business model clarity": 3,
+        "Differentiation": 1,
+        "Source quality": 1
+      },
+      "critical": {
+        "found": [
+          "current-terms",
+          "retention",
+          "same-event-conflict",
+          "competitor"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "important": {
+        "found": [
+          "margin",
+          "deployment",
+          "older-round"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "competitors": [
+        "Northstar Relay"
+      ],
+      "sourceLocatorsComplete": true,
+      "sameEventConflict": true,
+      "publicSilenceConflict": false,
+      "strategy": "direct",
+      "sourceManifestHash": "de33ca59dbc776af2e6a7129114c99ba429e3166d01ba6edce865126aa4eea3f",
+      "researchSnapshotHash": "59ae723b1613e72faf77173c74657a309970cab613314502bac19b33f77e80ae",
+      "usage": {
+        "inputTokens": 17,
+        "outputTokens": 25388,
+        "cacheReadInputTokens": 110414,
+        "cacheCreationInputTokens": 148363,
+        "totalCostUsd": 1.30947545,
+        "byModel": {
+          "claude-sonnet-4-6": {
+            "inputTokens": 8,
+            "outputTokens": 9996,
+            "cacheReadInputTokens": 110414,
+            "cacheCreationInputTokens": 63733,
+            "costUsd": 0.42208695
+          },
+          "claude-haiku-4-5-20251001": {
+            "inputTokens": 91948,
+            "outputTokens": 3711,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "costUsd": 0.200503
+          },
+          "claude-sonnet-5": {
+            "inputTokens": 6,
+            "outputTokens": 6651,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 64150,
+            "costUsd": 0.3403455
+          },
+          "claude-opus-4-6": {
+            "inputTokens": 3,
+            "outputTokens": 8741,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 20480,
+            "costUsd": 0.34654
+          }
+        }
+      },
+      "stageMetrics": [
+        {
+          "stage": "planner",
+          "model": null,
+          "numTurns": 0,
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "totalCostUsd": 0
+          }
+        },
+        {
+          "stage": "research",
+          "model": "claude-sonnet-4-6",
+          "numTurns": 11,
+          "usage": {
+            "inputTokens": 8,
+            "outputTokens": 9996,
+            "cacheReadInputTokens": 110414,
+            "cacheCreationInputTokens": 63733,
+            "totalCostUsd": 0.62258995
+          }
+        },
+        {
+          "stage": "bull",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 2595,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 24162,
+            "totalCostUsd": 0.1295385
+          }
+        },
+        {
+          "stage": "bear",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 3784,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 24321,
+            "totalCostUsd": 0.14796975
+          }
+        },
+        {
+          "stage": "calibrator",
+          "model": "claude-opus-4-6",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 3,
+            "outputTokens": 8741,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 20480,
+            "totalCostUsd": 0.34654
+          }
+        },
+        {
+          "stage": "cfo",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 272,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 15667,
+            "totalCostUsd": 0.06283725000000001
+          }
+        }
+      ],
+      "modelPolicy": {
+        "orchestrator": "sonnet",
+        "research": "claude-sonnet-4-6",
+        "dossier": "sonnet",
+        "bull": "sonnet",
+        "bear": "sonnet",
+        "calibrator": "claude-opus-4-6",
+        "cfo": "sonnet"
+      }
+    },
+    {
+      "id": "direct-3",
+      "mode": "direct",
+      "run": 3,
+      "score": 25,
+      "dimensions": {
+        "Domain match": 3,
+        "Compounding structure": 3,
+        "Structural tailwind": 4,
+        "Portfolio construction fit": 3,
+        "Team-market fit": 1,
+        "Capital efficiency": 3,
+        "Business model clarity": 3,
+        "Differentiation": 1,
+        "Source quality": 1
+      },
+      "critical": {
+        "found": [
+          "current-terms",
+          "retention",
+          "same-event-conflict",
+          "competitor"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "important": {
+        "found": [
+          "margin",
+          "deployment",
+          "older-round"
+        ],
+        "missing": [],
+        "recall": 1
+      },
+      "competitors": [
+        "Northstar Relay"
+      ],
+      "sourceLocatorsComplete": true,
+      "sameEventConflict": true,
+      "publicSilenceConflict": false,
+      "strategy": "direct",
+      "sourceManifestHash": "de33ca59dbc776af2e6a7129114c99ba429e3166d01ba6edce865126aa4eea3f",
+      "researchSnapshotHash": "9c078f36a31c44b39ad6306e5b29a0e4c9c68ed14f931fe75449fc266d75ea31",
+      "usage": {
+        "inputTokens": 1550,
+        "outputTokens": 22298,
+        "cacheReadInputTokens": 130650,
+        "cacheCreationInputTokens": 116305,
+        "totalCostUsd": 1.1819422499999999,
+        "byModel": {
+          "claude-sonnet-4-6": {
+            "inputTokens": 1539,
+            "outputTokens": 7638,
+            "cacheReadInputTokens": 107812,
+            "cacheCreationInputTokens": 33423,
+            "costUsd": 0.27686685
+          },
+          "claude-haiku-4-5-20251001": {
+            "inputTokens": 113820,
+            "outputTokens": 4061,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "costUsd": 0.24412500000000004
+          },
+          "claude-sonnet-5": {
+            "inputTokens": 8,
+            "outputTokens": 7063,
+            "cacheReadInputTokens": 22838,
+            "cacheCreationInputTokens": 63929,
+            "costUsd": 0.35255415
+          },
+          "claude-opus-4-6": {
+            "inputTokens": 3,
+            "outputTokens": 7597,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 18953,
+            "costUsd": 0.30839625
+          }
+        }
+      },
+      "stageMetrics": [
+        {
+          "stage": "planner",
+          "model": null,
+          "numTurns": 0,
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "totalCostUsd": 0
+          }
+        },
+        {
+          "stage": "research",
+          "model": "claude-sonnet-4-6",
+          "numTurns": 13,
+          "usage": {
+            "inputTokens": 1539,
+            "outputTokens": 7638,
+            "cacheReadInputTokens": 107812,
+            "cacheCreationInputTokens": 33423,
+            "totalCostUsd": 0.52099185
+          }
+        },
+        {
+          "stage": "bull",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 2748,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 22679,
+            "totalCostUsd": 0.12627225
+          }
+        },
+        {
+          "stage": "bear",
+          "model": "claude-sonnet-5",
+          "numTurns": 3,
+          "usage": {
+            "inputTokens": 4,
+            "outputTokens": 3995,
+            "cacheReadInputTokens": 22838,
+            "cacheCreationInputTokens": 25416,
+            "totalCostUsd": 0.1620984
+          }
+        },
+        {
+          "stage": "calibrator",
+          "model": "claude-opus-4-6",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 3,
+            "outputTokens": 7597,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 18953,
+            "totalCostUsd": 0.30839625
+          }
+        },
+        {
+          "stage": "cfo",
+          "model": "claude-sonnet-5",
+          "numTurns": 2,
+          "usage": {
+            "inputTokens": 2,
+            "outputTokens": 320,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 15834,
+            "totalCostUsd": 0.0641835
+          }
+        }
+      ],
+      "modelPolicy": {
+        "orchestrator": "sonnet",
+        "research": "claude-sonnet-4-6",
+        "dossier": "sonnet",
+        "bull": "sonnet",
+        "bear": "sonnet",
+        "calibrator": "claude-opus-4-6",
+        "cfo": "sonnet"
+      }
+    }
+  ],
+  "failures": [],
+  "passed": true
+}

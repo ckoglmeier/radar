@@ -14,6 +14,20 @@ For every dimension, choose one 1–5 value and explain briefly which evidence o
 voice controls. Treat uncertainty consistently: missing evidence is not proof
 of a negative fact, but stage-critical missing evidence can cap conviction.
 
+Apply these anchor tie-breakers consistently when evidence falls between
+adjacent ratings:
+
+- Structural tailwind: independently verified, durable multi-year category
+  growth is a 4 when the company is in that category but its exact subsegment
+  is unknown. Do not lower it to 3 solely because company-level positioning is
+  unavailable.
+- Differentiation: when no company-specific moat mechanism, proprietary data,
+  IP, switching cost, or defensibility evidence is supplied, choose 1.
+  Retention, margin, or category potential alone is not moat evidence.
+- Source quality: a named but unknown syndicate, private deal room, or cold
+  inbound with no recorded relationship is 1. Move above 1 only when supplied
+  evidence establishes a warm path, known GP, or trusted relationship.
+
 Assess evidence sufficiency separately for every rubric dimension:
 
 - `strong`: current, decision-relevant evidence supports the rating;

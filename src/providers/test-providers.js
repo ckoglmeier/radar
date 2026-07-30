@@ -105,10 +105,27 @@ function makeFakeQuery(overrides = {}) {
       structured_output: overrides.structuredOutput,
       num_turns: overrides.numTurns ?? 2,
       total_cost_usd: overrides.cost ?? 0.0123,
-      usage: { input_tokens: 100, output_tokens: 20 },
+      usage: {
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_read_input_tokens: 70,
+        cache_creation_input_tokens: 30,
+      },
       modelUsage: overrides.modelUsage ?? {
-        'claude-haiku-4-5': { inputTokens: 60, outputTokens: 5, costUSD: 0.001 },
-        'claude-opus-4-8': { inputTokens: 40, outputTokens: 15, costUSD: 0.0113 },
+        'claude-haiku-4-5': {
+          inputTokens: 60,
+          outputTokens: 5,
+          cacheReadInputTokens: 50,
+          cacheCreationInputTokens: 10,
+          costUSD: 0.001,
+        },
+        'claude-opus-4-8': {
+          inputTokens: 40,
+          outputTokens: 15,
+          cacheReadInputTokens: 20,
+          cacheCreationInputTokens: 20,
+          costUSD: 0.0113,
+        },
       },
       session_id: 'sess-ok',
     };
@@ -322,9 +339,12 @@ async function run() {
     eq(res.sessionId, 'sess-ok');
     eq(res.usage.inputTokens, 100);
     eq(res.usage.outputTokens, 20);
+    eq(res.usage.cacheReadInputTokens, 70);
+    eq(res.usage.cacheCreationInputTokens, 30);
     eq(res.usage.totalCostUsd, 0.0123);
     ok(res.usage.byModel && res.usage.byModel['claude-opus-4-8'], 'per-model usage present');
     eq(res.usage.byModel['claude-opus-4-8'].costUsd, 0.0113, 'costUSD normalized to costUsd');
+    eq(res.usage.byModel['claude-opus-4-8'].cacheReadInputTokens, 20);
   });
 
   await testAsync('structured output schema is forwarded and returned', async () => {

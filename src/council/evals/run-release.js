@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { councilEvaluate } from '../evaluate.js';
 import { AgentSdkProvider } from '../../providers/agent-sdk-provider.js';
@@ -47,6 +47,7 @@ function validate(results, fixture) {
   for (const result of results) {
     if (result.critical.recall !== 1) failures.push(`${result.id}: critical recall below 100%`);
     if (result.important.recall < 0.8) failures.push(`${result.id}: important recall below 80%`);
+    if (!result.sourceLocatorsComplete) failures.push(`${result.id}: critical source locator missing`);
     if (!result.competitors.includes('Northstar Relay')) failures.push(`${result.id}: named competitor missing`);
     if (!result.sameEventConflict) failures.push(`${result.id}: same-event conflict missing`);
     if (result.publicSilenceConflict) failures.push(`${result.id}: public silence treated as conflict`);
@@ -81,10 +82,36 @@ const authMode = resolveAuthMode(process.env);
 const outputDir = resolve(process.argv[2] || 'src/council/evals/results');
 mkdirSync(outputDir, { recursive: true });
 const provider = new AgentSdkProvider({ authMode, cwd: outputDir });
-const results = [];
+const reportPath = resolve(outputDir, 'v0.3.0-release-eval.json');
+const resetModes = new Set(
+  String(process.env.RADAR_COUNCIL_EVAL_RESET_MODES || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean),
+);
+const checkpointResults = existsSync(reportPath)
+  ? JSON.parse(readFileSync(reportPath, 'utf8')).results || []
+  : [];
+const results = checkpointResults.filter(result => !resetModes.has(result.mode));
+
+function writeReport({ failures = [], passed = null } = {}) {
+  writeFileSync(reportPath, `${JSON.stringify({
+    contract: 'v0.3.0-evaluation-integrity',
+    generated_at: new Date().toISOString(),
+    fictional_fixture: 'Nimbus Forge',
+    model_policy: results[0]?.modelPolicy || null,
+    results,
+    failures,
+    passed,
+  }, null, 2)}\n`, 'utf8');
+}
 
 for (const [mode, directContextBudgetTokens] of Object.entries(MODES)) {
   for (let run = 1; run <= RUNS_PER_MODE; run += 1) {
+    if (results.some(result => result.id === `${mode}-${run}`)) {
+      console.log(`[${mode}-${run}] resumed from checkpoint`);
+      continue;
+    }
     const output = await councilEvaluate(fixture.deal, {
       provider,
       env: process.env,
@@ -95,9 +122,20 @@ for (const [mode, directContextBudgetTokens] of Object.entries(MODES)) {
       sourceManifest: fixture.manifest,
       evidenceContractVersion: 1,
       reuse: false,
+      stageTimeoutMs: Number(process.env.RADAR_COUNCIL_RELEASE_STAGE_TIMEOUT_MS || 20 * 60 * 1_000),
+      onStage: stage => console.log(`[${mode}-${run}] ${stage}`),
     });
+    const researchSnapshot = output.provenance?.researchSnapshot || {};
     const researchText = joinedEvidence(output);
-    const facts = output.provenance?.researchSnapshot?.room_evidence?.facts || [];
+    const facts = researchSnapshot.room_evidence?.facts || [];
+    const evidenceLines = researchSnapshot.evidence || [];
+    const criticalMarkers = fixture.facts
+      .filter(fact => fact.priority === 'critical')
+      .map(fact => fact.marker);
+    const contradictionText = [
+      ...(researchSnapshot.room_evidence?.contradictions || []),
+      ...(researchSnapshot.contradictions_to_resolve || []),
+    ];
     results.push({
       id: `${mode}-${run}`,
       mode,
@@ -109,36 +147,36 @@ for (const [mode, directContextBudgetTokens] of Object.entries(MODES)) {
       competitors: output.provenance?.researchSnapshot?.room_evidence?.named_competitors || (
         researchText.includes('northstar relay') ? ['Northstar Relay'] : []
       ),
-      sourceLocatorsComplete: facts
-        .filter(fact => fixture.facts.some(expected => fact.claim.includes(expected.marker)))
-        .every(fact => Boolean(fact.source_locator)),
+      sourceLocatorsComplete: criticalMarkers.every(marker => {
+        const locatedFinalEvidence = evidenceLines.some(line => (
+          line.includes(marker)
+          && /(doc(?:ument)?\s*900\d|fictional-room|source)/i.test(line)
+        ));
+        if (locatedFinalEvidence) return true;
+        return facts.some(fact => (
+          `${fact.claim} ${fact.source_locator}`.includes(marker)
+          && Boolean(fact.source_locator)
+        ));
+      }),
       sameEventConflict: researchText.includes('conflict-same-event-23'),
-      publicSilenceConflict: (output.provenance?.researchSnapshot?.room_evidence?.contradictions || [])
+      publicSilenceConflict: contradictionText
         .some(value => /absence|public silence/i.test(value)),
       strategy: output.provenance?.sourceCoverage?.strategy,
       sourceManifestHash: output.provenance?.sourceManifestHash,
       researchSnapshotHash: output.provenance?.researchSnapshotHash,
       usage: output.usage,
       stageMetrics: output.stageMetrics,
+      modelPolicy: output.modelPolicy,
     });
+    writeReport();
   }
 }
 
 const failures = validate(results, fixture);
-const report = {
-  contract: 'v0.3.0-evaluation-integrity',
-  generated_at: new Date().toISOString(),
-  fictional_fixture: 'Nimbus Forge',
-  model_policy: results[0]?.modelPolicy,
-  results,
-  failures,
-  passed: failures.length === 0,
-};
-const reportPath = resolve(outputDir, 'v0.3.0-release-eval.json');
-writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-console.log(`${report.passed ? 'PASS' : 'FAIL'} ${reportPath}`);
-if (!report.passed) {
+const passed = failures.length === 0;
+writeReport({ failures, passed });
+console.log(`${passed ? 'PASS' : 'FAIL'} ${reportPath}`);
+if (!passed) {
   for (const failure of failures) console.error(`- ${failure}`);
   process.exitCode = 1;
 }
-

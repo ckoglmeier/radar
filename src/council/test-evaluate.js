@@ -228,9 +228,9 @@ test('assembleContext: missing deal fields render as Not provided', () => {
 });
 
 // ---- buildCouncilAgents (pure) ----
-test('buildCouncilAgents: research uses Sonnet 4.6 and calibrator uses Opus', () => {
+test('buildCouncilAgents: research uses Sonnet 4.6 and calibration uses Opus 4.6', () => {
   const a = buildCouncilAgents(resolveCouncilModels());
-  eq(a.calibrator.model, 'opus');
+  eq(a.calibrator.model, 'claude-opus-4-6');
   eq(a.bull.model, 'sonnet');
   eq(a.bear.model, 'sonnet');
   eq(a.cfo.model, 'sonnet');
@@ -257,6 +257,26 @@ test('buildBaselineResearchPlan: creates the same complete question bank without
 // ---- councilEvaluate (fake provider; needs scratch DB for getCalibration) ----
 test('councilEvaluate: requires a provider', () => throwsAsync(() => councilEvaluate({ company: 'X' }, {}), 'requires a provider'));
 
+test('councilEvaluate: aborts a stage that exceeds the runtime budget', async () =>
+  withTempDir(async dealLogDir => {
+    const hanging = {
+      runSession: () => new Promise(() => {}),
+    };
+    await throwsAsync(
+      () => councilEvaluate(
+        { company: 'Timeout Fixture' },
+        {
+          provider: hanging,
+          env: {},
+          dealLogDir,
+          reuse: false,
+          stageTimeoutMs: 5,
+        },
+      ),
+      'Council research stage exceeded',
+    );
+  }));
+
 test('councilEvaluate: executes five explicit stages against one seeded evidence packet', async () =>
   withTempDir(async dealLogDir => {
     const fake = fakeProvider();
@@ -274,6 +294,7 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     ok(byStage.bull.systemPrompt.includes('Council Bull Contract'), 'Bull gets its role contract');
     ok(byStage.bear.systemPrompt.includes('Council Bear Contract'), 'Bear gets its role contract');
     ok(byStage.calibrator.systemPrompt.includes('Council Calibrator Contract'), 'Calibrator gets its role contract');
+    ok(byStage.calibrator.systemPrompt.includes('Apply these anchor tie-breakers consistently'), 'Calibrator gets deterministic anchor tie-breakers');
     ok(byStage.cfo.systemPrompt.includes('Council Portfolio Action Contract'), 'CFO gets its role contract');
     eq(byStage.research.model, 'claude-sonnet-4-6', 'research uses Sonnet 4.6');
     ok(byStage.research.context.includes('Acme Autonomy'), 'deal in context');
@@ -303,11 +324,11 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     ok(!byStage.cfo.context.includes('FROZEN BULL OUTPUT'), 'CFO does not receive full grader transcripts');
     ok(!byStage.cfo.context.includes('FROZEN RESEARCH PACKET'), 'CFO does not receive the evidence packet');
     ok(byStage.cfo.context.includes('RADAR-COMPUTED CANONICAL SCORE'), 'CFO receives canonical score');
-    eq(byStage.calibrator.model, 'opus', 'Calibrator stage uses Opus');
+    eq(byStage.calibrator.model, 'claude-opus-4-6', 'Calibrator stage uses Opus 4.6');
 
     eq(out.usedFallback, false);
     ok(out.calibrationMaturity, 'carries calibration maturity');
-    eq(out.modelPolicy.calibrator, 'opus');
+    eq(out.modelPolicy.calibrator, 'claude-opus-4-6');
     eq(out.usage.inputTokens, 500, 'aggregates input usage');
     eq(out.usage.outputTokens, 100, 'aggregates output usage');
     eq(out.usage.totalCostUsd, 0.05, 'aggregates direct API cost');
@@ -389,7 +410,7 @@ test('councilEvaluate: dry run assembles without a provider or a model call', as
   ok(!out.requests.cfo.context.includes('FROZEN RESEARCH'), 'CFO excludes the research packet');
   eq(Object.keys(out.requests).length, 5, 'previews all enforced stages');
   eq(out.requests.research.model, 'claude-sonnet-4-6');
-  eq(out.modelPolicy.calibrator, 'opus');
+  eq(out.modelPolicy.calibrator, 'claude-opus-4-6');
   ok(out.calibrationMaturity, 'reports calibration maturity');
   ok(out.provenance.runKey, 'reports the idempotency fingerprint');
 });

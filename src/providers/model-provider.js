@@ -83,8 +83,10 @@
  * @typedef {Object} ProviderUsage
  * @property {number} inputTokens
  * @property {number} outputTokens
+ * @property {number} cacheReadInputTokens
+ * @property {number} cacheCreationInputTokens
  * @property {number} totalCostUsd
- * @property {Object<string, {inputTokens: number, outputTokens: number, costUsd: number}>} [byModel]
+ * @property {Object<string, {inputTokens: number, outputTokens: number, cacheReadInputTokens: number, cacheCreationInputTokens: number, costUsd: number}>} [byModel]
  *   Per-model breakdown (the SDK reports `modelUsage`), so a run that fanned out
  *   across Haiku/Sonnet/Opus subagents can be attributed per tier.
  */

@@ -20,7 +20,7 @@ export const DEFAULT_COUNCIL_MODELS = Object.freeze({
   dossier: 'sonnet',
   bull: 'sonnet',
   bear: 'sonnet',
-  calibrator: 'opus', // the one leg that earns the strongest model
+  calibrator: 'claude-opus-4-6',
   cfo: 'sonnet',
 });
 

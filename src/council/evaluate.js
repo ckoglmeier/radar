@@ -510,7 +510,30 @@ function stageRequest(stage, { model, context, schema, maxTurns }) {
 }
 
 async function runStage(stage, request, runtime) {
-  const outcome = await runWithFallback(request, runtime);
+  const timeoutMs = Number(runtime.stageTimeoutMs || 0);
+  let timer = null;
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  const timeout = controller
+    ? new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`Council ${stage} stage exceeded ${timeoutMs}ms`);
+        error.code = 'COUNCIL_STAGE_TIMEOUT';
+        controller.abort(error);
+        reject(error);
+      }, timeoutMs);
+      timer.unref?.();
+    })
+    : null;
+  let outcome;
+  try {
+    const execution = runWithFallback(
+      controller ? { ...request, signal: controller.signal } : request,
+      runtime,
+    );
+    outcome = timeout ? await Promise.race([execution, timeout]) : await execution;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   return {
     ...outcome,
     stage,
@@ -1019,6 +1042,8 @@ function aggregateStageUsage(stages) {
   const total = {
     inputTokens: 0,
     outputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
     totalCostUsd: 0,
     byModel: {},
   };
@@ -1026,13 +1051,23 @@ function aggregateStageUsage(stages) {
     const usage = stage.result.usage || {};
     total.inputTokens += Number(usage.inputTokens || 0);
     total.outputTokens += Number(usage.outputTokens || 0);
+    total.cacheReadInputTokens += Number(usage.cacheReadInputTokens || 0);
+    total.cacheCreationInputTokens += Number(usage.cacheCreationInputTokens || 0);
     total.totalCostUsd += Number(usage.totalCostUsd || 0);
     for (const [model, modelUsage] of Object.entries(usage.byModel || {})) {
       if (!total.byModel[model]) {
-        total.byModel[model] = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+        total.byModel[model] = {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          costUsd: 0,
+        };
       }
       total.byModel[model].inputTokens += Number(modelUsage.inputTokens || 0);
       total.byModel[model].outputTokens += Number(modelUsage.outputTokens || 0);
+      total.byModel[model].cacheReadInputTokens += Number(modelUsage.cacheReadInputTokens || 0);
+      total.byModel[model].cacheCreationInputTokens += Number(modelUsage.cacheCreationInputTokens || 0);
       total.byModel[model].costUsd += Number(modelUsage.costUsd || 0);
     }
     return {
@@ -1042,6 +1077,8 @@ function aggregateStageUsage(stages) {
       usage: {
         inputTokens: Number(usage.inputTokens || 0),
         outputTokens: Number(usage.outputTokens || 0),
+        cacheReadInputTokens: Number(usage.cacheReadInputTokens || 0),
+        cacheCreationInputTokens: Number(usage.cacheCreationInputTokens || 0),
         totalCostUsd: Number(usage.totalCostUsd || 0),
       },
     };
@@ -1095,6 +1132,7 @@ export async function councilEvaluate(deal, opts = {}) {
     sourceCoverage = null,
     evidenceContractVersion = null,
     directContextBudgetTokens,
+    stageTimeoutMs = Number(env.RADAR_COUNCIL_STAGE_TIMEOUT_MS || 20 * 60 * 1_000),
   } = opts;
 
   const lens = {
@@ -1241,6 +1279,7 @@ export async function councilEvaluate(deal, opts = {}) {
       fallbackEnabled: resolveFallbackFlag(env),
       buildFallback,
       env,
+      stageTimeoutMs,
     };
 
     const notifyStage = async stage => {
