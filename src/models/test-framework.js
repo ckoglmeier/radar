@@ -29,6 +29,11 @@ function eq(actual, expected, message = '') {
   }
 }
 
+function nextPatch(version) {
+  const [major, minor, patch] = version.split('.');
+  return `${major}.${minor}.${Number(patch) + 1}`;
+}
+
 async function run() {
   await query('DELETE FROM lens_framework_versions');
   const base = getActiveLens();
@@ -45,7 +50,7 @@ async function run() {
   const first = await saveFrameworkVersion({ framework: edited, changeNote: 'First edit' });
 
   await test('first edit creates the next patch version', async () => {
-    eq(first.version, '1.0.1');
+    eq(first.version, nextPatch(base.manifest.version));
     eq(first.active, true);
   });
 
@@ -59,11 +64,11 @@ async function run() {
   edited.manifest.description = 'Second description';
   const second = await saveFrameworkVersion({ framework: edited, changeNote: 'Second edit' });
   await test('a later save activates one new immutable version', async () => {
-    eq(second.version, '1.0.2');
+    eq(second.version, nextPatch(first.version));
     const rows = await query('SELECT version FROM lens_framework_versions ORDER BY id');
     eq(rows.length, 2);
     const versions = (await getFrameworkState(base)).versions;
-    eq(versions[0].version, '1.0.2');
+    eq(versions[0].version, second.version);
     eq(versions[0].active, true);
     eq(versions[1].active, false);
   });
