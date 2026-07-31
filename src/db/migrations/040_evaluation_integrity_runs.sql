@@ -7,6 +7,7 @@ SET run_type = CASE run_type
   WHEN 'refresh' THEN 'research_refresh'
   WHEN 'followup' THEN 'founder_followup'
   WHEN 'replay' THEN 'controlled_replay'
+  WHEN 'audit_replay' THEN 'controlled_replay'
   ELSE run_type
 END;
 
@@ -163,6 +164,7 @@ SET council_run_type = CASE council_run_type
   WHEN 'refresh' THEN 'research_refresh'
   WHEN 'followup' THEN 'founder_followup'
   WHEN 'replay' THEN 'controlled_replay'
+  WHEN 'audit_replay' THEN 'controlled_replay'
   ELSE council_run_type
 END
 WHERE council_run_type IS NOT NULL;
