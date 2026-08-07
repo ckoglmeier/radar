@@ -16,6 +16,7 @@ import {
   untagInvestment,
   setConviction,
   inferAssetClass,
+  assetClassReviewCandidate,
 } from './investments.js';
 
 let passed = 0;
@@ -86,14 +87,22 @@ const BASE_FIELDS = {
 async function run() {
   const stamp = Date.now();
 
-  await test('asset class inference recognizes whole-word Fund names', async () => {
-    eq(inferAssetClass('EquityZen Future of Food Fund'), 'fund');
-    eq(inferAssetClass('Calm Company Fund II'), 'fund');
+  await test('asset class inference never changes class from a company name', async () => {
+    eq(inferAssetClass('EquityZen Future of Food Fund'), 'direct');
+    eq(inferAssetClass('Calm Company Fund II'), 'direct');
     eq(inferAssetClass('Fundamental Labs'), 'direct');
     eq(inferAssetClass('Acme Fund', 'direct'), 'direct', 'explicit class should win');
+    eq(inferAssetClass('Acme Fund', 'fund'), 'fund', 'explicit fund class should win');
   });
 
-  await test('fund-named imports persist as fund positions', async () => {
+  await test('fund-shaped names produce review hints without mutation', async () => {
+    eq(assetClassReviewCandidate('Fundamental Labs'), null);
+    const candidate = assetClassReviewCandidate('EquityZen Future of Food Fund');
+    eq(candidate?.suggested_asset_class, 'fund');
+    eq(candidate?.reason, 'fund-name-pattern');
+  });
+
+  await test('unlabeled fund-named imports persist as direct positions pending review', async () => {
     const company = `Test Access Fund ${stamp}`;
     try {
       const { id } = await upsertInvestment({
@@ -101,6 +110,23 @@ async function run() {
         status: 'Live',
         company_name: company,
         invest_date: '2026-01-15',
+      });
+      const rows = await query(`SELECT asset_class FROM investments WHERE id = $1`, [id]);
+      eq(rows[0].asset_class, 'direct');
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('explicit fund imports persist as fund positions', async () => {
+    const company = `Test Explicit Fund ${stamp}`;
+    try {
+      const { id } = await upsertInvestment({
+        ...BASE_FIELDS,
+        status: 'Live',
+        company_name: company,
+        invest_date: '2026-01-16',
+        asset_class: 'fund',
       });
       const rows = await query(`SELECT asset_class FROM investments WHERE id = $1`, [id]);
       eq(rows[0].asset_class, 'fund');

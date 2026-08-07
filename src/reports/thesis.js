@@ -27,7 +27,7 @@ export async function thesisPerformance(opts = {}) {
       COUNT(*) FILTER (WHERE i.status = 'Realized') AS realized
     FROM theses t
     LEFT JOIN investment_theses it ON it.thesis_id = t.id
-    LEFT JOIN investments i ON i.id = it.investment_id
+    LEFT JOIN investments i ON i.id = it.investment_id AND i.asset_class = 'direct'
     ${whereClause}
     GROUP BY t.id, t.name
     ORDER BY total_invested DESC NULLS LAST
@@ -48,7 +48,7 @@ export async function thesisPerformance(opts = {}) {
     JOIN investments i ON i.id = cf.investment_id
     JOIN investment_theses it ON it.investment_id = cf.investment_id
     JOIN theses t ON t.id = it.thesis_id
-    WHERE t.active = TRUE ${irrWhere}
+    WHERE t.active = TRUE AND i.asset_class = 'direct' ${irrWhere}
     ORDER BY cf.flow_date
   `, irrParams);
   const cfByThesis = {};
@@ -65,7 +65,7 @@ export async function thesisPerformance(opts = {}) {
     FROM investment_theses it
     JOIN investments i ON i.id = it.investment_id
     JOIN theses t ON t.id = it.thesis_id
-    WHERE t.active = TRUE ${irrWhere}
+    WHERE t.active = TRUE AND i.asset_class = 'direct' ${irrWhere}
     GROUP BY it.thesis_id
   `, irrParams);
   const unrByThesis = {};
@@ -89,9 +89,10 @@ export async function thesisPerformance(opts = {}) {
 
 export async function thesisList() {
   const rows = await query(`
-    SELECT t.*, COUNT(it.investment_id) AS investment_count
+    SELECT t.*, COUNT(i.id) AS investment_count
     FROM theses t
     LEFT JOIN investment_theses it ON it.thesis_id = t.id
+    LEFT JOIN investments i ON i.id = it.investment_id AND i.asset_class = 'direct'
     GROUP BY t.id
     ORDER BY investment_count DESC
   `);

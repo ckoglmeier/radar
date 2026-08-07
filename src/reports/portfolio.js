@@ -111,6 +111,7 @@ export async function portfolioSummary(opts = {}) {
     SELECT cf.flow_date AS date, cf.amount FROM cash_flows cf
     JOIN investments i ON i.id = cf.investment_id
     WHERE cf.type IN ('investment', 'distribution', 'refund', 'adjustment')
+      AND i.asset_class = 'direct'
     ${irrDateFilter}
     ORDER BY cf.flow_date
   `, irrParams);
@@ -244,6 +245,16 @@ export async function portfolioList(sortBy = 'invest_date', opts = {}) {
 }
 
 export async function reconcilePortfolio() {
+  // This is a Direct-portfolio audit. Other asset classes have different
+  // reconciliation semantics and are reported as intentionally excluded.
+  const excludedNonDirect = await query(`
+    SELECT asset_class, COUNT(*)::int AS position_count
+    FROM investments
+    WHERE asset_class != 'direct'
+    GROUP BY asset_class
+    ORDER BY asset_class
+  `);
+
   // Investments with cash_flows that don't match investments.invested
   const mismatched = await query(`
     SELECT i.id, i.company_name, i.invested,
@@ -251,6 +262,7 @@ export async function reconcilePortfolio() {
       i.invested - COALESCE(SUM(CASE WHEN cf.type = 'investment' THEN ABS(cf.amount) END), 0) AS diff
     FROM investments i
     JOIN cash_flows cf ON cf.investment_id = i.id
+    WHERE i.asset_class = 'direct'
     GROUP BY i.id, i.company_name, i.invested
     HAVING ABS(i.invested - COALESCE(SUM(CASE WHEN cf.type = 'investment' THEN ABS(cf.amount) END), 0)) > 0.01
     ORDER BY ABS(i.invested - COALESCE(SUM(CASE WHEN cf.type = 'investment' THEN ABS(cf.amount) END), 0)) DESC
@@ -261,6 +273,7 @@ export async function reconcilePortfolio() {
     SELECT i.id, i.company_name, i.invested
     FROM investments i
     LEFT JOIN cash_flows cf ON cf.investment_id = i.id
+    WHERE i.asset_class = 'direct'
     GROUP BY i.id, i.company_name, i.invested
     HAVING COUNT(cf.id) = 0
     ORDER BY i.invested DESC
@@ -279,6 +292,7 @@ export async function reconcilePortfolio() {
     SELECT i.id
     FROM investments i
     JOIN cash_flows cf ON cf.investment_id = i.id
+    WHERE i.asset_class = 'direct'
     GROUP BY i.id, i.invested
     HAVING ABS(i.invested - COALESCE(SUM(CASE WHEN cf.type = 'investment' THEN ABS(cf.amount) END), 0)) <= 0.01
   `);
@@ -290,6 +304,7 @@ export async function reconcilePortfolio() {
     JOIN investments i ON i.id = ie.id
     WHERE ie.best_multiple IS NOT NULL AND ie.best_multiple = 0
       AND i.status NOT IN ('Realized')
+      AND i.asset_class = 'direct'
     ORDER BY i.invested DESC
   `);
 
@@ -302,6 +317,7 @@ export async function reconcilePortfolio() {
            array_agg(invest_date ORDER BY invest_date) AS dates,
            array_agg(status ORDER BY invest_date) AS statuses
     FROM investments
+    WHERE asset_class = 'direct'
     GROUP BY company_name, source, lead, round, invested
     HAVING COUNT(*) > 1
     ORDER BY company_name
@@ -320,12 +336,15 @@ export async function reconcilePortfolio() {
            array_agg(lead ORDER BY invest_date) AS leads,
            array_agg(round ORDER BY invest_date) AS rounds
     FROM investments
+    WHERE asset_class = 'direct'
     GROUP BY company_name, source
     HAVING COUNT(*) > 1
     ORDER BY company_name
   `);
 
   return {
+    scope: 'direct',
+    excluded_non_direct: excludedNonDirect,
     matched_count: matched.length,
     mismatched,
     missing_cash_flows: missing,
@@ -353,6 +372,7 @@ export async function portfolioDetail(companyName) {
     FROM investments i
     JOIN investments_effective ie ON ie.id = i.id
     WHERE LOWER(i.company_name) LIKE LOWER($1)
+      AND i.asset_class = 'direct'
     ORDER BY i.invest_date
   `, [`%${companyName}%`]);
 

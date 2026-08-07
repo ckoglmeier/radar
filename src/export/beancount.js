@@ -65,6 +65,7 @@ export async function exportBeancount(outputPath) {
         ''
       ) AS theses
     FROM investments i
+    WHERE i.asset_class = 'direct'
     ORDER BY i.invest_date, i.company_name
   `);
 
@@ -97,6 +98,7 @@ export async function exportBeancount(outputPath) {
     SELECT cf.*, i.company_name
     FROM cash_flows cf
     LEFT JOIN investments i ON i.id = cf.investment_id
+    WHERE cf.investment_id IS NULL OR i.asset_class = 'direct'
     ORDER BY cf.flow_date, cf.id
   `);
 
@@ -156,7 +158,9 @@ export async function exportBeancount(outputPath) {
     SELECT v.snapshot_date, v.unrealized_value, i.company_name, i.invested
     FROM valuations v
     JOIN investments i ON i.id = v.investment_id
-    WHERE v.unrealized_value IS NOT NULL AND i.invested > 0
+    WHERE v.unrealized_value IS NOT NULL
+      AND i.invested > 0
+      AND i.asset_class = 'direct'
     ORDER BY v.snapshot_date, i.company_name
   `);
 

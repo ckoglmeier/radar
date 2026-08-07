@@ -143,6 +143,17 @@ importCmd
       console.log(`  Updated:         ${result.skipped}`);
       console.log(`  Thesis tags:     ${result.tagged}`);
 
+      const assetClassReview = result.asset_class_review_candidates || [];
+      if (assetClassReview.length > 0) {
+        console.log(chalk.yellow(`  Asset review:    ${assetClassReview.length} fund-shaped name(s) kept as Direct pending review`));
+        for (const candidate of assetClassReview.slice(0, 20)) {
+          console.log(chalk.dim(`    - ${candidate.company}`));
+        }
+        if (assetClassReview.length > 20) {
+          console.log(chalk.dim(`    ... and ${assetClassReview.length - 20} more`));
+        }
+      }
+
       // Show thesis tagging summary
       const tagged = result.results.filter(r => r.theses.length > 0);
       const untagged = result.results.filter(r => r.theses.length === 0);

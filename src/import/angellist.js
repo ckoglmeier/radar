@@ -10,6 +10,7 @@ import {
   snapshotInvestment,
   detectAndLogChanges,
   tagInvestment,
+  assetClassReviewCandidate,
 } from '../models/investments.js';
 import { getTaggingRules } from '../lenses/loader.js';
 
@@ -63,10 +64,15 @@ async function runAngelListImport(filePath) {
   let errors = 0;
   const errorDetails = [];
   const results = [];
+  const assetClassReviewCandidates = [];
 
   for (const row of records) {
     const companyName = row['Company/Fund']?.trim();
     if (!companyName) continue;
+    const assetClassReview = assetClassReviewCandidate(companyName);
+    if (assetClassReview) {
+      assetClassReviewCandidates.push({ company: companyName, ...assetClassReview });
+    }
 
     const investDate = parseDate(row['Invest Date']);
     const invested = parseMoney(row['Invested']);
@@ -149,7 +155,13 @@ async function runAngelListImport(filePath) {
         }
       }
 
-      results.push({ company: companyName, id: investmentId, isNew, theses: thesisMatches });
+      results.push({
+        company: companyName,
+        id: investmentId,
+        isNew,
+        theses: thesisMatches,
+        asset_class_review: assetClassReview,
+      });
     } catch (err) {
       errors++;
       errorDetails.push({ company: companyName, error: err.message });
@@ -163,6 +175,7 @@ async function runAngelListImport(filePath) {
     tagged,
     total: records.length,
     results,
+    asset_class_review_candidates: assetClassReviewCandidates,
     // sync_runs fields
     records_seen: records.length,
     records_new: imported,

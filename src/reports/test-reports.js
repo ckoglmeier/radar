@@ -11,7 +11,7 @@
 
 import { query } from '../db/index.js';
 import { portfolioSummary, portfolioList } from './portfolio.js';
-import { thesisPerformance } from './thesis.js';
+import { thesisList, thesisPerformance } from './thesis.js';
 import { performanceWindows, computeWindowMetrics, cashFlowsInRange } from './performance.js';
 import { calculateIRR } from '../utils/irr.js';
 
@@ -563,30 +563,66 @@ async function run() {
     // Section: asset_class + window math (migration 026 / performance fixes)
     console.log('\n  asset_class exclusion + flow-adjusted window math');
 
-    // A fund LP stake and account-transfer flows inside the golden window.
+    // Non-direct positions and account-transfer flows inside the golden window.
     const fundId = await insertInvestment({
       company_name: 'ZZGOLDEN Fund LP', status: 'Live', invest_date: '1995-06-01',
       invested: 7000, asset_class: 'fund',
     });
     await insertCashFlow(fundId, 'investment', -7000, '1995-06-01');
+    await insertCashFlow(fundId, 'distribution', 9000, '1996-06-01');
+    await tagThesis(fundId, aiInfraId, 100);
+
+    const employmentId = await insertInvestment({
+      company_name: 'ZZGOLDEN Employment Equity', status: 'Live', invest_date: '1995-07-01',
+      invested: 8000, unrealized_value: 25000, net_value: 25000,
+      asset_class: 'employment_equity',
+    });
+    await insertCashFlow(employmentId, 'investment', -8000, '1995-07-01');
+    await insertCashFlow(employmentId, 'distribution', 12000, '1996-07-01');
+    await tagThesis(employmentId, aiInfraId, 100);
+
+    const mergedId = await insertInvestment({
+      company_name: 'ZZGOLDEN Merged Source', status: 'Live', invest_date: '1995-08-01',
+      invested: 9000, unrealized_value: 50000, net_value: 50000,
+      asset_class: 'merged',
+    });
+    await insertCashFlow(mergedId, 'investment', -9000, '1995-08-01');
+    await insertCashFlow(mergedId, 'distribution', 15000, '1996-08-01');
+    await tagThesis(mergedId, aiInfraId, 100);
     // Account-level transfers (deposit/withdrawal) linked to a direct fixture —
     // must be excluded by TYPE regardless of linkage.
     await insertCashFlow(alphaId, 'deposit', 12345, '1995-07-01');
     await insertCashFlow(alphaId, 'withdrawal', -2345, '1995-07-02');
     await insertCashFlow(null, 'investment', -4567, '1995-08-01');
 
-    await test('portfolioSummary excludes fund positions (total_invested still 29000)', async () => {
+    await test('portfolioSummary excludes fund, Employment Equity, and merged positions', async () => {
       const { summary: s2 } = await portfolioSummary(OPTS);
       eq(Number(s2.total_invested), 29000);
       eq(Number(s2.total_investments), 4);
+      approx(Number(s2.irr), Number(s.irr), 1e-10, 'non-direct flows changed headline IRR');
     });
 
-    await test('portfolioList excludes fund positions', async () => {
+    await test('portfolioList excludes fund, Employment Equity, and merged positions', async () => {
       const list = await portfolioList('invest_date', OPTS);
       const golden = list.filter(r => r.company_name.startsWith('ZZGOLDEN'));
-      if (golden.some(r => r.company_name === 'ZZGOLDEN Fund LP')) {
-        throw new Error('fund LP leaked into direct portfolio list');
+      const leaked = golden.filter(r => [fundId, employmentId, mergedId].includes(r.id));
+      if (leaked.length > 0) {
+        throw new Error(`non-direct positions leaked into portfolio list: ${leaked.map(r => r.company_name).join(', ')}`);
       }
+    });
+
+    await test('thesisPerformance excludes fund, Employment Equity, and merged positions', async () => {
+      const after = await thesisPerformance(OPTS);
+      const aiInfra = after.find(row => row.thesis === 'AI Infrastructure & Safety');
+      approx(Number(aiInfra.total_invested), 14500, 1e-4);
+      approx(Number(aiInfra.total_net_value), 44000, 1e-4);
+      approx(Number(aiInfra.tvpi), 44000 / 14500, 1e-4);
+    });
+
+    await test('thesisList counts Direct positions only', async () => {
+      const after = await thesisList();
+      const aiInfra = after.find(row => row.name === 'AI Infrastructure & Safety');
+      eq(Number(aiInfra.investment_count), 2);
     });
 
     await test('cashFlowsInRange excludes transfers, fund flows, and unlinked rows', async () => {

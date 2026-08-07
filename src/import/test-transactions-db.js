@@ -11,7 +11,12 @@ import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { withTenant, query, closeDb } from '../db/index.js';
 import { runMigrations } from '../db/migrate.js';
 import { upsertInvestment } from '../models/investments.js';
-import { importTransactionLedger, importTransactionRows } from './transactions.js';
+import {
+  importTransactionLedger,
+  importTransactionRows,
+  recomputeInvestmentReturns,
+} from './transactions.js';
+import { directYtdDeployed } from '../reports/bet-sizing.js';
 
 let passed = 0;
 let failed = 0;
@@ -163,6 +168,42 @@ async function run() {
       eq(Number(fileFlows[1].amount), 250, 'distribution sign preserved');
       eq(Number(rowFlows[0].investment_id) > 0, true, 'rows importer linked investment');
       eq(rowFlows[0].source, 'browser_upload', 'rows importer should honor source option');
+    });
+
+    await test('YTD deployment and return recomputation exclude non-direct positions', async () => {
+      await withTenant(fileUrl, async () => {
+        for (const [companyName, assetClass, amount] of [
+          ['Fund Vehicle', 'fund', -7000],
+          ['Employment Award', 'employment_equity', -8000],
+          ['Merged Source', 'merged', -9000],
+        ]) {
+          const inserted = await query(`
+            INSERT INTO investments
+              (company_name, status, invest_date, invested, unrealized_value, asset_class)
+            VALUES ($1, 'Live', CURRENT_DATE, $2, $2, $3)
+            RETURNING id
+          `, [companyName, Math.abs(amount), assetClass]);
+          await query(`
+            INSERT INTO cash_flows (investment_id, flow_date, type, amount)
+            VALUES ($1, CURRENT_DATE, 'investment', $2)
+          `, [inserted[0].id, amount]);
+        }
+
+        eq(await directYtdDeployed(), 1000, 'only the Direct Acme flow should count');
+
+        const updates = await recomputeInvestmentReturns();
+        eq(updates.length, 1, 'only Direct positions should be recomputed');
+        eq(updates[0].company_name, 'Acme Robotics');
+
+        const nonDirect = await query(`
+          SELECT asset_class, computed_at
+          FROM investments
+          WHERE asset_class != 'direct'
+          ORDER BY asset_class
+        `);
+        eq(nonDirect.length, 3);
+        eq(nonDirect.every(row => row.computed_at == null), true, 'non-direct computed fields must remain untouched');
+      });
     });
   } finally {
     await closeDb();

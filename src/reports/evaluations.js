@@ -68,7 +68,7 @@ export async function evaluationLedger(options = {}) {
   const [evaluations, invites, investments] = await Promise.all([
     canonicalEvaluationLedger({ includeAttempts: Boolean(options.includeAttempts) }),
     query(`SELECT id, company_name, deal_slug FROM pipeline_invites`),
-    query(`SELECT id, company_name FROM investments`),
+    query(`SELECT id, company_name FROM investments WHERE asset_class = 'direct'`),
   ]);
 
   const candidates = [
@@ -127,7 +127,7 @@ export async function evalDiscover(opts = {}) {
   const { since, until } = opts;
 
   // Build date filter
-  const conditions = [];
+  const conditions = [`i.asset_class = 'direct'`];
   const params = [];
   if (since) { params.push(since); conditions.push(`i.invest_date >= $${params.length}`); }
   if (until) { params.push(until); conditions.push(`i.invest_date <= $${params.length}`); }
@@ -215,7 +215,10 @@ export async function evalValidate(opts = {}) {
   const { since, until, mode } = opts;
 
   // Build date filter
-  const conditions = ['de.total_score IS NOT NULL'];
+  const conditions = [
+    'de.total_score IS NOT NULL',
+    `(de.investment_id IS NULL OR i.asset_class = 'direct')`,
+  ];
   const params = [];
   if (since) { params.push(since); conditions.push(`i.invest_date >= $${params.length}`); }
   if (until) { params.push(until); conditions.push(`i.invest_date <= $${params.length}`); }

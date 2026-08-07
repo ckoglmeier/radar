@@ -156,6 +156,8 @@ function formatDateValue(d) {
 
 export function printReconciliation(data) {
   const {
+    scope = 'direct',
+    excluded_non_direct = [],
     matched_count,
     mismatched,
     missing_cash_flows,
@@ -167,6 +169,13 @@ export function printReconciliation(data) {
 
   console.log(chalk.bold('\n  Portfolio Reconciliation'));
   console.log(chalk.dim('  ─'.repeat(40)));
+
+  if (excluded_non_direct.length > 0) {
+    const excluded = excluded_non_direct
+      .map(row => `${row.asset_class}: ${row.position_count}`)
+      .join(', ');
+    console.log(chalk.dim(`  Scope: ${scope}; intentionally excluded ${excluded}`));
+  }
 
   const total = matched_count + mismatched.length + missing_cash_flows.length;
   console.log(`  ${chalk.green(matched_count)} reconciled  |  ${chalk.red(mismatched.length)} mismatched  |  ${chalk.yellow(missing_cash_flows.length)} no cash_flows  |  ${total} total investments`);

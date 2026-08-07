@@ -10,11 +10,21 @@
 
 import { query } from '../db/index.js';
 
-/** Infer a default asset class when an import does not supply one. */
+/**
+ * Return a non-mutating review hint for names that may represent fund vehicles.
+ * Name patterns are evidence for human review, never asset-class authority.
+ */
+export function assetClassReviewCandidate(companyName) {
+  return /\bfund\b/i.test(companyName || '')
+    ? { suggested_asset_class: 'fund', reason: 'fund-name-pattern' }
+    : null;
+}
+
+/** Default unlabeled imports to Direct; only explicit source data changes class. */
 export function inferAssetClass(companyName, explicitAssetClass) {
   const explicit = explicitAssetClass?.trim();
   if (explicit) return explicit;
-  return /\bfund\b/i.test(companyName || '') ? 'fund' : 'direct';
+  return 'direct';
 }
 
 // AngelList exports "Closing" status rows with an Invest Date that drifts

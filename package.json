@@ -24,6 +24,7 @@
     "radar": "node src/cli.js",
     "test:data-dir": "node src/config/test-data-dir.js",
     "test:backup-restore": "node src/db/test-backup-restore.js",
+    "test:boundary": "sh -c 'rm -rf ./.radar-test-boundary && DATABASE_URL=file:./.radar-test-boundary node src/cli.js db:migrate && DATABASE_URL=file:./.radar-test-boundary node src/import/test-transactions-db.js && DATABASE_URL=file:./.radar-test-boundary node src/export/test-beancount.js && DATABASE_URL=file:./.radar-test-boundary node src/reports/test-asset-boundaries.js && DATABASE_URL=file:./.radar-test-boundary node src/models/test-investments.js && DATABASE_URL=file:./.radar-test-boundary node src/reports/test-reports.js'",
     "setup": "node src/cli.js db:setup",
     "import": "node src/cli.js import angellist",
     "test:metrics": "node src/db/test-workspace-lease.js && node src/metrics/test-contract.js && node src/metrics/test-registry.js && node src/models/test-metric-views.js",

@@ -293,8 +293,10 @@ export async function recomputeInvestmentReturns() {
         investment_id,
         COALESCE(SUM(CASE WHEN type = 'distribution' THEN amount ELSE 0 END), 0) AS distributions,
         COALESCE(SUM(CASE WHEN type = 'refund' THEN amount ELSE 0 END), 0) AS refunds
-     FROM cash_flows
-     WHERE investment_id IS NOT NULL
+     FROM cash_flows cf
+     JOIN investments i ON i.id = cf.investment_id
+     WHERE cf.investment_id IS NOT NULL
+       AND i.asset_class = 'direct'
      GROUP BY investment_id`
   );
 

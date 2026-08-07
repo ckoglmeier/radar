@@ -12,6 +12,18 @@ import {
 } from '../utils/bet-sizing.js';
 import { getDistributions } from '../lenses/loader.js';
 
+export async function directYtdDeployed() {
+  const rows = await query(`
+    SELECT COALESCE(SUM(ABS(cf.amount)), 0) AS ytd
+    FROM cash_flows cf
+    JOIN investments i ON i.id = cf.investment_id
+    WHERE cf.type = 'investment'
+      AND cf.flow_date >= date_trunc('year', CURRENT_DATE)
+      AND i.asset_class = 'direct'
+  `);
+  return parseFloat(rows[0]?.ytd || 0);
+}
+
 export async function betSizeReport(company, opts = {}) {
   // 1. Look up the company's latest eval + primary thesis
   const evalRow = await query(`
@@ -106,15 +118,9 @@ export async function betSizeReport(company, opts = {}) {
     GROUP BY t.name
   `);
   // Year-to-date cash deployed (current calendar year). Drives annual_budget_remaining.
-  const ytdThisYearRows = await query(`
-    SELECT COALESCE(SUM(ABS(amount)), 0) AS ytd
-    FROM cash_flows
-    WHERE type = 'investment'
-      AND flow_date >= date_trunc('year', CURRENT_DATE)
-  `);
+  const ytdDeployedThisYear = await directYtdDeployed();
 
   const ytdDeployed = parseFloat(deployedRows[0]?.illiquid || 0);
-  const ytdDeployedThisYear = parseFloat(ytdThisYearRows[0]?.ytd || 0);
   const clusterExposures = {};
   for (const r of clusterRows) {
     clusterExposures[thesisToCluster(r.name)] = parseFloat(r.exposure);
