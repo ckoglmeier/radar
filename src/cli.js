@@ -45,6 +45,7 @@ import {
   applyPortfolioEntityManifest,
   buildPortfolioEntityManifest,
 } from './models/portfolio-entities.js';
+import { buildFundsAudit, formatFundsAuditSummary } from './models/funds-audit.js';
 
 program
   .name('radar')
@@ -508,6 +509,30 @@ portfolioCmd
         console.error(chalk.red(`\n  Unknown type "${type}". Use "cashflow" or "invite".\n`));
         process.exit(1);
       }
+    } catch (err) {
+      console.error(chalk.red(`\n  Error: ${err.message}\n`));
+      process.exit(1);
+    }
+  });
+
+// --- Funds ---
+const fundsCmd = program.command('funds').description('Fund portfolio audit and tracking');
+
+fundsCmd
+  .command('audit')
+  .description('Build a read-only legacy Funds migration audit')
+  .option('--out <file>', 'JSON audit output path')
+  .action(async (opts) => {
+    try {
+      const audit = await buildFundsAudit();
+      const file = resolve(
+        opts.out || `./backups/funds-audit-${audit.source_hash.slice(0, 12)}.json`,
+      );
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(audit, null, 2)}\n`);
+      console.log(`\n${formatFundsAuditSummary(audit)}`);
+      console.log(chalk.green(`JSON audit written to ${file}`));
+      console.log(chalk.dim('No database records were changed.\n'));
     } catch (err) {
       console.error(chalk.red(`\n  Error: ${err.message}\n`));
       process.exit(1);

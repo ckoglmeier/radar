@@ -63,3 +63,26 @@ Verification:
 
 The next gated wave is W3: the Funds audit, typed fund ledger, document/privacy
 foundation, backup coverage, and greenfield app surface.
+
+## W3 — Funds
+
+### Read-only migration audit
+
+Status: implemented; real-workspace review remains a gate before migration
+apply.
+
+- Inventories Fund positions, legacy Funds rooms and holdings, routed Fund cash
+  flows, valuations, and document metadata.
+- Proposes but does not perform migrations, creations, or Direct-to-Fund
+  reclassifications.
+- Preserves raw room cells and reports typed parse errors.
+- Keeps each Fund vehicle distinct and reports family-name similarity only as
+  review evidence.
+- Traverses merged-position chains and blocks on unsafe identity states.
+- Includes exact Direct analytics deltas for proposed reclassifications.
+
+Verification:
+
+- `npm run test:funds-audit` — passed, including deterministic output,
+  no-write proof, legacy parsing, known-case checks, merged links, Fund-routed
+  flows, document-metadata-only handling, and adjacent-vintage isolation.
