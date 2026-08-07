@@ -3,7 +3,7 @@
 import { program } from 'commander';
 import chalk from 'chalk';
 import { readFileSync, cpSync, mkdirSync, writeFileSync, existsSync } from 'fs';
-import { join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 import { runSchema } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
 import { backupDatabase } from './db/backup.js';
@@ -41,6 +41,10 @@ import { resolveAuthMode, validateAuthStartup, formatAuthStatus, probeActiveCred
 import { printUpdatesList, printUpdateDetail, printUpdateTimeline } from './cli/printers/updates.js';
 import { reextractIntake } from './intake/reextract.js';
 import { resolveDataDir } from './config/data-dir.js';
+import {
+  applyPortfolioEntityManifest,
+  buildPortfolioEntityManifest,
+} from './models/portfolio-entities.js';
 
 program
   .name('radar')
@@ -426,6 +430,46 @@ portfolioCmd
     try {
       const data = await reconcilePortfolio();
       printReconciliation(data);
+    } catch (err) {
+      console.error(chalk.red(`\n  Error: ${err.message}\n`));
+      process.exit(1);
+    }
+  });
+
+portfolioCmd
+  .command('identity-audit')
+  .description('Build a dry-run manifest for reviewed portfolio-entity links')
+  .option('--out <file>', 'manifest output path')
+  .action(async (opts) => {
+    try {
+      const manifest = await buildPortfolioEntityManifest();
+      const file = resolve(
+        opts.out || `./backups/portfolio-entity-manifest-${manifest.source_hash.slice(0, 12)}.json`,
+      );
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+      console.log(chalk.green(`\n  Identity audit written to ${file}`));
+      console.log(chalk.dim(`  ${manifest.counts.positions} positions; ${manifest.counts.candidates} decisions; ${manifest.counts.merged_resolved} merged rows resolved`));
+      if (manifest.counts.conflicts > 0) {
+        console.log(chalk.yellow(`  ${manifest.counts.conflicts} conflict(s) must be resolved before apply.`));
+      }
+      console.log(chalk.dim('  No database records were changed.\n'));
+    } catch (err) {
+      console.error(chalk.red(`\n  Error: ${err.message}\n`));
+      process.exit(1);
+    }
+  });
+
+portfolioCmd
+  .command('identity-apply <manifest>')
+  .description('Apply decisions from a reviewed identity manifest (local PGlite only)')
+  .action(async (manifestPath) => {
+    try {
+      const file = resolve(manifestPath);
+      const manifest = JSON.parse(readFileSync(file, 'utf8'));
+      const result = await applyPortfolioEntityManifest(manifest);
+      console.log(chalk.green('\n  Portfolio entity manifest applied.'));
+      console.log(chalk.dim(`  ${result.entities_created} entities created; ${result.positions_linked} positions linked; ${result.aliases_linked} aliases linked; ${result.unchanged} already linked.\n`));
     } catch (err) {
       console.error(chalk.red(`\n  Error: ${err.message}\n`));
       process.exit(1);

@@ -13,6 +13,8 @@ const sourceUrl = `file:${join(scratch, 'source')}`;
 const targetUrl = `file:${join(scratch, 'target')}`;
 const backupDir = join(scratch, 'backups');
 const bytes = Buffer.from([0, 1, 2, 127, 128, 254, 255]);
+const entityKey = '11111111-1111-4111-8111-111111111111';
+const positionKey = '22222222-2222-4222-8222-222222222222';
 
 try {
   let backupFile;
@@ -20,6 +22,25 @@ try {
   let evaluationId;
   await withTenant(sourceUrl, async () => {
     await runMigrations();
+    const [entity] = await query(`
+      INSERT INTO portfolio_entities
+        (entity_key, legal_name, normalized_name, entity_type)
+      VALUES ($1, 'Backup Entity', 'backup entity', 'operating_company')
+      RETURNING id
+    `, [entityKey]);
+    await query(`
+      INSERT INTO investments
+        (position_key, portfolio_entity_id, company_name, invest_date,
+         asset_class, source)
+      VALUES ($1, $2, 'Backup Entity', '2024-01-01', 'direct', 'test')
+    `, [positionKey, entity.id]);
+    await query(`
+      INSERT INTO company_aliases
+        (alias, alias_normalized, canonical_company_name,
+         canonical_normalized, portfolio_entity_id)
+      VALUES ('Backup Former Name', 'backup former name', 'Backup Entity',
+              'backup entity', $1)
+    `, [entity.id]);
     const [invite] = await query(
       `INSERT INTO pipeline_invites (deal_slug, company_name, status)
        VALUES ('backup-fixture', 'Backup Fixture', 'invite') RETURNING id`,
@@ -90,6 +111,15 @@ try {
       `SELECT id, deal_slug, company_name FROM pipeline_invites ORDER BY id`,
     );
     assert.deepEqual(invites.map(row => row.deal_slug), ['backup-fixture']);
+    const [restoredIdentity] = await query(`
+      SELECT pe.entity_key, i.position_key, ca.portfolio_entity_id = pe.id AS alias_linked
+        FROM portfolio_entities pe
+        JOIN investments i ON i.portfolio_entity_id = pe.id
+        JOIN company_aliases ca ON ca.portfolio_entity_id = pe.id
+       WHERE pe.entity_key = $1
+    `, [entityKey]);
+    assert.equal(restoredIdentity.position_key, positionKey);
+    assert.equal(restoredIdentity.alias_linked, true);
     const [docMeta] = await query(`SELECT id FROM documents`);
     const restoredDocument = await getDocument(docMeta.id);
     assert.deepEqual(Buffer.from(restoredDocument.content), bytes);

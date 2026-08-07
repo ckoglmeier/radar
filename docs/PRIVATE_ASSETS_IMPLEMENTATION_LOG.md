@@ -30,5 +30,36 @@ Verification:
 - `npm run test:local` — passed.
 - `git diff --check` — passed.
 
-The next gated wave is W2a: additive entity/position identity with the legacy
-`UNIQUE(company_name, invest_date)` constraint left intact.
+## W2a — Additive entity and position identity
+
+Status: implemented and verified on the engine branch.
+
+Changes:
+
+- Added stable UUID `position_key` values to every investment and nullable
+  `portfolio_entity_id` links without changing the legacy importer identity.
+- Added `portfolio_entities` for operating companies, distinct fund vehicles,
+  and future typed assets.
+- Added a deterministic, dry-run identity audit with explicit source evidence,
+  unresolved owner decisions, source/proposal hashes, and stale-manifest
+  rejection.
+- Made reviewed apply local-PGlite-only and atomic across the full manifest.
+- Kept every Fund position as a separate vehicle proposal; names and adjacent
+  vintages are never collapsed automatically.
+- Excluded `merged` investments as link targets and traversed consolidation
+  chains to the surviving position; missing mappings and cycles block apply.
+- Migrated confirmed aliases to entity links while retaining legacy fallback
+  behavior during the additive transition.
+- Added entity/position/alias ordering and coverage to backup/restore.
+- Kept `UNIQUE(company_name, invest_date)` intact for the current importers.
+
+Verification:
+
+- `npm run test:identity` — passed, including rollback, stale-manifest,
+  idempotency, fund-vintage isolation, alias migration, and merged-chain tests.
+- `npm run test:backup-restore` — passed.
+- `npm run test:local` — passed.
+- `git diff --check` — passed.
+
+The next gated wave is W3: the Funds audit, typed fund ledger, document/privacy
+foundation, backup coverage, and greenfield app surface.

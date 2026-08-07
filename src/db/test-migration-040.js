@@ -22,6 +22,13 @@ try {
       SELECT version, 'legacy-' || version
       FROM generate_series(1, 39) AS version
     `);
+    // This fixture isolates migration 040 with a deliberately partial legacy
+    // schema. Mark later migrations applied so their unrelated prerequisites
+    // are not part of this focused normalization test.
+    await query(`
+      INSERT INTO schema_migrations (version, name)
+      VALUES (41, 'fixture-skip-041')
+    `);
     await query(`
       CREATE TABLE council_runs (
         id SERIAL PRIMARY KEY,

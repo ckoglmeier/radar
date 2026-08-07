@@ -24,7 +24,9 @@ import { query, isPgliteActive } from './index.js';
 const INSERT_ORDER = [
   'schema_migrations',
   'theses',
+  'portfolio_entities',
   'investments',
+  'company_aliases',
   'valuations',
   'cash_flows',
   'investment_events',
