@@ -90,8 +90,14 @@ try {
       VALUES
         ($1, '2022-01-01', 'investment', -100000, 'Incisive Ventures Fund I', 'test', 'fund-audit-linked', 'matched', NULL, 'Cash:AngelList'),
         (NULL, '2024-06-01', 'investment', -50000, 'Range II', 'test', 'fund-audit-routed', 'fund', 'LP capital call', 'Cash:AngelList'),
-        ($2, '2026-01-15', 'investment', -10000, 'Access Capital Opportunity', 'test', 'fund-audit-direct', 'matched', NULL, 'Cash:AngelList')
+        ($2, '2026-01-15', 'investment', -10000, 'Access Capital Opportunity', 'test', 'fund-audit-direct', 'matched', NULL, 'Cash:AngelList'),
+        (NULL, '2024-06-24', 'distribution', 50, 'Underlying Company', 'test', 'fund-audit-ignored', 'ignored', 'Previously ignored', 'Cash:AngelList')
     `, [position('Incisive Ventures Fund I').id, position('Access Capital Opportunity').id]);
+    await query(`
+      UPDATE cash_flows
+         SET spv_raw = 'Incisive Ventures Fund I'
+       WHERE external_hash = 'fund-audit-ignored'
+    `);
     await createDocument({
       entity_type: 'investment',
       entity_id: position('Incisive Ventures Fund I').id,
@@ -118,6 +124,9 @@ try {
     assert.equal(audit.counts.fund_room_holdings, 6);
     assert.equal(audit.counts.unlinked_room_holdings, 2);
     assert.equal(audit.counts.routed_fund_flows, 1);
+    assert.equal(audit.counts.fund_linked_flow_candidates, 1);
+    assert.equal(audit.counts.fund_linked_flows_needing_review, 1);
+    assert.equal(audit.counts.unmatched_routed_fund_flows, 1);
     assert.equal(audit.duplicate_holding_links[0].holding_count, 2);
     assert.equal(audit.merged_resolutions.length, 1);
     assert.equal(audit.merged_resolutions[0].target_investment_id, Number(position('Incisive Ventures Fund I').id));
@@ -143,6 +152,8 @@ try {
     assert.equal('content' in audit.fund_investments[0].documents[0], false);
     assert.equal(audit.routed_fund_flows[0].source_account, 'Cash:AngelList');
     assert.equal(audit.routed_fund_flows[0].candidate_investments.length, 0);
+    assert.equal(audit.fund_linked_flow_candidates[0].candidate_investments[0].company_name, 'Incisive Ventures Fund I');
+    assert.equal(audit.fund_linked_flow_candidates[0].needs_disposition_review, true);
     assert.ok(audit.holding_candidates.every(candidate => candidate.decision === null));
     assert.match(formatFundsAuditSummary(audit), /No database records were changed|Funds migration audit/);
   });

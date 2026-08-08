@@ -73,6 +73,8 @@ apply.
 
 - Inventories Fund positions, legacy Funds rooms and holdings, routed Fund cash
   flows, valuations, and document metadata.
+- Cross-checks every unlinked company/SPV name against Fund positions so a
+  mistaken `ignored` disposition cannot disappear from migration review.
 - Proposes but does not perform migrations, creations, or Direct-to-Fund
   reclassifications.
 - Preserves raw room cells and reports typed parse errors.

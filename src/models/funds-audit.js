@@ -384,16 +384,33 @@ export async function buildFundsAudit() {
     .filter(ids => ids.length > 1)
     .map(ids => ({ investment_id: Number(ids[0]), holding_count: ids.length }));
 
+  function candidateFundInvestments(flow) {
+    const names = [flow.company_raw, flow.spv_raw].filter(Boolean).map(normalize);
+    return fundInvestments
+      .filter(position => names.includes(normalize(position.company_name)))
+      .map(position => ({
+        id: Number(position.id),
+        position_key: position.position_key,
+        company_name: position.company_name,
+        asset_class: position.asset_class,
+        matched_on: normalize(flow.spv_raw) === normalize(position.company_name) ? 'spv_raw' : 'company_raw',
+      }));
+  }
+
   const routedFundFlows = flows
     .filter(row => row.reconciliation_status === 'fund')
     .map(flow => ({
       ...stableValue(flow),
       source_account: flow.contra_account || null,
-      candidate_investments: flow.company_raw
-        ? positions
-            .filter(row => row.asset_class !== 'merged' && normalize(row.company_name) === normalize(flow.company_raw))
-            .map(row => ({ id: Number(row.id), position_key: row.position_key, company_name: row.company_name, asset_class: row.asset_class }))
-        : [],
+      candidate_investments: candidateFundInvestments(flow),
+    }));
+  const fundLinkedFlowCandidates = flows
+    .filter(flow => !flow.investment_id && candidateFundInvestments(flow).length > 0)
+    .map(flow => ({
+      ...stableValue(flow),
+      source_account: flow.contra_account || null,
+      candidate_investments: candidateFundInvestments(flow),
+      needs_disposition_review: flow.reconciliation_status !== 'fund',
     }));
 
   const allNames = [...nameRecords, ...fundShapedDirect.map(row => ({ source: 'direct_hint', id: Number(row.id), name: row.company_name }))];
@@ -419,6 +436,9 @@ export async function buildFundsAudit() {
       unlinked_room_holdings: candidates.filter(row => !row.current_investment_id).length,
       fund_shaped_direct: fundShapedDirect.length,
       routed_fund_flows: routedFundFlows.length,
+      fund_linked_flow_candidates: fundLinkedFlowCandidates.length,
+      fund_linked_flows_needing_review: fundLinkedFlowCandidates.filter(row => row.needs_disposition_review).length,
+      unmatched_routed_fund_flows: routedFundFlows.filter(row => row.candidate_investments.length === 0).length,
       parse_errors: candidates.reduce((sum, row) => sum + row.parse_errors.length, 0),
       conflicts: conflicts.length,
     },
@@ -431,6 +451,7 @@ export async function buildFundsAudit() {
     similar_fund_families: familyGroups,
     fund_shaped_direct_candidates: fundShapedDirect,
     routed_fund_flows: routedFundFlows,
+    fund_linked_flow_candidates: fundLinkedFlowCandidates,
     merged_resolutions,
     expectations,
     conflicts,
@@ -447,6 +468,8 @@ export function formatFundsAuditSummary(report) {
     `Unlinked holdings: ${report.counts.unlinked_room_holdings}`,
     `Fund-shaped Direct review candidates: ${report.counts.fund_shaped_direct}`,
     `Fund-routed cash flows: ${report.counts.routed_fund_flows}`,
+    `Fund-linked flows needing disposition review: ${report.counts.fund_linked_flows_needing_review}`,
+    `Fund-routed flows with no position match: ${report.counts.unmatched_routed_fund_flows}`,
     `Parse errors / blocking conflicts: ${report.counts.parse_errors} / ${report.counts.conflicts}`,
     '',
     'Known-case check:',

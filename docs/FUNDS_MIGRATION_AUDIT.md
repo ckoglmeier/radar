@@ -23,6 +23,8 @@ The audit includes:
 - Direct analytics before and after each possible reclassification;
 - Fund-routed reconciliation transactions, including notes, source account,
   and exact-name candidate positions;
+- unlinked flows whose company or SPV exactly matches a Fund position even when
+  their current disposition is `ignored` or `pending`;
 - exact-name duplicates and broader family-name similarities, which are review
   hints only and never entity merges;
 - merged-position traversal and blocking conflicts for missing mappings,
