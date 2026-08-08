@@ -838,7 +838,7 @@ export async function employmentEquityMetrics(investmentId) {
   `, [investmentId]);
   const remainingBasis = key => {
     const known = lots.filter(row => row[key] != null);
-    if (known.length === 0) return null;
+    if (lots.length === 0 || known.length !== lots.length) return null;
     return known.reduce((sum, row) => {
       const ratio = row.units_acquired == null ? 1 : Number(row.units_remaining) / Number(row.units_acquired);
       return sum + Number(row[key]) * ratio;
@@ -919,16 +919,19 @@ export async function getEmploymentEquityPosition(investmentId) {
 export async function employmentEquitySummary() {
   const positions = await listEmploymentEquityPositions();
   const issuers = new Set(positions.map(row => row.portfolio_entity_id));
-  const sumKnown = key => positions.reduce((sum, row) => sum + Number(row.metrics[key] || 0), 0);
+  const completeSum = key => positions.length > 0 && positions.every(row => row.metrics[key] != null)
+    ? positions.reduce((sum, row) => sum + Number(row.metrics[key]), 0)
+    : null;
+  const cashSum = key => positions.reduce((sum, row) => sum + Number(row.metrics[key] || 0), 0);
   return {
     issuer_count: issuers.size,
     position_count: positions.length,
-    remaining_cash_outlay: sumKnown('remaining_cash_outlay'),
-    remaining_tax_basis: sumKnown('remaining_tax_basis'),
-    remaining_compensation_basis: sumKnown('remaining_compensation_basis'),
-    vested_value: sumKnown('vested_value'),
-    unvested_contingent_value: sumKnown('unvested_contingent_value'),
-    realized_gross_proceeds: sumKnown('realized_gross_proceeds'),
-    cash_distributions: sumKnown('cash_distributions'),
+    remaining_cash_outlay: completeSum('remaining_cash_outlay'),
+    remaining_tax_basis: completeSum('remaining_tax_basis'),
+    remaining_compensation_basis: completeSum('remaining_compensation_basis'),
+    vested_value: completeSum('vested_value'),
+    unvested_contingent_value: completeSum('unvested_contingent_value'),
+    realized_gross_proceeds: cashSum('realized_gross_proceeds'),
+    cash_distributions: cashSum('cash_distributions'),
   };
 }

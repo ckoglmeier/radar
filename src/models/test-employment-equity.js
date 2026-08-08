@@ -272,6 +272,7 @@ try {
     const summary = await employmentEquitySummary();
     assert.equal(summary.issuer_count, 2);
     assert.equal(summary.position_count, 3);
+    assert.equal(summary.vested_value, null, 'one unmarked position keeps the aggregate mark unavailable');
 
     await assert.rejects(
       () => query(`UPDATE cash_flows SET amount = 999 WHERE id = $1`, [exercise.cash_flow.id]),
