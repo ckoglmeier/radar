@@ -55,6 +55,7 @@ async function expectRejects(fn, pattern) {
   if (pattern && !pattern.test(caught.message)) {
     throw new Error(`expected error matching ${pattern}, got ${caught.message}`);
   }
+  return caught;
 }
 
 async function cleanupCompany(company) {
@@ -264,10 +265,11 @@ async function run() {
         executionMode: 'desktop',
       });
       eq(Buffer.from(local.content).toString(), 'restricted fixture');
-      await expectRejects(
+      const modelError = await expectRejects(
         () => accessDocumentBytes({ documentId: doc.id, purpose: 'model', executionMode: 'desktop' }),
         /denies model access/
       );
+      eq(modelError.code, 'DOCUMENT_POLICY_DENIED');
       await expectRejects(
         () => accessDocumentBytes({ documentId: doc.id, purpose: 'download', executionMode: 'hosted' }),
         /denies hosted access/

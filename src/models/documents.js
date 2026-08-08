@@ -54,6 +54,12 @@ function assertPolicyValue(values, value, label) {
   if (!values.has(value)) throw new TypeError(`invalid ${label}: ${value}`);
 }
 
+function documentPolicyDenied(message) {
+  const error = new Error(message);
+  error.code = 'DOCUMENT_POLICY_DENIED';
+  return error;
+}
+
 async function resolveExecutionMode(executionMode) {
   if (executionMode != null) {
     if (!EXECUTION_MODES.has(executionMode)) {
@@ -151,19 +157,19 @@ export async function accessDocumentBytes({ documentId, purpose, executionMode }
   await assertEntityExists(metadata.entity_type, metadata.entity_id);
 
   if (executionMode === 'hosted' && metadata.sync_policy === 'local_only') {
-    throw new Error('document policy denies hosted access to local_only bytes');
+    throw documentPolicyDenied('document policy denies hosted access to local_only bytes');
   }
   if (purpose === 'model' && metadata.processing_policy !== 'model_allowed') {
-    throw new Error('document policy denies model access');
+    throw documentPolicyDenied('document policy denies model access');
   }
   if (purpose === 'local_processing' && executionMode !== 'desktop') {
     throw new Error('local_processing requires desktop execution');
   }
   if (['backup', 'export', 'support'].includes(purpose) && metadata.sync_policy === 'local_only') {
-    throw new Error(`document policy denies ${purpose} access`);
+    throw documentPolicyDenied(`document policy denies ${purpose} access`);
   }
   if (purpose === 'support' && metadata.confidentiality === 'tax_sensitive') {
-    throw new Error('document policy denies support access to tax_sensitive bytes');
+    throw documentPolicyDenied('document policy denies support access to tax_sensitive bytes');
   }
 
   const contentRows = await query(`SELECT content FROM documents WHERE id = $1`, [documentId]);
