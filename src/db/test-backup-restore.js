@@ -7,6 +7,7 @@ import { backupDatabase, restoreDatabase } from './backup.js';
 import { closeDb, query, withTenant } from './index.js';
 import { runMigrations } from './migrate.js';
 import { createDocument, getDocument } from '../models/documents.js';
+import { createFund, fundMetrics, recordFundDistribution } from '../models/funds.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-backup-restore-'));
 const sourceUrl = `file:${join(scratch, 'source')}`;
@@ -20,6 +21,7 @@ try {
   let backupFile;
   let runId;
   let evaluationId;
+  let fundId;
   await withTenant(sourceUrl, async () => {
     await runMigrations();
     const [entity] = await query(`
@@ -92,6 +94,20 @@ try {
       sha256: createHash('sha256').update(bytes).digest('hex'),
       content: bytes,
     });
+    const fund = await createFund({
+      legalName: 'Backup Fund I, LP',
+      commitmentDate: '2024-06-01',
+      commitment: 100,
+      initialContribution: 40,
+      initialNav: 45,
+      migrationKey: 'backup:fund-i',
+    });
+    fundId = Number(fund.investment.id);
+    await recordFundDistribution(fundId, {
+      date: '2025-01-01',
+      amount: 5,
+      externalHash: 'backup:fund-i:distribution',
+    });
     ({ file: backupFile } = await backupDatabase({ outDir: backupDir }));
   });
 
@@ -153,6 +169,11 @@ try {
     assert.equal(restoredEvaluation.council_evidence_contract_version, 1);
     assert.equal(restoredEvaluation.council_source_manifest_sha256, 'manifest-hash');
     assert.equal(restoredEvaluation.promotes_to_canonical, true);
+    const restoredFundMetrics = await fundMetrics(fundId);
+    assert.equal(restoredFundMetrics.commitment, 100);
+    assert.equal(restoredFundMetrics.paid_in, 40);
+    assert.equal(restoredFundMetrics.distributed, 5);
+    assert.equal(restoredFundMetrics.nav, 45);
 
     const [nextInvite] = await query(
       `INSERT INTO pipeline_invites (deal_slug, company_name)

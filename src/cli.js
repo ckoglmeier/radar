@@ -46,6 +46,10 @@ import {
   buildPortfolioEntityManifest,
 } from './models/portfolio-entities.js';
 import { buildFundsAudit, formatFundsAuditSummary } from './models/funds-audit.js';
+import {
+  applyFundsMigrationManifest,
+  buildFundsMigrationManifest,
+} from './models/funds-migration.js';
 
 program
   .name('radar')
@@ -533,6 +537,53 @@ fundsCmd
       console.log(`\n${formatFundsAuditSummary(audit)}`);
       console.log(chalk.green(`JSON audit written to ${file}`));
       console.log(chalk.dim('No database records were changed.\n'));
+    } catch (err) {
+      console.error(chalk.red(`\n  Error: ${err.message}\n`));
+      process.exit(1);
+    }
+  });
+
+fundsCmd
+  .command('migration-audit')
+  .description('Build the reviewed typed-Fund migration manifest without writing')
+  .option('--out <file>', 'JSON manifest output path')
+  .action(async (opts) => {
+    try {
+      const manifest = await buildFundsMigrationManifest();
+      const file = resolve(
+        opts.out || `./backups/funds-migration-${manifest.manifest_hash.slice(0, 12)}.json`,
+      );
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+      console.log(chalk.green(`\n  Fund migration manifest written to ${file}`));
+      console.log(chalk.dim(`  ${manifest.profile_candidates.length} Fund profile decision(s); ${manifest.flow_candidates.length} cash-flow decision(s).`));
+      if (manifest.conflicts.length > 0) {
+        console.log(chalk.yellow(`  ${manifest.conflicts.length} conflict(s) must be resolved before apply.`));
+      }
+      console.log(chalk.dim('  No database records were changed.\n'));
+    } catch (err) {
+      console.error(chalk.red(`\n  Error: ${err.message}\n`));
+      process.exit(1);
+    }
+  });
+
+fundsCmd
+  .command('migration-apply <manifest>')
+  .description('Apply an owner-reviewed typed-Fund migration manifest (local PGlite only)')
+  .action(async (manifestPath) => {
+    try {
+      const file = resolve(manifestPath);
+      const manifest = JSON.parse(readFileSync(file, 'utf8'));
+      const result = await applyFundsMigrationManifest(manifest);
+      for (const report of result.reports) {
+        const summary = report.status === 'committed'
+          ? `profile +${report.profile_created}; flows +${report.flows_attached}; unchanged ${report.flows_unchanged}`
+          : report.error;
+        console.log(`${report.status === 'committed' ? chalk.green('  committed') : chalk.red('  failed')} Fund #${report.investment_id}: ${summary}`);
+      }
+      console.log(chalk.dim(`  ${result.unresolved_flows.length} cash flow(s) left unresolved.`));
+      if (result.failed > 0) throw new Error(`${result.failed} Fund migration transaction(s) failed`);
+      console.log(chalk.green('\n  Fund migration manifest applied.\n'));
     } catch (err) {
       console.error(chalk.red(`\n  Error: ${err.message}\n`));
       process.exit(1);

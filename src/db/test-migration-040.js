@@ -27,7 +27,8 @@ try {
     // are not part of this focused normalization test.
     await query(`
       INSERT INTO schema_migrations (version, name)
-      VALUES (41, 'fixture-skip-041')
+      SELECT version, 'fixture-skip-' || version
+      FROM generate_series(41, 44) AS version
     `);
     await query(`
       CREATE TABLE council_runs (
