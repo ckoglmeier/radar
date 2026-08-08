@@ -67,7 +67,13 @@ try {
         balanceAsOfDate: '2024-12-31',
         strikePrice: 1,
       },
+      openingValuations: [{
+        date: '2019-03-01',
+        commonFmvPerUnit: 1,
+        confidence: 'calculated',
+      }],
     });
+    assert.equal(Number(options.valuations[0].valuation.net_value), 0);
     const common = await createEmploymentEquityPosition({
       portfolioEntityId: guild.entity.id,
       displayName: '2021 common stock purchase',
@@ -137,6 +143,11 @@ try {
     assert.equal(Number(mark.valuation.net_value), 9_100);
     assert.equal(Number(mark.details.vested_value), 9_100);
     assert.equal(Number(mark.details.unvested_value), 0);
+    const optionMetrics = await employmentEquityMetrics(options.investment.id);
+    assert.equal(optionMetrics.starting_value, 0);
+    assert.equal(optionMetrics.vested_value, 9_100);
+    assert.equal(optionMetrics.value_change, 9_100);
+    assert.equal(optionMetrics.valuation_count, 2);
 
     const secondLot = await addInvestmentLot(common.investment.id, {
       acquisitionDate: '2022-02-01',

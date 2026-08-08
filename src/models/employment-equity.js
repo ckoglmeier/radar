@@ -321,7 +321,11 @@ export async function createEmploymentEquityPosition(fields = {}) {
       ...fields.firstLot,
       grantId: fields.firstLot.grantId || firstGrant?.id || null,
     }) : null;
-    return { investment, position: typedPosition, grant: firstGrant, lot: firstLot };
+    const valuations = [];
+    for (const valuation of fields.openingValuations || []) {
+      valuations.push(await insertEmploymentEquityValuation(investment.id, valuation));
+    }
+    return { investment, position: typedPosition, grant: firstGrant, lot: firstLot, valuations };
   });
 }
 
@@ -717,60 +721,64 @@ export async function calculateEmploymentEquityValue(investmentId, commonFmvPerU
   };
 }
 
+async function insertEmploymentEquityValuation(investmentId, fields = {}) {
+  const snapshotDate = isoDate(fields.date, 'Valuation date');
+  const calculated = fields.vestedValue == null
+    ? await calculateEmploymentEquityValue(investmentId, fields.commonFmvPerUnit)
+    : null;
+  const vestedValue = fields.vestedValue == null
+    ? calculated.vested_value
+    : number(fields.vestedValue, 'Vested value');
+  const unvestedValue = fields.unvestedValue === undefined
+    ? calculated?.unvested_value ?? null
+    : number(fields.unvestedValue, 'Unvested value', { nullable: true });
+  const [existing] = await query(`
+    SELECT v.*, d.unvested_value
+      FROM valuations v
+      LEFT JOIN employment_equity_valuation_details d ON d.valuation_id = v.id
+     WHERE v.investment_id = $1 AND v.snapshot_date = $2
+  `, [investmentId, snapshotDate]);
+  if (existing) {
+    if (Number(existing.net_value) === vestedValue &&
+        (existing.unvested_value == null ? unvestedValue == null : Number(existing.unvested_value) === unvestedValue)) {
+      return { valuation: existing, calculation: calculated, idempotent_replay: true };
+    }
+    throw new Error('a different Employment Equity valuation already exists for this date');
+  }
+  const [valuation] = await query(`
+    INSERT INTO valuations
+      (investment_id, snapshot_date, unrealized_value, realized_value, net_value, source)
+    VALUES ($1,$2,$3,0,$3,'employment_equity_manual')
+    RETURNING *
+  `, [investmentId, snapshotDate, vestedValue]);
+  const [details] = await query(`
+    INSERT INTO employment_equity_valuation_details
+      (valuation_id, methodology, vested_value, unvested_value,
+       common_fmv_per_unit, issuer_equity_value, hurdle_amount,
+       liquidity_haircut_pct, confidence, source_document_id, notes)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    RETURNING *
+  `, [
+    valuation.id,
+    fields.methodology || (calculated ? 'common_fmv' : 'manual'),
+    vestedValue,
+    unvestedValue,
+    fields.commonFmvPerUnit == null ? null : number(fields.commonFmvPerUnit, 'Common FMV per unit'),
+    number(fields.issuerEquityValue, 'Issuer equity value', { nullable: true }),
+    number(fields.hurdleAmount, 'Hurdle amount', { nullable: true }),
+    number(fields.liquidityHaircutPct, 'Liquidity haircut percent', { nullable: true }),
+    fields.confidence || (calculated ? 'calculated' : 'estimated'),
+    fields.sourceDocumentId || null,
+    optionalText(fields.notes),
+  ]);
+  return { valuation, details, calculation: calculated, idempotent_replay: false };
+}
+
 export async function recordEmploymentEquityValuation(investmentId, fields = {}) {
   assertUsd(fields.currency);
   return withEmploymentEquityWrite(async () => {
     await position(investmentId, { lock: true });
-    const snapshotDate = isoDate(fields.date, 'Valuation date');
-    const calculated = fields.vestedValue == null
-      ? await calculateEmploymentEquityValue(investmentId, fields.commonFmvPerUnit)
-      : null;
-    const vestedValue = fields.vestedValue == null
-      ? calculated.vested_value
-      : number(fields.vestedValue, 'Vested value');
-    const unvestedValue = fields.unvestedValue === undefined
-      ? calculated?.unvested_value ?? null
-      : number(fields.unvestedValue, 'Unvested value', { nullable: true });
-    const [existing] = await query(`
-      SELECT v.*, d.unvested_value
-        FROM valuations v
-        LEFT JOIN employment_equity_valuation_details d ON d.valuation_id = v.id
-       WHERE v.investment_id = $1 AND v.snapshot_date = $2
-    `, [investmentId, snapshotDate]);
-    if (existing) {
-      if (Number(existing.net_value) === vestedValue &&
-          (existing.unvested_value == null ? unvestedValue == null : Number(existing.unvested_value) === unvestedValue)) {
-        return { valuation: existing, calculation: calculated, idempotent_replay: true };
-      }
-      throw new Error('a different Employment Equity valuation already exists for this date');
-    }
-    const [valuation] = await query(`
-      INSERT INTO valuations
-        (investment_id, snapshot_date, unrealized_value, realized_value, net_value, source)
-      VALUES ($1,$2,$3,0,$3,'employment_equity_manual')
-      RETURNING *
-    `, [investmentId, snapshotDate, vestedValue]);
-    const [details] = await query(`
-      INSERT INTO employment_equity_valuation_details
-        (valuation_id, methodology, vested_value, unvested_value,
-         common_fmv_per_unit, issuer_equity_value, hurdle_amount,
-         liquidity_haircut_pct, confidence, source_document_id, notes)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-      RETURNING *
-    `, [
-      valuation.id,
-      fields.methodology || (calculated ? 'common_fmv' : 'manual'),
-      vestedValue,
-      unvestedValue,
-      fields.commonFmvPerUnit == null ? null : number(fields.commonFmvPerUnit, 'Common FMV per unit'),
-      number(fields.issuerEquityValue, 'Issuer equity value', { nullable: true }),
-      number(fields.hurdleAmount, 'Hurdle amount', { nullable: true }),
-      number(fields.liquidityHaircutPct, 'Liquidity haircut percent', { nullable: true }),
-      fields.confidence || (calculated ? 'calculated' : 'estimated'),
-      fields.sourceDocumentId || null,
-      optionalText(fields.notes),
-    ]);
-    return { valuation, details, calculation: calculated, idempotent_replay: false };
+    return insertEmploymentEquityValuation(investmentId, fields);
   });
 }
 
@@ -852,13 +860,15 @@ export async function employmentEquityMetrics(investmentId) {
       JOIN cash_flows cf ON cf.id = e.cash_flow_id
      WHERE e.investment_id = $1 AND e.voided_at IS NULL
   `, [investmentId]);
-  const [valuation] = await query(`
+  const valuations = await query(`
     SELECT v.snapshot_date, d.vested_value, d.unvested_value
       FROM employment_equity_valuation_details d
       JOIN valuations v ON v.id = d.valuation_id
      WHERE v.investment_id = $1
-     ORDER BY v.snapshot_date DESC, v.id DESC LIMIT 1
+     ORDER BY v.snapshot_date, v.id
   `, [investmentId]);
+  const valuation = valuations.at(-1) || null;
+  const startingValuation = valuations.length > 1 ? valuations[0] : null;
   const taxBasis = remainingBasis('tax_basis');
   const cashOutlay = remainingBasis('cash_outlay');
   const vestedValue = valuation?.vested_value == null ? null : Number(valuation.vested_value);
@@ -869,6 +879,11 @@ export async function employmentEquityMetrics(investmentId) {
     vested_value: vestedValue,
     unvested_contingent_value: valuation?.unvested_value == null ? null : Number(valuation.unvested_value),
     valuation_date: valuation?.snapshot_date || null,
+    valuation_count: valuations.length,
+    starting_value: startingValuation?.vested_value == null ? null : Number(startingValuation.vested_value),
+    starting_valuation_date: startingValuation?.snapshot_date || null,
+    value_change: startingValuation?.vested_value == null || vestedValue == null
+      ? null : vestedValue - Number(startingValuation.vested_value),
     realized_gross_proceeds: Number(cash.realized_proceeds || 0),
     cash_distributions: Number(cash.distributions || 0),
     unrealized_gain_vs_tax_basis: vestedValue == null || taxBasis == null ? null : vestedValue - taxBasis,
@@ -930,6 +945,9 @@ export async function employmentEquitySummary() {
     remaining_tax_basis: completeSum('remaining_tax_basis'),
     remaining_compensation_basis: completeSum('remaining_compensation_basis'),
     vested_value: completeSum('vested_value'),
+    starting_value: completeSum('starting_value'),
+    value_change: completeSum('value_change'),
+    missing_value_count: positions.filter(row => row.metrics.vested_value == null).length,
     unvested_contingent_value: completeSum('unvested_contingent_value'),
     realized_gross_proceeds: cashSum('realized_gross_proceeds'),
     cash_distributions: cashSum('cash_distributions'),
