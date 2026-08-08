@@ -309,7 +309,7 @@ export async function updateFund(investmentId, fields = {}) {
       investmentId,
       fields.manager === undefined ? null : optionalText(fields.manager),
       fields.strategy === undefined ? null : optionalText(fields.strategy),
-      fields.vintageYear === undefined ? null : Number(fields.vintageYear),
+      fields.vintageYear == null ? null : Number(fields.vintageYear),
       status,
       fields.description === undefined ? null : optionalText(fields.description),
     ]);

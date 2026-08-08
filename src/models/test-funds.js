@@ -197,8 +197,14 @@ try {
        WHERE investment_id = $1 AND event_type = 'fund_valuation_corrected'
     `, [fundId]))[0].count, 1);
 
-    await updateFund(fundId, { fundStatus: 'harvesting', manager: 'Range Test GP II' });
-    assert.equal((await getFund(fundId)).fund_status, 'harvesting');
+    await updateFund(fundId, {
+      fundStatus: 'harvesting',
+      manager: 'Range Test GP II',
+      vintageYear: null,
+    });
+    const updatedFund = await getFund(fundId);
+    assert.equal(updatedFund.fund_status, 'harvesting');
+    assert.equal(updatedFund.vintage_year, 2024, 'blank vintage year preserves the existing value');
     assert.equal((await query(`SELECT status FROM investments WHERE id = $1`, [fundId]))[0].status, 'Live');
     await archiveFund(fundId);
     assert.equal((await listFunds()).length, 0);
