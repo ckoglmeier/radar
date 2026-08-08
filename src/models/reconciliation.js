@@ -150,6 +150,7 @@ async function consolidateOne(sourceId, targetId) {
   );
 
   for (const statement of [
+    `UPDATE investment_source_identities SET investment_id = $1, updated_at = NOW() WHERE investment_id = $2`,
     `UPDATE cash_flows SET investment_id = $1 WHERE investment_id = $2`,
     `UPDATE cash_flows SET lot_investment_id = $1 WHERE lot_investment_id = $2`,
     `UPDATE company_updates SET investment_id = $1 WHERE investment_id = $2`,

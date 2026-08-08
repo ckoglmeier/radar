@@ -17,6 +17,7 @@ import {
   setConviction,
   inferAssetClass,
   assetClassReviewCandidate,
+  legacyInvestmentSourceKey,
 } from './investments.js';
 
 let passed = 0;
@@ -36,6 +37,19 @@ async function test(name, fn) {
 function eq(actual, expected, msg = '') {
   if (actual !== expected) {
     throw new Error(`${msg ? msg + ': ' : ''}expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+}
+
+async function expectRejects(fn, pattern) {
+  let caught = null;
+  try {
+    await fn();
+  } catch (error) {
+    caught = error;
+  }
+  if (!caught) throw new Error('expected function to reject');
+  if (pattern && !pattern.test(caught.message)) {
+    throw new Error(`expected error matching ${pattern}, got ${caught.message}`);
   }
 }
 
@@ -160,6 +174,73 @@ async function run() {
         ? rows[0].invest_date.toISOString().slice(0, 10)
         : String(rows[0].invest_date).slice(0, 10);
       eq(date, '2026-04-09', 'invest_date should be updated to the latest');
+
+      const identities = await query(`
+        SELECT source_key
+          FROM investment_source_identities
+         WHERE investment_id = $1 AND source = 'angellist'
+         ORDER BY source_key
+      `, [first.id]);
+      eq(identities.length, 2, 'both observed Closing dates remain stable source aliases');
+      if (!identities.some(row => row.source_key === legacyInvestmentSourceKey(company, '2026-04-09'))) {
+        throw new Error('latest Closing source key was not linked');
+      }
+
+      const replayOld = await upsertInvestment({
+        ...BASE_FIELDS,
+        company_name: company,
+        invest_date: '2026-03-15',
+      });
+      eq(replayOld.id, first.id, 'an older export still resolves to the same position');
+      const replayRow = (await query(`SELECT invest_date FROM investments WHERE id = $1`, [first.id]))[0];
+      const replayDate = replayRow.invest_date instanceof Date
+        ? replayRow.invest_date.toISOString().slice(0, 10)
+        : String(replayRow.invest_date).slice(0, 10);
+      eq(replayDate, '2026-04-09', 'an older export cannot move the Closing date backward');
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('same-company same-date positions are allowed after importer cutover', async () => {
+    const company = `Test Same-Day Positions ${stamp}-8`;
+    try {
+      await query(`
+        INSERT INTO investments
+          (company_name, invest_date, source, asset_class, investment_entity)
+        VALUES
+          ($1, '2026-02-10', 'employment_manual', 'direct', 'Personal'),
+          ($1, '2026-02-10', 'employment_manual', 'direct', 'Trust')
+      `, [company]);
+      const rows = await query(`SELECT id FROM investments WHERE company_name = $1`, [company]);
+      eq(rows.length, 2, 'same-day positions remain distinct');
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('legacy fallback fails closed when same-day identity is ambiguous', async () => {
+    const company = `Test Ambiguous Legacy ${stamp}-9`;
+    try {
+      await query(`
+        INSERT INTO investments
+          (company_name, status, invest_date, invested, source, asset_class)
+        VALUES
+          ($1, 'Live', '2026-02-11', 100, 'legacy-fixture', 'direct'),
+          ($1, 'Live', '2026-02-11', 200, 'legacy-fixture', 'direct')
+      `, [company]);
+      await expectRejects(
+        () => upsertInvestment({
+          ...BASE_FIELDS,
+          status: 'Live',
+          company_name: company,
+          invest_date: '2026-02-11',
+          source: 'legacy-fixture',
+        }),
+        /ambiguous legacy investment identity/
+      );
+      const rows = await query(`SELECT id FROM investments WHERE company_name = $1`, [company]);
+      eq(rows.length, 2, 'ambiguous fallback makes no writes');
     } finally {
       await cleanupCompany(company);
     }

@@ -26,6 +26,7 @@ const INSERT_ORDER = [
   'theses',
   'portfolio_entities',
   'investments',
+  'investment_source_identities',
   'company_aliases',
   'valuations',
   'cash_flows',
@@ -88,6 +89,30 @@ function decodeValue(value) {
 
 function quoteIdentifier(value) {
   return `"${value.replaceAll('"', '""')}"`;
+}
+
+function rowsInRestoreOrder(table, rows) {
+  if (table !== 'deal_evaluations') return rows;
+  const remaining = [...rows];
+  const rowIds = new Set(rows.map(row => Number(row.id)));
+  const inserted = new Set();
+  const ordered = [];
+  while (remaining.length > 0) {
+    const index = remaining.findIndex(row => {
+      const parentId = row.council_parent_evaluation_id == null
+        ? null
+        : Number(row.council_parent_evaluation_id);
+      return parentId == null || !rowIds.has(parentId) || inserted.has(parentId);
+    });
+    if (index === -1) {
+      // Preserve the database's FK error for a real cycle or missing parent.
+      return [...ordered, ...remaining];
+    }
+    const [row] = remaining.splice(index, 1);
+    ordered.push(row);
+    inserted.add(Number(row.id));
+  }
+  return ordered;
 }
 
 export async function backupDatabase({ outDir = './backups' } = {}) {
@@ -167,7 +192,7 @@ export async function restoreDatabase({ file } = {}) {
       const rows = dump.tables[table];
       if (!Array.isArray(rows)) throw new Error(`backup table is not an array: ${table}`);
 
-      for (const encodedRow of rows) {
+      for (const encodedRow of rowsInRestoreOrder(table, rows)) {
         const row = decodeValue(encodedRow);
         const columns = Object.keys(row);
         if (columns.length === 0) continue;

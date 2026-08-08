@@ -90,15 +90,6 @@ async function insertInvestment(fields) {
        unrealized_value, realized_value, net_value, multiple, stage_bucket,
        asset_class)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-    ON CONFLICT (company_name, invest_date) DO UPDATE
-      SET status = EXCLUDED.status,
-          invested = EXCLUDED.invested,
-          unrealized_value = EXCLUDED.unrealized_value,
-          realized_value = EXCLUDED.realized_value,
-          net_value = EXCLUDED.net_value,
-          multiple = EXCLUDED.multiple,
-          stage_bucket = EXCLUDED.stage_bucket,
-          asset_class = EXCLUDED.asset_class
     RETURNING id
   `, [
     company_name, status, invest_date, invested,

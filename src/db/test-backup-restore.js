@@ -30,12 +30,18 @@ try {
       VALUES ($1, 'Backup Entity', 'backup entity', 'operating_company')
       RETURNING id
     `, [entityKey]);
-    await query(`
+    const [position] = await query(`
       INSERT INTO investments
         (position_key, portfolio_entity_id, company_name, invest_date,
          asset_class, source)
       VALUES ($1, $2, 'Backup Entity', '2024-01-01', 'direct', 'test')
+      RETURNING id
     `, [positionKey, entity.id]);
+    await query(`
+      INSERT INTO investment_source_identities
+        (investment_id, source, source_key)
+      VALUES ($1, 'test', 'backup-source-key')
+    `, [position.id]);
     await query(`
       INSERT INTO company_aliases
         (alias, alias_normalized, canonical_company_name,
@@ -86,6 +92,19 @@ try {
       `UPDATE council_runs SET evaluation_id = $1 WHERE id = $2`,
       [evaluation.id, run.id],
     );
+    const [laterParent] = await query(
+      `INSERT INTO deal_evaluations
+         (pipeline_invite_id, company_name, promotes_to_canonical)
+       VALUES ($1, 'Backup Fixture Parent', FALSE)
+       RETURNING id`,
+      [invite.id],
+    );
+    await query(
+      `UPDATE deal_evaluations
+          SET council_parent_evaluation_id = $1
+        WHERE id = $2`,
+      [laterParent.id, evaluation.id],
+    );
     await createDocument({
       entity_type: 'pipeline_invite',
       entity_id: invite.id,
@@ -128,14 +147,17 @@ try {
     );
     assert.deepEqual(invites.map(row => row.deal_slug), ['backup-fixture']);
     const [restoredIdentity] = await query(`
-      SELECT pe.entity_key, i.position_key, ca.portfolio_entity_id = pe.id AS alias_linked
+      SELECT pe.entity_key, i.position_key, ca.portfolio_entity_id = pe.id AS alias_linked,
+             isi.source_key
         FROM portfolio_entities pe
         JOIN investments i ON i.portfolio_entity_id = pe.id
+        JOIN investment_source_identities isi ON isi.investment_id = i.id
         JOIN company_aliases ca ON ca.portfolio_entity_id = pe.id
        WHERE pe.entity_key = $1
     `, [entityKey]);
     assert.equal(restoredIdentity.position_key, positionKey);
     assert.equal(restoredIdentity.alias_linked, true);
+    assert.equal(restoredIdentity.source_key, 'backup-source-key');
     const [docMeta] = await query(`SELECT id FROM documents`);
     const restoredDocument = await accessDocumentBytes({
       documentId: docMeta.id,
@@ -173,6 +195,16 @@ try {
     assert.equal(restoredEvaluation.council_evidence_contract_version, 1);
     assert.equal(restoredEvaluation.council_source_manifest_sha256, 'manifest-hash');
     assert.equal(restoredEvaluation.promotes_to_canonical, true);
+    const [restoredParentLink] = await query(
+      `SELECT council_parent_evaluation_id
+         FROM deal_evaluations
+        WHERE id = $1`,
+      [evaluationId],
+    );
+    assert.ok(
+      Number(restoredParentLink.council_parent_evaluation_id) > Number(evaluationId),
+      'self-referential evaluation parent restores before its earlier child',
+    );
     const restoredFundMetrics = await fundMetrics(fundId);
     assert.equal(restoredFundMetrics.commitment, 100);
     assert.equal(restoredFundMetrics.paid_in, 40);

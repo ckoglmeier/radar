@@ -28,7 +28,7 @@ try {
     await query(`
       INSERT INTO schema_migrations (version, name)
       SELECT version, 'fixture-skip-' || version
-      FROM generate_series(41, 45) AS version
+      FROM generate_series(41, 47) AS version
     `);
     await query(`
       CREATE TABLE council_runs (

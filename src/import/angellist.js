@@ -89,7 +89,7 @@ async function runAngelListImport(filePath) {
 
     try {
       // Snapshot before upsert for change detection
-      const before = await snapshotInvestment(companyName, investDate);
+      const before = await snapshotInvestment(companyName, investDate, 'angellist');
 
       const { id: investmentId, isNew } = await upsertInvestment({
         company_name: companyName,

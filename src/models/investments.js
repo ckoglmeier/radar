@@ -1,13 +1,12 @@
 // Investment model — upsert, valuation snapshots, and change detection.
 // Mirrors the pipeline_events pattern in src/models/pipeline.js.
 //
-// Note: investment identity is keyed on (company_name, invest_date) — a
-// pragmatic but weak key. AngelList does not expose a stable per-position
-// id, and "Closing" status rows have a drifting Invest Date until the deal
-// actually closes. The Closing pre-check in upsertInvestment patches around
-// the date drift; a longer-term fix would be a normalized composite identity
-// or a source-side stable id.
+// Import identity is stored separately from the position row. The legacy
+// AngelList CSV does not expose a source ID, so its v1 link preserves the old
+// exact (company_name, invest_date) behavior without keeping that pair unique
+// for manual and Employment Equity positions.
 
+import { createHash } from 'node:crypto';
 import { query } from '../db/index.js';
 
 /**
@@ -27,6 +26,21 @@ export function inferAssetClass(companyName, explicitAssetClass) {
   return 'direct';
 }
 
+function normalizedSource(source) {
+  const value = String(source || '').trim();
+  return value || 'legacy';
+}
+
+export function legacyInvestmentSourceKey(companyName, investDate) {
+  const date = investDate instanceof Date
+    ? investDate.toISOString().slice(0, 10)
+    : String(investDate || '').slice(0, 10);
+  const digest = createHash('md5')
+    .update(`${companyName}\u001f${date}`)
+    .digest('hex');
+  return `legacy-v1:${digest}`;
+}
+
 // AngelList exports "Closing" status rows with an Invest Date that drifts
 // between exports until the deal actually closes. The (company_name,
 // invest_date) upsert key would create a new row each time the date moves.
@@ -40,25 +54,152 @@ export function inferAssetClass(companyName, explicitAssetClass) {
 // Known limitation: company-name drift ("Karman" vs "Karman Industries"
 // vs "Karman Industries, Inc.") is NOT handled here. If AngelList renames
 // a Closing position between exports, this fix will not catch it.
-async function findClosingPosition(fields) {
+async function findClosingPosition(fields, source) {
   if (fields.status !== 'Closing') return null;
   const rows = await query(`
     SELECT id FROM investments
     WHERE company_name = $1
-      AND source = $2
+      AND COALESCE(NULLIF(BTRIM(source), ''), 'legacy') = $2
       AND status = 'Closing'
       AND lead IS NOT DISTINCT FROM $3
       AND round IS NOT DISTINCT FROM $4
       AND invested = $5
     ORDER BY updated_at DESC NULLS LAST, id DESC
-    LIMIT 1
-  `, [fields.company_name, fields.source, fields.lead, fields.round, fields.invested]);
+  `, [fields.company_name, source, fields.lead, fields.round, fields.invested]);
+  if (rows.length > 1) {
+    throw new Error(`ambiguous Closing position identity for ${fields.company_name}`);
+  }
   return rows[0]?.id ?? null;
+}
+
+async function findImportedPosition(fields, source, sourceKey) {
+  const linked = await query(`
+    SELECT i.id
+      FROM investment_source_identities isi
+      JOIN investments i ON i.id = isi.investment_id
+     WHERE isi.source = $1
+       AND isi.source_key = $2
+       AND i.asset_class <> 'merged'
+  `, [source, sourceKey]);
+  if (linked[0]) return linked[0].id;
+
+  // Compatibility bridge for a row created before source identities existed,
+  // or by an older writer. Never guess once valid same-day positions exist.
+  const legacy = await query(`
+    SELECT id
+      FROM investments
+     WHERE company_name = $1
+       AND invest_date IS NOT DISTINCT FROM $2::date
+       AND asset_class <> 'merged'
+     ORDER BY id
+  `, [fields.company_name, fields.invest_date]);
+  if (legacy.length > 1) {
+    throw new Error(`ambiguous legacy investment identity for ${fields.company_name} on ${fields.invest_date || 'unknown date'}`);
+  }
+  return legacy[0]?.id ?? null;
+}
+
+async function updateImportedPosition(id, fields, source, sourceKey) {
+  const rows = await query(`
+    WITH updated AS (
+      UPDATE investments
+         SET status = COALESCE(status_override, $1),
+             invested = $2,
+             unrealized_value = CASE
+               WHEN EXISTS (
+                 SELECT 1 FROM valuations v
+                  WHERE v.investment_id = investments.id
+                    AND v.source ILIKE 'manual%'
+                    AND v.net_value > COALESCE($5, 0)
+               ) THEN investments.unrealized_value ELSE $3
+             END,
+             realized_value = CASE
+               WHEN EXISTS (
+                 SELECT 1 FROM valuations v
+                  WHERE v.investment_id = investments.id
+                    AND v.source ILIKE 'manual%'
+                    AND v.net_value > COALESCE($5, 0)
+               ) THEN investments.realized_value ELSE $4
+             END,
+             net_value = CASE
+               WHEN EXISTS (
+                 SELECT 1 FROM valuations v
+                  WHERE v.investment_id = investments.id
+                    AND v.source ILIKE 'manual%'
+                    AND v.net_value > COALESCE($5, 0)
+               ) THEN investments.net_value ELSE $5
+             END,
+             multiple = CASE
+               WHEN EXISTS (
+                 SELECT 1 FROM valuations v
+                  WHERE v.investment_id = investments.id
+                    AND v.source ILIKE 'manual%'
+                    AND v.net_value > COALESCE($5, 0)
+               ) THEN investments.multiple ELSE $6
+             END,
+             stage_bucket = $7,
+             updated_at = NOW()
+       WHERE id = $8 AND asset_class <> 'merged'
+       RETURNING id
+    ), linked AS (
+      INSERT INTO investment_source_identities
+        (investment_id, source, source_key, key_version)
+      SELECT id, $9, $10, 1 FROM updated
+      ON CONFLICT (source, source_key) DO UPDATE
+        SET investment_id = EXCLUDED.investment_id,
+            key_version = EXCLUDED.key_version,
+            updated_at = NOW()
+      RETURNING investment_id
+    )
+    SELECT updated.id
+      FROM updated
+      JOIN linked ON linked.investment_id = updated.id
+  `, [
+    fields.status,
+    fields.invested,
+    fields.unrealized_value,
+    fields.realized_value,
+    fields.net_value,
+    fields.multiple,
+    fields.stage_bucket,
+    id,
+    source,
+    sourceKey,
+  ]);
+  if (!rows[0]) throw new Error(`investment is not an active import target: ${id}`);
+  return { id: rows[0].id, isNew: false };
+}
+
+async function updateClosingPositionDate(id, fields, source, sourceKey) {
+  const rows = await query(`
+    WITH updated AS (
+      UPDATE investments
+         SET invest_date = $1,
+             updated_at = NOW()
+       WHERE id = $2 AND asset_class <> 'merged'
+       RETURNING id
+    ), linked AS (
+      INSERT INTO investment_source_identities
+        (investment_id, source, source_key, key_version)
+      SELECT id, $3, $4, 1 FROM updated
+      ON CONFLICT (source, source_key) DO UPDATE
+        SET investment_id = EXCLUDED.investment_id,
+            key_version = EXCLUDED.key_version,
+            updated_at = NOW()
+      RETURNING investment_id
+    )
+    SELECT updated.id
+      FROM updated
+      JOIN linked ON linked.investment_id = updated.id
+  `, [fields.invest_date, id, source, sourceKey]);
+  if (!rows[0]) throw new Error(`investment is not an active import target: ${id}`);
+  return { id: rows[0].id, isNew: false };
 }
 
 /**
  * Upsert an investment row. Returns { id, isNew }.
- * Conflict key: (company_name, invest_date).
+ * Identity is resolved through investment_source_identities. Legacy CSV rows
+ * use the exact former (company_name, invest_date) key as their source link.
  *
  * Special case: if the incoming row is in "Closing" status, first check for
  * an existing Closing row with the same economic identity (see
@@ -67,71 +208,40 @@ async function findClosingPosition(fields) {
  */
 export async function upsertInvestment(fields) {
   const assetClass = inferAssetClass(fields.company_name, fields.asset_class);
-  const closingId = await findClosingPosition(fields);
+  const source = normalizedSource(fields.source);
+  const sourceKey = legacyInvestmentSourceKey(fields.company_name, fields.invest_date);
+  const importedId = await findImportedPosition(fields, source, sourceKey);
+  if (importedId) {
+    return updateImportedPosition(importedId, fields, source, sourceKey);
+  }
+
+  const closingId = await findClosingPosition(fields, source);
   if (closingId) {
-    await query(
-      `UPDATE investments SET invest_date = $1, updated_at = NOW() WHERE id = $2`,
-      [fields.invest_date, closingId]
-    );
-    return { id: closingId, isNew: false };
+    return updateClosingPositionDate(closingId, fields, source, sourceKey);
   }
 
   const result = await query(`
-    INSERT INTO investments (
-      company_name, status, invest_date, invested, unrealized_value,
-      realized_value, net_value, multiple, investment_entity, lead,
-      investment_type, round, stage_bucket, market, fund_name, allocation,
-      instrument, round_size, valuation_cap_type, valuation_cap, discount,
-      carry, share_class, source, asset_class
-    ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-      $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+    WITH inserted AS (
+      INSERT INTO investments (
+        company_name, status, invest_date, invested, unrealized_value,
+        realized_value, net_value, multiple, investment_entity, lead,
+        investment_type, round, stage_bucket, market, fund_name, allocation,
+        instrument, round_size, valuation_cap_type, valuation_cap, discount,
+        carry, share_class, source, asset_class
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+        $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+      )
+      RETURNING id
+    ), linked AS (
+      INSERT INTO investment_source_identities
+        (investment_id, source, source_key, key_version)
+      SELECT id, $26, $27, 1 FROM inserted
+      RETURNING investment_id
     )
-    ON CONFLICT (company_name, invest_date)
-    DO UPDATE SET
-      status = COALESCE(investments.status_override, EXCLUDED.status),
-      invested = EXCLUDED.invested,
-      -- Protect manual valuation overrides: keep existing value when a manual
-      -- valuation snapshot exists with a higher mark than the incoming CSV data.
-      unrealized_value = CASE
-        WHEN EXISTS (
-          SELECT 1 FROM valuations v
-          WHERE v.investment_id = investments.id
-            AND v.source ILIKE 'manual%'
-            AND v.net_value > COALESCE(EXCLUDED.net_value, 0)
-        ) THEN investments.unrealized_value
-        ELSE EXCLUDED.unrealized_value
-      END,
-      realized_value = CASE
-        WHEN EXISTS (
-          SELECT 1 FROM valuations v
-          WHERE v.investment_id = investments.id
-            AND v.source ILIKE 'manual%'
-            AND v.net_value > COALESCE(EXCLUDED.net_value, 0)
-        ) THEN investments.realized_value
-        ELSE EXCLUDED.realized_value
-      END,
-      net_value = CASE
-        WHEN EXISTS (
-          SELECT 1 FROM valuations v
-          WHERE v.investment_id = investments.id
-            AND v.source ILIKE 'manual%'
-            AND v.net_value > COALESCE(EXCLUDED.net_value, 0)
-        ) THEN investments.net_value
-        ELSE EXCLUDED.net_value
-      END,
-      multiple = CASE
-        WHEN EXISTS (
-          SELECT 1 FROM valuations v
-          WHERE v.investment_id = investments.id
-            AND v.source ILIKE 'manual%'
-            AND v.net_value > COALESCE(EXCLUDED.net_value, 0)
-        ) THEN investments.multiple
-        ELSE EXCLUDED.multiple
-      END,
-      stage_bucket = EXCLUDED.stage_bucket,
-      updated_at = NOW()
-    RETURNING id, (xmax = 0) AS is_new
+    SELECT inserted.id, TRUE AS is_new
+      FROM inserted
+      JOIN linked ON linked.investment_id = inserted.id
   `, [
     fields.company_name,
     fields.status,
@@ -158,6 +268,8 @@ export async function upsertInvestment(fields) {
     fields.share_class,
     fields.source,
     assetClass,
+    source,
+    sourceKey,
   ]);
 
   return { id: result[0].id, isNew: result[0].is_new };
@@ -287,11 +399,29 @@ export async function logInvestmentEvent(investmentId, eventType, fieldName, old
 }
 
 // Fetch current state of an investment before an upsert, so we can diff after.
-export async function snapshotInvestment(companyName, investDate) {
-  const rows = await query(
-    `SELECT * FROM investments WHERE company_name = $1 AND invest_date = $2 LIMIT 1`,
-    [companyName, investDate]
-  );
+export async function snapshotInvestment(companyName, investDate, source = null) {
+  if (source) {
+    const rows = await query(`
+      SELECT i.*
+        FROM investment_source_identities isi
+        JOIN investments i ON i.id = isi.investment_id
+       WHERE isi.source = $1
+         AND isi.source_key = $2
+         AND i.asset_class <> 'merged'
+    `, [normalizedSource(source), legacyInvestmentSourceKey(companyName, investDate)]);
+    if (rows[0]) return rows[0];
+  }
+  const rows = await query(`
+    SELECT *
+      FROM investments
+     WHERE company_name = $1
+       AND invest_date IS NOT DISTINCT FROM $2::date
+       AND asset_class <> 'merged'
+     ORDER BY id
+  `, [companyName, investDate]);
+  if (rows.length > 1) {
+    throw new Error(`ambiguous legacy investment identity for ${companyName} on ${investDate || 'unknown date'}`);
+  }
   return rows[0] || null;
 }
 

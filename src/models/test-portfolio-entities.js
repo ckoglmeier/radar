@@ -86,7 +86,14 @@ try {
          AND contype = 'u'
          AND pg_get_constraintdef(oid) LIKE '%company_name, invest_date%'
     `);
-    assert.equal(constraint.length, 1, 'legacy importer uniqueness remains in place');
+    assert.equal(constraint.length, 0, 'legacy company/date uniqueness is removed after importer cutover');
+    const lookupIndex = await query(`
+      SELECT 1
+        FROM pg_indexes
+       WHERE tablename = 'investments'
+         AND indexname = 'idx_investments_company_date_lookup'
+    `);
+    assert.equal(lookupIndex.length, 1, 'non-unique company/date lookup remains available');
 
     const tampered = structuredClone(manifest);
     tampered.candidates[0].legal_name = 'Changed Outside Decision';
