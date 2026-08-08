@@ -69,7 +69,8 @@ try {
       },
       openingValuations: [{
         date: '2019-03-01',
-        commonFmvPerUnit: 1,
+        commonShareValuePerUnit: 1,
+        taxFmvPerUnit: 1,
         confidence: 'calculated',
       }],
     });
@@ -137,12 +138,15 @@ try {
     });
     const mark = await recordEmploymentEquityValuation(options.investment.id, {
       date: '2024-12-31',
-      commonFmvPerUnit: 10,
+      commonShareValuePerUnit: 10,
+      taxFmvPerUnit: 4,
       confidence: 'calculated',
     });
     assert.equal(Number(mark.valuation.net_value), 9_100);
     assert.equal(Number(mark.details.vested_value), 9_100);
     assert.equal(Number(mark.details.unvested_value), 0);
+    assert.equal(Number(mark.details.common_fmv_per_unit), 10);
+    assert.equal(Number(mark.details.tax_fmv_per_unit), 4);
     const optionMetrics = await employmentEquityMetrics(options.investment.id);
     assert.equal(optionMetrics.starting_value, 0);
     assert.equal(optionMetrics.vested_value, 9_100);

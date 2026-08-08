@@ -683,9 +683,9 @@ export async function employmentEquityGrantBalances(grantId) {
   };
 }
 
-export async function calculateEmploymentEquityValue(investmentId, commonFmvPerUnit) {
+export async function calculateEmploymentEquityValue(investmentId, commonShareValuePerUnit) {
   await position(investmentId);
-  const fmv = number(commonFmvPerUnit, 'Common FMV per unit');
+  const fmv = number(commonShareValuePerUnit, 'Common share value per unit');
   const grants = await query(`SELECT * FROM employment_equity_grants WHERE investment_id = $1`, [investmentId]);
   if (grants.some(row => ['ppu', 'profits_interest', 'other'].includes(row.instrument_type))) {
     throw new Error('PPU, profits-interest, and other instruments require a manually confirmed valuation');
@@ -723,8 +723,9 @@ export async function calculateEmploymentEquityValue(investmentId, commonFmvPerU
 
 async function insertEmploymentEquityValuation(investmentId, fields = {}) {
   const snapshotDate = isoDate(fields.date, 'Valuation date');
+  const commonShareValuePerUnit = fields.commonShareValuePerUnit ?? fields.commonFmvPerUnit;
   const calculated = fields.vestedValue == null
-    ? await calculateEmploymentEquityValue(investmentId, fields.commonFmvPerUnit)
+    ? await calculateEmploymentEquityValue(investmentId, commonShareValuePerUnit)
     : null;
   const vestedValue = fields.vestedValue == null
     ? calculated.vested_value
@@ -754,16 +755,17 @@ async function insertEmploymentEquityValuation(investmentId, fields = {}) {
   const [details] = await query(`
     INSERT INTO employment_equity_valuation_details
       (valuation_id, methodology, vested_value, unvested_value,
-       common_fmv_per_unit, issuer_equity_value, hurdle_amount,
+       common_fmv_per_unit, tax_fmv_per_unit, issuer_equity_value, hurdle_amount,
        liquidity_haircut_pct, confidence, source_document_id, notes)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     RETURNING *
   `, [
     valuation.id,
     fields.methodology || (calculated ? 'common_fmv' : 'manual'),
     vestedValue,
     unvestedValue,
-    fields.commonFmvPerUnit == null ? null : number(fields.commonFmvPerUnit, 'Common FMV per unit'),
+    commonShareValuePerUnit == null ? null : number(commonShareValuePerUnit, 'Common share value per unit'),
+    number(fields.taxFmvPerUnit, '409A / tax FMV per unit', { nullable: true }),
     number(fields.issuerEquityValue, 'Issuer equity value', { nullable: true }),
     number(fields.hurdleAmount, 'Hurdle amount', { nullable: true }),
     number(fields.liquidityHaircutPct, 'Liquidity haircut percent', { nullable: true }),
@@ -915,7 +917,7 @@ export async function getEmploymentEquityPosition(investmentId) {
     query(`SELECT * FROM employment_equity_events WHERE investment_id = $1 ORDER BY event_date DESC, created_at DESC`, [investmentId]),
     query(`
       SELECT v.*, d.methodology, d.vested_value, d.unvested_value,
-             d.common_fmv_per_unit, d.confidence, d.notes AS detail_notes
+             d.common_fmv_per_unit, d.tax_fmv_per_unit, d.confidence, d.notes AS detail_notes
         FROM valuations v JOIN employment_equity_valuation_details d ON d.valuation_id = v.id
        WHERE v.investment_id = $1 ORDER BY v.snapshot_date DESC, v.id DESC
     `, [investmentId]),
