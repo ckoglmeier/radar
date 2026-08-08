@@ -65,7 +65,7 @@ async function cleanupCompany(company) {
   const rows = await query(`SELECT id FROM investments WHERE company_name = $1`, [company]);
   if (rows.length === 0) return;
   const ids = rows.map(r => r.id);
-  await query(`DELETE FROM documents WHERE entity_type = 'investment' AND entity_id = ANY($1::int[])`, [ids]);
+  await query(`DELETE FROM documents WHERE entity_type = 'investment' AND entity_id = ANY($1::text[])`, [ids.map(String)]);
   await query(`DELETE FROM company_updates WHERE investment_id = ANY($1::int[])`, [ids]);
   await query(`DELETE FROM deal_evaluations WHERE investment_id = ANY($1::int[])`, [ids]);
   await query(`DELETE FROM pipeline_invites WHERE investment_id = ANY($1::int[])`, [ids]);
@@ -256,7 +256,7 @@ async function run() {
     const docRows = await query(`SELECT entity_type, entity_id, sha256, source FROM documents WHERE id = $1`, [commit.document_id]);
     eq(docRows.length, 1, 'document row exists');
     eq(docRows[0].entity_type, 'pipeline_invite', 'attachment matrix: pipeline_invite -> entity_type pipeline_invite');
-    eq(docRows[0].entity_id, commit.created.id, 'document attaches to the created invite id');
+    eq(docRows[0].entity_id, String(commit.created.id), 'document attaches to the created invite id');
     eq(docRows[0].sha256, createHash('sha256').update(eml).digest('hex'), 'document sha256 matches source bytes');
     eq(docRows[0].source, 'intake');
   });
@@ -276,7 +276,7 @@ async function run() {
 
     const docRows = await query(`SELECT entity_type, entity_id, sha256 FROM documents WHERE id = $1`, [commit.document_id]);
     eq(docRows[0].entity_type, 'deal_evaluation', 'attachment matrix: deal_log_eval -> entity_type deal_evaluation');
-    eq(docRows[0].entity_id, commit.created.id);
+    eq(docRows[0].entity_id, String(commit.created.id));
     eq(docRows[0].sha256, createHash('sha256').update(content).digest('hex'));
   });
 
@@ -302,7 +302,7 @@ async function run() {
 
       const docRows = await query(`SELECT entity_type, entity_id FROM documents WHERE id = $1`, [commit.document_id]);
       eq(docRows[0].entity_type, 'company_update', 'attachment matrix: company_update -> entity_type company_update');
-      eq(docRows[0].entity_id, commit.created.id);
+      eq(docRows[0].entity_id, String(commit.created.id));
     } finally {
       await cleanupCompany(company);
     }
@@ -325,7 +325,7 @@ async function run() {
 
       const docRows = await query(`SELECT entity_type, entity_id, sha256 FROM documents WHERE id = $1`, [commit.document_id]);
       eq(docRows[0].entity_type, 'investment');
-      eq(docRows[0].entity_id, investment.id);
+      eq(docRows[0].entity_id, String(investment.id));
       eq(docRows[0].sha256, createHash('sha256').update(content).digest('hex'));
     } finally {
       await cleanupCompany(company);
@@ -466,7 +466,7 @@ async function run() {
     const rows = await query(`SELECT id FROM pipeline_invites WHERE company_name LIKE 'ZZINTAKE %'`);
     if (rows.length === 0) return;
     const ids = rows.map(r => r.id);
-    await query(`DELETE FROM documents WHERE entity_type = 'pipeline_invite' AND entity_id = ANY($1::int[])`, [ids]);
+    await query(`DELETE FROM documents WHERE entity_type = 'pipeline_invite' AND entity_id = ANY($1::text[])`, [ids.map(String)]);
     await query(`DELETE FROM pipeline_events WHERE invite_id = ANY($1::int[])`, [ids]).catch(() => {});
     await query(`DELETE FROM pipeline_invites WHERE id = ANY($1::int[])`, [ids]);
   }

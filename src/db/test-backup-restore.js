@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { backupDatabase, restoreDatabase } from './backup.js';
 import { closeDb, query, withTenant } from './index.js';
 import { runMigrations } from './migrate.js';
-import { createDocument, getDocument } from '../models/documents.js';
+import { accessDocumentBytes, createDocument } from '../models/documents.js';
 import { createFund, fundMetrics, recordFundDistribution } from '../models/funds.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-backup-restore-'));
@@ -137,7 +137,11 @@ try {
     assert.equal(restoredIdentity.position_key, positionKey);
     assert.equal(restoredIdentity.alias_linked, true);
     const [docMeta] = await query(`SELECT id FROM documents`);
-    const restoredDocument = await getDocument(docMeta.id);
+    const restoredDocument = await accessDocumentBytes({
+      documentId: docMeta.id,
+      purpose: 'backup',
+      executionMode: 'desktop',
+    });
     assert.deepEqual(Buffer.from(restoredDocument.content), bytes);
     const [restoredRun] = await query(
       `SELECT source_manifest, source_coverage, evidence_contract_version,

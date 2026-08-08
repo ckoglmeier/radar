@@ -157,7 +157,7 @@ async function consolidateOne(sourceId, targetId) {
     `UPDATE deal_evaluations SET investment_id = $1 WHERE investment_id = $2`,
     `UPDATE decision_records SET investment_id = $1 WHERE investment_id = $2`,
     `UPDATE room_holdings SET investment_id = $1 WHERE investment_id = $2`,
-    `UPDATE documents SET entity_id = $1 WHERE entity_type = 'investment' AND entity_id = $2`,
+    `UPDATE documents SET entity_id = $1::text WHERE entity_type = 'investment' AND entity_id = $2::text`,
   ]) {
     await query(statement, [targetId, sourceId]);
   }

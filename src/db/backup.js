@@ -48,7 +48,7 @@ const INSERT_ORDER = [
   'metric_views',
   'attention_dismissals',
   'company_updates',
-  'documents', // provenance artifacts; must follow all 4 of its possible parents (investments, pipeline_invites, company_updates, deal_evaluations) above
+  'documents', // provenance artifacts; must follow every attachment parent above, including portfolio_entities and room_holdings
   'user_settings',
   'lens_config',
   'sync_runs',

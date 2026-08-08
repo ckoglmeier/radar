@@ -1,5 +1,6 @@
 import { query } from '../db/index.js';
 import { classifyArtifact } from './index.js';
+import { DocumentStore } from './document-store.js';
 
 const FILLABLE_FIELDS = [
   'lead',
@@ -20,10 +21,10 @@ export async function reextractIntake({ dryRun = false, inviteIds = null } = {})
       p.lead, p.co_investors, p.market, p.round,
       p.allocation_usd, p.min_investment_usd, p.carry_pct,
       p.valuation_text, p.valuation_usd,
-      d.id AS document_id, d.filename, d.mime, d.content
+      d.id AS document_id, d.filename, d.mime
     FROM pipeline_invites p
     JOIN documents d
-      ON d.entity_type = 'pipeline_invite' AND d.entity_id = p.id
+      ON d.entity_type = 'pipeline_invite' AND d.entity_id = p.id::text
     WHERE p.source = 'intake'
       AND (
         p.lead IS NULL OR p.co_investors IS NULL OR p.market IS NULL OR
@@ -53,8 +54,12 @@ export async function reextractIntake({ dryRun = false, inviteIds = null } = {})
   for (const group of groups.values()) {
     const proposed = {};
     for (const document of group.documents) {
+      const stored = await DocumentStore.get(document.document_id, {
+        purpose: 'local_processing',
+        executionMode: 'desktop',
+      });
       const classified = await classifyArtifact(
-        Buffer.isBuffer(document.content) ? document.content : Buffer.from(document.content),
+        Buffer.isBuffer(stored.content) ? stored.content : Buffer.from(stored.content),
         document.filename,
         document.mime
       );

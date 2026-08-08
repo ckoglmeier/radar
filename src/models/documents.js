@@ -7,7 +7,7 @@
 // and returns Buffers regardless of storage encoding.
 
 import { randomUUID, createHash } from 'crypto';
-import { query } from '../db/index.js';
+import { isPgliteActive, query } from '../db/index.js';
 
 export const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB cap (documents table; hosted intake's transport cap is separate, enforced in the app layer)
 
@@ -18,7 +18,22 @@ export const ENTITY_TABLES = {
   pipeline_invite: 'pipeline_invites',
   company_update: 'company_updates',
   deal_evaluation: 'deal_evaluations',
+  portfolio_entity: 'portfolio_entities',
+  room_holding: 'room_holdings',
 };
+
+const CONFIDENTIALITY_VALUES = new Set(['standard', 'confidential_company', 'tax_sensitive']);
+const PROCESSING_POLICY_VALUES = new Set(['local_only', 'model_allowed']);
+const SYNC_POLICY_VALUES = new Set(['local_only', 'encrypted_backup_allowed']);
+const BYTE_ACCESS_PURPOSES = new Set([
+  'model',
+  'local_processing',
+  'backup',
+  'export',
+  'download',
+  'support',
+]);
+const EXECUTION_MODES = new Set(['desktop', 'hosted']);
 
 function toBuffer(content) {
   return Buffer.isBuffer(content) ? content : Buffer.from(content);
@@ -29,13 +44,51 @@ async function assertEntityExists(entity_type, entity_id) {
   if (!table) {
     throw new Error(`unknown entity_type: ${entity_type}`);
   }
-  const rows = await query(`SELECT 1 FROM ${table} WHERE id = $1`, [entity_id]);
+  const rows = await query(`SELECT 1 FROM ${table} WHERE id::text = $1::text`, [entity_id]);
   if (rows.length === 0) {
     throw new Error(`${entity_type} not found: ${entity_id}`);
   }
 }
 
-export async function createDocument({ entity_type, entity_id, filename, mime, sha256, content, source = 'manual-upload' }) {
+function assertPolicyValue(values, value, label) {
+  if (!values.has(value)) throw new TypeError(`invalid ${label}: ${value}`);
+}
+
+async function resolveExecutionMode(executionMode) {
+  if (executionMode != null) {
+    if (!EXECUTION_MODES.has(executionMode)) {
+      throw new TypeError(`invalid executionMode: ${executionMode}`);
+    }
+    return executionMode;
+  }
+  return (await isPgliteActive()) ? 'desktop' : 'hosted';
+}
+
+async function assertLocalOnlyStorageAllowed({ processing_policy, sync_policy, executionMode }) {
+  if (processing_policy !== 'local_only' && sync_policy !== 'local_only') return;
+  const mode = await resolveExecutionMode(executionMode);
+  if (mode !== 'desktop' || !(await isPgliteActive())) {
+    throw new Error('local_only documents require a desktop PGlite workspace');
+  }
+}
+
+export async function createDocument({
+  entity_type,
+  entity_id,
+  filename,
+  mime,
+  sha256,
+  content,
+  source = 'manual-upload',
+  confidentiality = 'standard',
+  processing_policy = 'model_allowed',
+  sync_policy = 'encrypted_backup_allowed',
+  executionMode,
+}) {
+  assertPolicyValue(CONFIDENTIALITY_VALUES, confidentiality, 'confidentiality');
+  assertPolicyValue(PROCESSING_POLICY_VALUES, processing_policy, 'processing_policy');
+  assertPolicyValue(SYNC_POLICY_VALUES, sync_policy, 'sync_policy');
+  await assertLocalOnlyStorageAllowed({ processing_policy, sync_policy, executionMode });
   await assertEntityExists(entity_type, entity_id);
 
   const buf = toBuffer(content);
@@ -49,33 +102,80 @@ export async function createDocument({ entity_type, entity_id, filename, mime, s
   }
 
   const rows = await query(`
-    INSERT INTO documents (entity_type, entity_id, filename, mime, sha256, source, size_bytes, content)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    RETURNING id, entity_type, entity_id, filename, mime, sha256, source, size_bytes, created_at
-  `, [entity_type, entity_id, filename, mime ?? null, computedSha, source, buf.length, buf]);
+    INSERT INTO documents
+      (entity_type, entity_id, filename, mime, sha256, source, size_bytes,
+       content, confidentiality, processing_policy, sync_policy)
+    VALUES ($1, $2::text, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    RETURNING id, entity_type, entity_id, filename, mime, sha256, source,
+              size_bytes, confidentiality, processing_policy, sync_policy,
+              created_at
+  `, [
+    entity_type, entity_id, filename, mime ?? null, computedSha, source,
+    buf.length, buf, confidentiality, processing_policy, sync_policy,
+  ]);
   return rows[0];
 }
 
 // Metadata only — never returns content.
 export async function listDocuments(entity_type, entity_id) {
   return query(`
-    SELECT id, filename, mime, sha256, source, size_bytes, created_at
+    SELECT id, filename, mime, sha256, source, size_bytes, confidentiality,
+           processing_policy, sync_policy, created_at
     FROM documents
-    WHERE entity_type = $1 AND entity_id = $2
+    WHERE entity_type = $1 AND entity_id = $2::text
     ORDER BY created_at DESC, id DESC
   `, [entity_type, entity_id]);
 }
 
-// Full row including content.
-export async function getDocument(id) {
-  const rows = await query(`SELECT * FROM documents WHERE id = $1`, [id]);
-  return rows[0] || null;
+// The only public path to persisted document bytes. Callers must state why
+// and where the read occurs; policy and attachment integrity are checked
+// before content is selected.
+export async function accessDocumentBytes({ documentId, purpose, executionMode }) {
+  if (!BYTE_ACCESS_PURPOSES.has(purpose)) {
+    throw new TypeError(`invalid document byte-access purpose: ${purpose}`);
+  }
+  if (!EXECUTION_MODES.has(executionMode)) {
+    throw new TypeError(`invalid executionMode: ${executionMode}`);
+  }
+
+  const rows = await query(`
+    SELECT id, entity_type, entity_id, filename, mime, sha256, source,
+           size_bytes, confidentiality, processing_policy, sync_policy,
+           created_at
+      FROM documents
+     WHERE id = $1
+  `, [documentId]);
+  const metadata = rows[0];
+  if (!metadata) return null;
+
+  await assertEntityExists(metadata.entity_type, metadata.entity_id);
+
+  if (executionMode === 'hosted' && metadata.sync_policy === 'local_only') {
+    throw new Error('document policy denies hosted access to local_only bytes');
+  }
+  if (purpose === 'model' && metadata.processing_policy !== 'model_allowed') {
+    throw new Error('document policy denies model access');
+  }
+  if (purpose === 'local_processing' && executionMode !== 'desktop') {
+    throw new Error('local_processing requires desktop execution');
+  }
+  if (['backup', 'export', 'support'].includes(purpose) && metadata.sync_policy === 'local_only') {
+    throw new Error(`document policy denies ${purpose} access`);
+  }
+  if (purpose === 'support' && metadata.confidentiality === 'tax_sensitive') {
+    throw new Error('document policy denies support access to tax_sensitive bytes');
+  }
+
+  const contentRows = await query(`SELECT content FROM documents WHERE id = $1`, [documentId]);
+  return { ...metadata, content: contentRows[0].content };
 }
 
 // Duplicate detection for intake — metadata rows matching a content hash.
 export async function findBySha(sha256) {
   return query(`
-    SELECT id, entity_type, entity_id, filename, mime, sha256, source, size_bytes, created_at
+    SELECT id, entity_type, entity_id, filename, mime, sha256, source,
+           size_bytes, confidentiality, processing_policy, sync_policy,
+           created_at
     FROM documents
     WHERE sha256 = $1
     ORDER BY created_at DESC, id DESC
@@ -92,7 +192,7 @@ export async function orphanReport() {
       SELECT d.id, d.entity_type, d.entity_id, d.filename, d.created_at
       FROM documents d
       WHERE d.entity_type = $1
-        AND NOT EXISTS (SELECT 1 FROM ${table} t WHERE t.id = d.entity_id)
+        AND NOT EXISTS (SELECT 1 FROM ${table} t WHERE t.id::text = d.entity_id)
     `, [entity_type]);
     orphans.push(...rows);
   }

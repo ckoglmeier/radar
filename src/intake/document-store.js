@@ -15,7 +15,7 @@
 
 import {
   createDocument,
-  getDocument,
+  accessDocumentBytes,
   listDocuments,
   findBySha,
 } from '../models/documents.js';
@@ -26,9 +26,9 @@ export const DocumentStore = {
   put(args) {
     return createDocument(args);
   },
-  // Full row including content, by id.
-  get(id) {
-    return getDocument(id);
+  // Full row including content, policy-gated by declared purpose and mode.
+  get(documentId, { purpose, executionMode }) {
+    return accessDocumentBytes({ documentId, purpose, executionMode });
   },
   // Metadata only (never content) for an entity_type + entity_id.
   list(entityType, entityId) {

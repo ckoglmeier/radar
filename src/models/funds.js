@@ -596,9 +596,10 @@ export async function getFund(investmentId) {
     `, [investmentId]),
     query(`SELECT * FROM valuations WHERE investment_id = $1 ORDER BY snapshot_date DESC, id DESC`, [investmentId]),
     query(`
-      SELECT id, filename, mime, sha256, source, size_bytes, created_at
+      SELECT id, filename, mime, sha256, source, size_bytes, confidentiality,
+             processing_policy, sync_policy, created_at
         FROM documents
-       WHERE entity_type = 'investment' AND entity_id = $1
+       WHERE entity_type = 'investment' AND entity_id = $1::text
        ORDER BY created_at DESC, id DESC
     `, [investmentId]),
   ]);

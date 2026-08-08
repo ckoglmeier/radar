@@ -11,7 +11,7 @@ import { upsertInvestment } from './investments.js';
 import {
   createDocument,
   listDocuments,
-  getDocument,
+  accessDocumentBytes,
   findBySha,
   orphanReport,
   createPendingIntake,
@@ -61,7 +61,7 @@ async function cleanupCompany(company) {
   const rows = await query(`SELECT id FROM investments WHERE company_name = $1`, [company]);
   if (rows.length === 0) return;
   const ids = rows.map(r => r.id);
-  await query(`DELETE FROM documents WHERE entity_type = 'investment' AND entity_id = ANY($1::int[])`, [ids]);
+  await query(`DELETE FROM documents WHERE entity_type = 'investment' AND entity_id = ANY($1::text[])`, [ids.map(String)]);
   await query(`DELETE FROM investment_theses WHERE investment_id = ANY($1::int[])`, [ids]);
   await query(`DELETE FROM investments WHERE id = ANY($1::int[])`, [ids]);
 }
@@ -120,8 +120,15 @@ async function run() {
       });
       eq(doc.sha256, shaBefore, 'computed sha256 matches source buffer');
       eq(doc.size_bytes, buf.length);
+      eq(doc.confidentiality, 'standard');
+      eq(doc.processing_policy, 'model_allowed');
+      eq(doc.sync_policy, 'encrypted_backup_allowed');
 
-      const full = await getDocument(doc.id);
+      const full = await accessDocumentBytes({
+        documentId: doc.id,
+        purpose: 'model',
+        executionMode: 'desktop',
+      });
       const readBuf = Buffer.isBuffer(full.content) ? full.content : Buffer.from(full.content);
       eq(readBuf.length, buf.length, 'byte length preserved');
       const shaAfter = createHash('sha256').update(readBuf).digest('hex');
@@ -228,6 +235,142 @@ async function run() {
       ok(rows[0].size_bytes > 0, 'size_bytes present');
     } finally {
       await cleanupCompany(company);
+    }
+  });
+
+  await test('local-only policy permits desktop processing and denies model, hosted, and backup access', async () => {
+    const company = `Test Documents Policy ${stamp}-8`;
+    try {
+      const investment = await upsertInvestment({
+        ...BASE_INVESTMENT,
+        company_name: company,
+        invest_date: '2026-07-19',
+      });
+      const doc = await createDocument({
+        entity_type: 'investment',
+        entity_id: investment.id,
+        filename: 'rule-701.pdf',
+        mime: 'application/pdf',
+        content: Buffer.from('restricted fixture'),
+        confidentiality: 'confidential_company',
+        processing_policy: 'local_only',
+        sync_policy: 'local_only',
+        executionMode: 'desktop',
+      });
+
+      const local = await accessDocumentBytes({
+        documentId: doc.id,
+        purpose: 'local_processing',
+        executionMode: 'desktop',
+      });
+      eq(Buffer.from(local.content).toString(), 'restricted fixture');
+      await expectRejects(
+        () => accessDocumentBytes({ documentId: doc.id, purpose: 'model', executionMode: 'desktop' }),
+        /denies model access/
+      );
+      await expectRejects(
+        () => accessDocumentBytes({ documentId: doc.id, purpose: 'download', executionMode: 'hosted' }),
+        /denies hosted access/
+      );
+      await expectRejects(
+        () => accessDocumentBytes({ documentId: doc.id, purpose: 'backup', executionMode: 'desktop' }),
+        /denies backup access/
+      );
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('hosted upload rejects local_only policy before storing bytes', async () => {
+    const company = `Test Documents Hosted Policy ${stamp}-9`;
+    try {
+      const investment = await upsertInvestment({
+        ...BASE_INVESTMENT,
+        company_name: company,
+        invest_date: '2026-07-20',
+      });
+      const before = Number((await query(`SELECT COUNT(*) AS n FROM documents`))[0].n);
+      await expectRejects(
+        () => createDocument({
+          entity_type: 'investment',
+          entity_id: investment.id,
+          filename: 'restricted.pdf',
+          content: Buffer.from('must not persist'),
+          processing_policy: 'local_only',
+          sync_policy: 'local_only',
+          executionMode: 'hosted',
+        }),
+        /desktop PGlite/
+      );
+      const after = Number((await query(`SELECT COUNT(*) AS n FROM documents`))[0].n);
+      eq(after, before, 'rejected bytes were not stored');
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('tax-sensitive policy denies support access', async () => {
+    const company = `Test Documents Tax Policy ${stamp}-10`;
+    try {
+      const investment = await upsertInvestment({
+        ...BASE_INVESTMENT,
+        company_name: company,
+        invest_date: '2026-07-21',
+      });
+      const doc = await createDocument({
+        entity_type: 'investment',
+        entity_id: investment.id,
+        filename: 'tax-election.pdf',
+        content: Buffer.from('tax fixture'),
+        confidentiality: 'tax_sensitive',
+      });
+      await expectRejects(
+        () => accessDocumentBytes({ documentId: doc.id, purpose: 'support', executionMode: 'desktop' }),
+        /tax_sensitive/
+      );
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('portfolio entities and room holdings are valid attachment targets', async () => {
+    let entityId = null;
+    let roomId = null;
+    let holdingId = null;
+    try {
+      const entityRows = await query(`
+        INSERT INTO portfolio_entities (legal_name, normalized_name, entity_type)
+        VALUES ($1, $2, 'operating_company')
+        RETURNING id
+      `, [`Document Entity ${stamp}`, `document entity ${stamp}`]);
+      entityId = entityRows[0].id;
+      const roomRows = await query(`INSERT INTO rooms (name) VALUES ($1) RETURNING id`, [`Document Room ${stamp}`]);
+      roomId = roomRows[0].id;
+      const holdingRows = await query(`INSERT INTO room_holdings (room_id) VALUES ($1) RETURNING id`, [roomId]);
+      holdingId = holdingRows[0].id;
+
+      const entityDoc = await createDocument({
+        entity_type: 'portfolio_entity',
+        entity_id: entityId,
+        filename: 'plan.pdf',
+        content: Buffer.from('entity attachment'),
+      });
+      const holdingDoc = await createDocument({
+        entity_type: 'room_holding',
+        entity_id: holdingId,
+        filename: 'appraisal.pdf',
+        content: Buffer.from('holding attachment'),
+      });
+      eq(entityDoc.entity_id, entityId);
+      eq(holdingDoc.entity_id, String(holdingId));
+      eq((await listDocuments('portfolio_entity', entityId)).length, 1);
+      eq((await listDocuments('room_holding', holdingId)).length, 1);
+    } finally {
+      if (holdingId) await query(`DELETE FROM documents WHERE entity_type = 'room_holding' AND entity_id = $1::text`, [holdingId]);
+      if (entityId) await query(`DELETE FROM documents WHERE entity_type = 'portfolio_entity' AND entity_id = $1::text`, [entityId]);
+      if (holdingId) await query(`DELETE FROM room_holdings WHERE id = $1`, [holdingId]);
+      if (roomId) await query(`DELETE FROM rooms WHERE id = $1`, [roomId]);
+      if (entityId) await query(`DELETE FROM portfolio_entities WHERE id = $1`, [entityId]);
     }
   });
 
@@ -353,7 +496,7 @@ async function run() {
         content: Buffer.from('clean data fixture'),
       });
       const orphans = await orphanReport();
-      const ours = orphans.filter(o => o.entity_type === 'investment' && o.entity_id === investment.id);
+      const ours = orphans.filter(o => o.entity_type === 'investment' && o.entity_id === String(investment.id));
       eq(ours.length, 0, 'no orphans for a document whose parent row exists');
     } finally {
       await cleanupCompany(company);
