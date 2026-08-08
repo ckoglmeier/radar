@@ -8,6 +8,14 @@ import { closeDb, query, withTenant } from './index.js';
 import { runMigrations } from './migrate.js';
 import { accessDocumentBytes, createDocument } from '../models/documents.js';
 import { createFund, fundMetrics, recordFundDistribution } from '../models/funds.js';
+import {
+  addIssuerDisclosure,
+  createEmploymentEquityIssuer,
+  createEmploymentEquityPosition,
+  employmentEquityMetrics,
+  recordExerciseOrPurchase,
+  recordEmploymentEquityValuation,
+} from '../models/employment-equity.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-backup-restore-'));
 const sourceUrl = `file:${join(scratch, 'source')}`;
@@ -22,6 +30,7 @@ try {
   let runId;
   let evaluationId;
   let fundId;
+  let employmentEquityId;
   await withTenant(sourceUrl, async () => {
     await runMigrations();
     const [entity] = await query(`
@@ -127,6 +136,70 @@ try {
       amount: 5,
       externalHash: 'backup:fund-i:distribution',
     });
+    const issuer = await createEmploymentEquityIssuer({
+      legalName: 'Backup Employment Issuer, Inc.',
+      legalForm: 'c_corporation',
+      relationshipStatus: 'former_employee',
+    });
+    const employmentPosition = await createEmploymentEquityPosition({
+      portfolioEntityId: issuer.entity.id,
+      displayName: 'Backup ISO grant',
+      instrumentFamily: 'iso',
+      investDate: '2020-01-01',
+      firstGrant: {
+        legalInstrumentName: 'Backup option agreement',
+        instrumentType: 'iso',
+        grantDate: '2020-01-01',
+        unitsGranted: 100,
+        unitsVestedConfirmed: 100,
+        strikePrice: 1,
+      },
+    });
+    employmentEquityId = Number(employmentPosition.investment.id);
+    await recordExerciseOrPurchase(employmentEquityId, {
+      grantId: employmentPosition.grant.id,
+      date: '2024-01-01',
+      units: 10,
+      cashOutlay: 10,
+      taxBasis: 20,
+      compensationBasis: 10,
+      externalHash: 'backup:ee:exercise',
+    });
+    await recordEmploymentEquityValuation(employmentEquityId, {
+      date: '2025-01-01',
+      commonFmvPerUnit: 5,
+    });
+    const disclosure = await createDocument({
+      entity_type: 'portfolio_entity',
+      entity_id: issuer.entity.id,
+      filename: 'backup-rule-701.pdf',
+      mime: 'application/pdf',
+      content: Buffer.from('backup disclosure fixture'),
+      confidentiality: 'confidential_company',
+      processing_policy: 'local_only',
+      sync_policy: 'encrypted_backup_allowed',
+      executionMode: 'desktop',
+    });
+    await addIssuerDisclosure(issuer.entity.id, {
+      documentId: disclosure.id,
+      disclosureType: 'rule_701',
+      receivedDate: '2025-01-02',
+    });
+    const restricted = await createDocument({
+      entity_type: 'portfolio_entity',
+      entity_id: issuer.entity.id,
+      filename: 'never-back-up.pdf',
+      content: Buffer.from('local-only fixture'),
+      confidentiality: 'tax_sensitive',
+      processing_policy: 'local_only',
+      sync_policy: 'local_only',
+      executionMode: 'desktop',
+    });
+    await assert.rejects(
+      () => backupDatabase({ outDir: backupDir }),
+      /backup denied: 1 local_only document/,
+    );
+    await query(`DELETE FROM documents WHERE id = $1`, [restricted.id]);
     ({ file: backupFile } = await backupDatabase({ outDir: backupDir }));
   });
 
@@ -210,6 +283,17 @@ try {
     assert.equal(restoredFundMetrics.paid_in, 40);
     assert.equal(restoredFundMetrics.distributed, 5);
     assert.equal(restoredFundMetrics.nav, 45);
+    const restoredEmploymentMetrics = await employmentEquityMetrics(employmentEquityId);
+    assert.equal(restoredEmploymentMetrics.remaining_cash_outlay, 10);
+    assert.equal(restoredEmploymentMetrics.remaining_tax_basis, 20);
+    assert.equal(restoredEmploymentMetrics.remaining_compensation_basis, 10);
+    assert.equal(restoredEmploymentMetrics.vested_value, 410);
+    assert.equal((await query(`
+      SELECT COUNT(*)::int AS count
+        FROM issuer_disclosures d
+        JOIN documents doc ON doc.id = d.document_id
+       WHERE doc.filename = 'backup-rule-701.pdf'
+    `))[0].count, 1);
 
     const [nextInvite] = await query(
       `INSERT INTO pipeline_invites (deal_slug, company_name)

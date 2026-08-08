@@ -27,6 +27,13 @@ const INSERT_ORDER = [
   'portfolio_entities',
   'investments',
   'investment_source_identities',
+  // Polymorphic attachment integrity is model-enforced, so documents can be
+  // restored before typed records whose explicit source-document FKs need it.
+  'documents',
+  'employment_equity_issuer_profiles',
+  'employment_equity_positions',
+  'employment_equity_grants',
+  'investment_lots',
   'company_aliases',
   'valuations',
   'cash_flows',
@@ -44,12 +51,15 @@ const INSERT_ORDER = [
   'fund_profiles',
   'fund_notices',
   'fund_transactions',
+  'employment_equity_events',
+  'investment_lot_allocations',
+  'employment_equity_valuation_details',
+  'issuer_disclosures',
   'room_pipeline',
   'room_views',
   'metric_views',
   'attention_dismissals',
   'company_updates',
-  'documents', // provenance artifacts; must follow every attachment parent above, including portfolio_entities and room_holdings
   'user_settings',
   'lens_config',
   'sync_runs',
@@ -116,6 +126,14 @@ function rowsInRestoreOrder(table, rows) {
 }
 
 export async function backupDatabase({ outDir = './backups' } = {}) {
+  const [restrictedDocuments] = await query(`
+    SELECT COUNT(*)::int AS count FROM documents WHERE sync_policy = 'local_only'
+  `);
+  if (Number(restrictedDocuments?.count || 0) > 0) {
+    throw new Error(
+      `backup denied: ${restrictedDocuments.count} local_only document(s) are not permitted to leave the desktop workspace`,
+    );
+  }
   const tables = (await query(
     `SELECT table_name FROM information_schema.tables
      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
