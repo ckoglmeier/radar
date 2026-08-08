@@ -47,6 +47,10 @@ import {
 } from './models/portfolio-entities.js';
 import { buildFundsAudit, formatFundsAuditSummary } from './models/funds-audit.js';
 import {
+  buildEmploymentEquityAudit,
+  formatEmploymentEquityAuditSummary,
+} from './models/employment-equity-audit.js';
+import {
   applyFundsMigrationManifest,
   buildFundsMigrationManifest,
 } from './models/funds-migration.js';
@@ -535,6 +539,32 @@ fundsCmd
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, `${JSON.stringify(audit, null, 2)}\n`);
       console.log(`\n${formatFundsAuditSummary(audit)}`);
+      console.log(chalk.green(`JSON audit written to ${file}`));
+      console.log(chalk.dim('No database records were changed.\n'));
+    } catch (err) {
+      console.error(chalk.red(`\n  Error: ${err.message}\n`));
+      process.exit(1);
+    }
+  });
+
+// --- Employment Equity ---
+const employmentEquityCmd = program
+  .command('employment-equity')
+  .description('Employment Equity audit and tracking');
+
+employmentEquityCmd
+  .command('audit')
+  .description('Build a read-only Employment Equity migration audit')
+  .option('--out <file>', 'JSON audit output path')
+  .action(async (opts) => {
+    try {
+      const audit = await buildEmploymentEquityAudit();
+      const file = resolve(
+        opts.out || `./backups/employment-equity-audit-${audit.source_hash.slice(0, 12)}.json`,
+      );
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(audit, null, 2)}\n`);
+      console.log(`\n${formatEmploymentEquityAuditSummary(audit)}`);
       console.log(chalk.green(`JSON audit written to ${file}`));
       console.log(chalk.dim('No database records were changed.\n'));
     } catch (err) {
