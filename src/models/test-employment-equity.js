@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { closeDb, query, withTenant } from '../db/index.js';
+import { closeDb, query, withAtomicWrite, withTenant } from '../db/index.js';
 import { runMigrations } from '../db/migrate.js';
 import { createDocument, accessDocumentBytes } from './documents.js';
 import {
@@ -21,6 +21,7 @@ import {
   recordBasisAdjustment,
   recordEmploymentEquityDisposition,
   recordEmploymentEquityDistribution,
+  recordEmploymentEquityIssuerMark,
   recordEmploymentEquityValuation,
   recordExerciseOrPurchase,
   recordForfeitureOrExpiration,
@@ -153,6 +154,15 @@ try {
     assert.equal(optionMetrics.value_change, 9_100);
     assert.equal(optionMetrics.valuation_count, 2);
 
+    const taxMark = await recordEmploymentEquityIssuerMark(guild.entity.id, {
+      markType: 'tax_409a',
+      date: '2025-05-31',
+      valuePerUnit: 6,
+      confidence: 'company_reported',
+      sourceFactKey: 'test:guild:409a:2025-05-31',
+    });
+    assert.equal(taxMark.valuations.length, 0, '409A is reference-only');
+
     const secondLot = await addInvestmentLot(common.investment.id, {
       acquisitionDate: '2022-02-01',
       taxHoldingStartDate: '2022-02-01',
@@ -170,6 +180,27 @@ try {
     assert.deepEqual(
       commonDetail.lots.map(row => [dateOnly(row.acquisition_date), Number(row.acquisition_price_per_unit)]),
       [['2021-06-15', 2], ['2022-02-01', 3.5]],
+    );
+    await assert.rejects(
+      () => withAtomicWrite(async () => {
+        await addInvestmentLot(common.investment.id, {
+          acquisitionDate: '2023-01-01',
+          instrumentType: 'common_stock',
+          unitsAcquired: 10,
+          acquisitionPricePerUnit: 4,
+          cashOutlay: 40,
+          taxBasis: 40,
+          basisAsOfDate: '2023-01-01',
+          basisSource: 'tax_record',
+        });
+        throw new Error('force outer Employment Equity rollback');
+      }),
+      /force outer Employment Equity rollback/,
+    );
+    assert.equal(
+      (await getEmploymentEquityPosition(common.investment.id)).lots.length,
+      2,
+      'nested Employment Equity write participates in outer rollback',
     );
 
     const disposition = await recordEmploymentEquityDisposition(common.investment.id, {
@@ -231,6 +262,33 @@ try {
       resultingInstrumentType: 'common_stock', taxBasis: 50, compensationBasis: 50,
     });
     assert.equal(settlement.event.cash_flow_id, null);
+
+    const issuerMark = await recordEmploymentEquityIssuerMark(guild.entity.id, {
+      markType: 'common_share_economic',
+      date: '2025-06-30',
+      valuePerUnit: 12,
+      confidence: 'company_reported',
+      sourceFactKey: 'test:guild:common:2025-06-30',
+    });
+    assert.equal(issuerMark.valuations.length, 2, 'one issuer mark derives all eligible positions');
+    assert.equal(issuerMark.manual_positions.length, 0);
+    assert.equal(
+      Number((await query(`
+        SELECT COUNT(*) AS count
+          FROM employment_equity_valuation_details
+         WHERE issuer_mark_id = $1
+      `, [issuerMark.mark.id]))[0].count),
+      2,
+    );
+    assert.equal((await recordEmploymentEquityIssuerMark(guild.entity.id, {
+      markType: 'common_share_economic', date: '2025-06-30', valuePerUnit: 12,
+    })).idempotent_replay, true);
+    await assert.rejects(
+      () => recordEmploymentEquityIssuerMark(guild.entity.id, {
+        markType: 'common_share_economic', date: '2025-06-30', valuePerUnit: 13,
+      }),
+      error => error.code === 'ISSUER_MARK_DATE_CONFLICT',
+    );
     await recordForfeitureOrExpiration(options.investment.id, {
       grantId: options.grant.id, eventType: 'expiration', date: '2025-03-01', units: 50,
     });
@@ -256,6 +314,14 @@ try {
       methodology: 'manual', confidence: 'estimated', hurdleAmount: 1_000_000,
     });
     assert.equal(Number(ppuMark.valuation.net_value), 50_000);
+    const artworkIssuerMark = await recordEmploymentEquityIssuerMark(artwork.entity.id, {
+      markType: 'common_share_economic', date: '2025-06-30', valuePerUnit: 20,
+    });
+    assert.equal(artworkIssuerMark.valuations.length, 0);
+    assert.deepEqual(
+      artworkIssuerMark.manual_positions.map(row => Number(row.investment_id)),
+      [Number(ppu.investment.id)],
+    );
 
     const disclosureDocument = await createDocument({
       entity_type: 'portfolio_entity',
@@ -287,7 +353,7 @@ try {
     const summary = await employmentEquitySummary();
     assert.equal(summary.issuer_count, 2);
     assert.equal(summary.position_count, 3);
-    assert.equal(summary.vested_value, null, 'one unmarked position keeps the aggregate mark unavailable');
+    assert.equal(summary.vested_value, 62_300, 'issuer mark fills every eligible linked position');
 
     await assert.rejects(
       () => query(`UPDATE cash_flows SET amount = 999 WHERE id = $1`, [exercise.cash_flow.id]),

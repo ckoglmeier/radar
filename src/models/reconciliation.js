@@ -1,4 +1,4 @@
-import { query, isPgliteActive } from '../db/index.js';
+import { query, isPgliteActive, withAtomicWrite } from '../db/index.js';
 import { recomputeInvestmentReturns } from '../import/transactions.js';
 import { normalize } from '../utils/company-names.js';
 
@@ -195,8 +195,7 @@ export async function consolidatePositions({ targetInvestmentId, sourceInvestmen
     throw new Error('Position consolidation currently requires a local Radar workspace');
   }
 
-  await query('BEGIN');
-  try {
+  await withAtomicWrite(async () => {
     for (const sourceId of sourceIds) await consolidateOne(sourceId, targetId);
     const allIds = [targetId, ...sourceIds].sort((a, b) => a - b);
     await query(
@@ -209,11 +208,7 @@ export async function consolidatePositions({ targetInvestmentId, sourceInvestmen
              reviewed_at = NOW()`,
       [duplicateGroupKey(allIds), JSON.stringify(allIds)],
     );
-    await query('COMMIT');
-  } catch (error) {
-    await query('ROLLBACK');
-    throw error;
-  }
+  });
 
   await recomputeInvestmentReturns();
   return { targetInvestmentId: targetId, sourceInvestmentIds: sourceIds };

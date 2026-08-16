@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isPgliteActive, query } from '../db/index.js';
+import { isPgliteActive, query, withAtomicWrite } from '../db/index.js';
 import { normalize } from '../utils/company-names.js';
 
 const FUND_STATUSES = new Set(['active', 'harvesting', 'realized', 'written_off']);
@@ -66,19 +66,7 @@ async function withFundWrite(fn) {
   if (!(await isPgliteActive())) {
     throw new Error('Fund writes require local PGlite transaction support');
   }
-  await query('BEGIN');
-  try {
-    const result = await fn();
-    await query('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      await query('ROLLBACK');
-    } catch {
-      // Preserve the operation error.
-    }
-    throw error;
-  }
+  return withAtomicWrite(fn);
 }
 
 async function fundPosition(investmentId, { lock = false } = {}) {
@@ -472,16 +460,29 @@ export async function recordFundValuation(investmentId, fields = {}) {
     if (existing) {
       if (Number(existing.net_value) === nav) return { valuation: existing, idempotent_replay: true };
       const reason = requiredText(fields.correctionReason, 'Correction reason');
-      await query(`SELECT set_config('radar.allow_fund_valuation_correction', 'on', TRUE)`);
-      const [valuation] = await query(`
-        UPDATE valuations
-           SET unrealized_value = $3,
-               realized_value = 0,
-               net_value = $3,
-               multiple = NULL
-         WHERE investment_id = $1 AND snapshot_date = $2
-         RETURNING *
-      `, [investmentId, date, nav]);
+      let valuation;
+      let correctionError = null;
+      try {
+        await query(`SELECT set_config('radar.allow_fund_valuation_correction', 'on', TRUE)`);
+        [valuation] = await query(`
+          UPDATE valuations
+             SET unrealized_value = $3,
+                 realized_value = 0,
+                 net_value = $3,
+                 multiple = NULL
+           WHERE investment_id = $1 AND snapshot_date = $2
+           RETURNING *
+        `, [investmentId, date, nav]);
+      } catch (error) {
+        correctionError = error;
+        throw error;
+      } finally {
+        try {
+          await query(`SELECT set_config('radar.allow_fund_valuation_correction', 'off', TRUE)`);
+        } catch (resetError) {
+          if (!correctionError) throw resetError;
+        }
+      }
       await query(`
         INSERT INTO investment_events
           (investment_id, event_type, field_name, old_value, new_value, source, notes)

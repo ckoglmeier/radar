@@ -7,7 +7,7 @@
 // for manual and Employment Equity positions.
 
 import { createHash } from 'node:crypto';
-import { query } from '../db/index.js';
+import { query, withAtomicWrite } from '../db/index.js';
 
 /**
  * Return a non-mutating review hint for names that may represent fund vehicles.
@@ -61,6 +61,7 @@ async function findClosingPosition(fields, source) {
     WHERE company_name = $1
       AND COALESCE(NULLIF(BTRIM(source), ''), 'legacy') = $2
       AND status = 'Closing'
+      AND asset_class = 'direct'
       AND lead IS NOT DISTINCT FROM $3
       AND round IS NOT DISTINCT FROM $4
       AND invested = $5
@@ -79,7 +80,7 @@ async function findImportedPosition(fields, source, sourceKey) {
       JOIN investments i ON i.id = isi.investment_id
      WHERE isi.source = $1
        AND isi.source_key = $2
-       AND i.asset_class <> 'merged'
+       AND i.asset_class = 'direct'
   `, [source, sourceKey]);
   if (linked[0]) return linked[0].id;
 
@@ -90,7 +91,7 @@ async function findImportedPosition(fields, source, sourceKey) {
       FROM investments
      WHERE company_name = $1
        AND invest_date IS NOT DISTINCT FROM $2::date
-       AND asset_class <> 'merged'
+       AND asset_class = 'direct'
      ORDER BY id
   `, [fields.company_name, fields.invest_date]);
   if (legacy.length > 1) {
@@ -139,7 +140,7 @@ async function updateImportedPosition(id, fields, source, sourceKey) {
              END,
              stage_bucket = $7,
              updated_at = NOW()
-       WHERE id = $8 AND asset_class <> 'merged'
+       WHERE id = $8 AND asset_class = 'direct'
        RETURNING id
     ), linked AS (
       INSERT INTO investment_source_identities
@@ -176,7 +177,7 @@ async function updateClosingPositionDate(id, fields, source, sourceKey) {
       UPDATE investments
          SET invest_date = $1,
              updated_at = NOW()
-       WHERE id = $2 AND asset_class <> 'merged'
+       WHERE id = $2 AND asset_class = 'direct'
        RETURNING id
     ), linked AS (
       INSERT INTO investment_source_identities
@@ -286,6 +287,142 @@ export async function createValuationSnapshot(investmentId, values) {
     VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6)
     ON CONFLICT (investment_id, snapshot_date) DO NOTHING
   `, [investmentId, values.unrealized_value, values.realized_value, values.net_value, values.multiple, source]);
+}
+
+function explicitIsoDate(value, label) {
+  const date = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new TypeError(`${label} must be an ISO date (YYYY-MM-DD)`);
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    throw new TypeError(`${label} must be an ISO date (YYYY-MM-DD)`);
+  }
+  return date;
+}
+
+function nonNegativeNumber(value, label) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) throw new TypeError(`${label} must be non-negative`);
+  return amount;
+}
+
+/**
+ * Record a dated Direct unrealized holding mark.
+ * Realized proceeds come from matched cash-flow evidence when available and
+ * otherwise remain the current imported/reporting fact.
+ */
+export async function recordDirectValuation(investmentId, fields = {}) {
+  const date = explicitIsoDate(fields.date, 'Valuation date');
+  const today = new Date().toISOString().slice(0, 10);
+  if (date > today) throw new TypeError('Valuation date cannot be in the future');
+  const unrealized = nonNegativeNumber(fields.unrealizedValue, 'Unrealized value');
+
+  return withAtomicWrite(async () => {
+    const [investment] = await query(`
+      SELECT * FROM investments WHERE id = $1 FOR UPDATE
+    `, [investmentId]);
+    if (!investment || investment.asset_class !== 'direct') {
+      throw new Error('Direct valuation requires an active Direct investment');
+    }
+
+    const [ledger] = await query(`
+      SELECT COUNT(*) FILTER (
+               WHERE type = 'distribution' AND reconciliation_status = 'matched'
+             ) AS matched_count,
+             COALESCE(SUM(amount) FILTER (
+               WHERE type = 'distribution' AND reconciliation_status = 'matched'
+             ), 0) AS realized
+        FROM cash_flows
+       WHERE investment_id = $1
+    `, [investmentId]);
+    const realized = Number(ledger.matched_count) > 0
+      ? Number(ledger.realized)
+      : Number(investment.realized_value || 0);
+    const total = unrealized + realized;
+    const netInvested = investment.computed_net_invested == null
+      ? Number(investment.invested || 0)
+      : Number(investment.computed_net_invested);
+    const multiple = netInvested > 0 ? total / netInvested : null;
+
+    const [existing] = await query(`
+      SELECT * FROM valuations WHERE investment_id = $1 AND snapshot_date = $2
+    `, [investmentId, date]);
+    let valuation;
+    let corrected = false;
+    if (existing) {
+      const same = Number(existing.unrealized_value) === unrealized
+        && Number(existing.realized_value || 0) === realized
+        && Number(existing.net_value) === total
+        && (existing.multiple == null ? multiple == null : Number(existing.multiple) === multiple);
+      if (same) return { valuation: existing, idempotent_replay: true, corrected: false };
+      const reason = String(fields.correctionReason || '').trim();
+      if (!reason) throw new TypeError('Correction reason is required');
+      if (existing.source !== 'direct_manual') {
+        throw new Error('Only a prior Direct manual valuation can be corrected in place');
+      }
+      let correctionError = null;
+      try {
+        await query(`SELECT set_config('radar.allow_direct_valuation_correction', 'on', TRUE)`);
+        [valuation] = await query(`
+          UPDATE valuations
+             SET unrealized_value = $3, realized_value = $4,
+                 net_value = $5, multiple = $6
+           WHERE investment_id = $1 AND snapshot_date = $2
+           RETURNING *
+        `, [investmentId, date, unrealized, realized, total, multiple]);
+      } catch (error) {
+        correctionError = error;
+        throw error;
+      } finally {
+        try {
+          await query(`SELECT set_config('radar.allow_direct_valuation_correction', 'off', TRUE)`);
+        } catch (resetError) {
+          if (!correctionError) throw resetError;
+        }
+      }
+      await logInvestmentEvent(
+        investmentId,
+        'direct_valuation_corrected',
+        'valuation',
+        JSON.stringify({ unrealized: existing.unrealized_value, realized: existing.realized_value, total: existing.net_value }),
+        JSON.stringify({ unrealized, realized, total }),
+        'direct_manual',
+        JSON.stringify({ reason, proposal_id: fields.proposalId || null }),
+      );
+      corrected = true;
+    } else {
+      [valuation] = await query(`
+        INSERT INTO valuations
+          (investment_id, snapshot_date, unrealized_value, realized_value,
+           net_value, multiple, source)
+        VALUES ($1,$2,$3,$4,$5,$6,'direct_manual')
+        RETURNING *
+      `, [investmentId, date, unrealized, realized, total, multiple]);
+      await logInvestmentEvent(
+        investmentId,
+        'direct_valuation_recorded',
+        'valuation',
+        null,
+        JSON.stringify({ date, unrealized, realized, total, multiple }),
+        'direct_manual',
+        JSON.stringify({ proposal_id: fields.proposalId || null }),
+      );
+    }
+
+    const [latest] = await query(`
+      SELECT MAX(snapshot_date)::text AS date FROM valuations WHERE investment_id = $1
+    `, [investmentId]);
+    if (String(latest.date).slice(0, 10) === date) {
+      await query(`
+        UPDATE investments
+           SET unrealized_value = $2, realized_value = $3, net_value = $4,
+               multiple = $5, computed_realized = $3,
+               computed_net_invested = $6, computed_total_value = $4,
+               computed_multiple = $5, computed_at = NOW(), updated_at = NOW()
+         WHERE id = $1
+      `, [investmentId, unrealized, realized, total, multiple, netInvested]);
+    }
+    return { valuation, idempotent_replay: false, corrected };
+  });
 }
 
 export async function addPositionManual(fields) {

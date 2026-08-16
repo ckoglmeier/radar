@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { closeDb, query, withTenant } from '../db/index.js';
+import { closeDb, query, withAtomicWrite, withTenant } from '../db/index.js';
 import { runMigrations } from '../db/migrate.js';
 import {
   archiveFund,
@@ -196,6 +196,34 @@ try {
       SELECT COUNT(*) AS count FROM investment_events
        WHERE investment_id = $1 AND event_type = 'fund_valuation_corrected'
     `, [fundId]))[0].count, 1);
+
+    await assert.rejects(
+      () => withAtomicWrite(async () => {
+        await recordFundValuation(fundId, {
+          date: '2025-03-31',
+          nav: 152,
+          correctionReason: 'Must roll back with outer write',
+        });
+        throw new Error('force outer Fund rollback');
+      }),
+      /force outer Fund rollback/,
+    );
+    assert.equal(Number((await query(`
+      SELECT net_value FROM valuations
+       WHERE investment_id = $1 AND snapshot_date = '2025-03-31'
+    `, [fundId]))[0].net_value), 151, 'nested Fund write participates in outer rollback');
+
+    await withAtomicWrite(async () => {
+      await recordFundValuation(fundId, {
+        date: '2025-03-31',
+        nav: 152,
+        correctionReason: 'Corrected again after rollback test',
+      });
+      const [guard] = await query(`
+        SELECT current_setting('radar.allow_fund_valuation_correction', TRUE) AS value
+      `);
+      assert.notEqual(guard.value, 'on', 'Fund correction guard leaked to the next command');
+    });
 
     await updateFund(fundId, {
       fundStatus: 'harvesting',

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { isPgliteActive, query } from '../db/index.js';
+import { isPgliteActive, query, withAtomicWrite } from '../db/index.js';
 import { normalize } from '../utils/company-names.js';
 
 const MANIFEST_VERSION = 1;
@@ -162,18 +162,6 @@ function verifyCandidate(candidate, kind) {
   }
 }
 
-async function begin() {
-  await query('BEGIN');
-}
-
-async function rollback() {
-  try {
-    await query('ROLLBACK');
-  } catch {
-    // Preserve the operation error.
-  }
-}
-
 export async function applyFundsMigrationManifest(manifest) {
   if (!(await isPgliteActive())) {
     throw new Error('Fund migration apply requires local PGlite transaction support');
@@ -221,96 +209,96 @@ export async function applyFundsMigrationManifest(manifest) {
     const selectedFlows = (manifest.flow_candidates || []).filter(flow =>
       flow.decision.action === 'attach' && Number(flow.decision.investment_id) === investmentId
     );
-    await begin();
     try {
-      const [position] = await query(`
-        SELECT i.id, i.position_key, i.company_name, i.asset_class,
-               i.portfolio_entity_id, i.status, i.investment_entity,
-               pe.legal_name, pe.entity_type
-          FROM investments i
-          JOIN portfolio_entities pe ON pe.id = i.portfolio_entity_id
-         WHERE i.id = $1
-         FOR UPDATE OF i
-      `, [investmentId]);
-      if (!position || position.asset_class !== 'fund' || position.entity_type !== 'fund_vehicle') {
-        throw new Error(`Fund migration target is no longer valid: ${investmentId}`);
-      }
-      const [existingProfile] = await query(`
-        SELECT * FROM fund_profiles WHERE investment_id = $1 FOR UPDATE
-      `, [investmentId]);
-      if (!existingProfile && hash(profileSource(position)) !== candidate.source_hash) {
-        throw new Error(`Fund profile source is stale: ${investmentId}`);
-      }
-      let profileCreated = 0;
-      if (!existingProfile) {
-        await query(`
-          INSERT INTO fund_profiles (investment_id, fund_status, migration_key)
-          VALUES ($1, $2, $3)
-        `, [investmentId, candidate.fund_status, candidate.migration_key]);
-        profileCreated = 1;
-      } else if (existingProfile.migration_key && existingProfile.migration_key !== candidate.migration_key) {
-        throw new Error(`Fund profile ${investmentId} has a different migration origin`);
-      }
+      const report = await withAtomicWrite(async () => {
+        const [position] = await query(`
+          SELECT i.id, i.position_key, i.company_name, i.asset_class,
+                 i.portfolio_entity_id, i.status, i.investment_entity,
+                 pe.legal_name, pe.entity_type
+            FROM investments i
+            JOIN portfolio_entities pe ON pe.id = i.portfolio_entity_id
+           WHERE i.id = $1
+           FOR UPDATE OF i
+        `, [investmentId]);
+        if (!position || position.asset_class !== 'fund' || position.entity_type !== 'fund_vehicle') {
+          throw new Error(`Fund migration target is no longer valid: ${investmentId}`);
+        }
+        const [existingProfile] = await query(`
+          SELECT * FROM fund_profiles WHERE investment_id = $1 FOR UPDATE
+        `, [investmentId]);
+        if (!existingProfile && hash(profileSource(position)) !== candidate.source_hash) {
+          throw new Error(`Fund profile source is stale: ${investmentId}`);
+        }
+        let profileCreated = 0;
+        if (!existingProfile) {
+          await query(`
+            INSERT INTO fund_profiles (investment_id, fund_status, migration_key)
+            VALUES ($1, $2, $3)
+          `, [investmentId, candidate.fund_status, candidate.migration_key]);
+          profileCreated = 1;
+        } else if (existingProfile.migration_key && existingProfile.migration_key !== candidate.migration_key) {
+          throw new Error(`Fund profile ${investmentId} has a different migration origin`);
+        }
 
-      let flowsAttached = 0;
-      let flowsUnchanged = 0;
-      for (const flowCandidate of selectedFlows) {
-        const [existingTransaction] = await query(`
-          SELECT * FROM fund_transactions WHERE cash_flow_id = $1
-        `, [flowCandidate.cash_flow_id]);
-        if (existingTransaction) {
-          if (
-            Number(existingTransaction.investment_id) !== investmentId ||
-            existingTransaction.activity_type !== flowCandidate.eligible_activity_type ||
-            existingTransaction.voided_at
-          ) {
-            throw new Error(`Fund cash flow ${flowCandidate.cash_flow_id} has conflicting metadata`);
+        let flowsAttached = 0;
+        let flowsUnchanged = 0;
+        for (const flowCandidate of selectedFlows) {
+          const [existingTransaction] = await query(`
+            SELECT * FROM fund_transactions WHERE cash_flow_id = $1
+          `, [flowCandidate.cash_flow_id]);
+          if (existingTransaction) {
+            if (
+              Number(existingTransaction.investment_id) !== investmentId ||
+              existingTransaction.activity_type !== flowCandidate.eligible_activity_type ||
+              existingTransaction.voided_at
+            ) {
+              throw new Error(`Fund cash flow ${flowCandidate.cash_flow_id} has conflicting metadata`);
+            }
+            flowsUnchanged += 1;
+            continue;
           }
-          flowsUnchanged += 1;
-          continue;
+          const [flow] = await query(`
+            SELECT id, investment_id, flow_date, type, amount, description,
+                   company_raw, spv_raw, source, external_hash,
+                   reconciliation_status, reconciliation_note
+              FROM cash_flows WHERE id = $1 FOR UPDATE
+          `, [flowCandidate.cash_flow_id]);
+          if (!flow || hash(flowSource(flow)) !== flowCandidate.source_hash) {
+            throw new Error(`Fund cash flow source is stale: ${flowCandidate.cash_flow_id}`);
+          }
+          if (flow.investment_id != null && Number(flow.investment_id) !== investmentId) {
+            throw new Error(`Fund cash flow ${flow.id} is linked to another position`);
+          }
+          await query(`
+            UPDATE cash_flows
+               SET investment_id = $1,
+                   reconciliation_status = 'matched',
+                   reconciliation_note = $2,
+                   reconciled_at = NOW()
+             WHERE id = $3
+          `, [investmentId, `Reviewed Fund migration to ${position.company_name}`, flow.id]);
+          await query(`
+            INSERT INTO fund_transactions
+              (investment_id, cash_flow_id, activity_type, external_hash)
+            VALUES ($1, $2, $3, $4)
+          `, [
+            investmentId,
+            flow.id,
+            flowCandidate.eligible_activity_type,
+            `legacy-cash-flow:${flow.id}`,
+          ]);
+          flowsAttached += 1;
         }
-        const [flow] = await query(`
-          SELECT id, investment_id, flow_date, type, amount, description,
-                 company_raw, spv_raw, source, external_hash,
-                 reconciliation_status, reconciliation_note
-            FROM cash_flows WHERE id = $1 FOR UPDATE
-        `, [flowCandidate.cash_flow_id]);
-        if (!flow || hash(flowSource(flow)) !== flowCandidate.source_hash) {
-          throw new Error(`Fund cash flow source is stale: ${flowCandidate.cash_flow_id}`);
-        }
-        if (flow.investment_id != null && Number(flow.investment_id) !== investmentId) {
-          throw new Error(`Fund cash flow ${flow.id} is linked to another position`);
-        }
-        await query(`
-          UPDATE cash_flows
-             SET investment_id = $1,
-                 reconciliation_status = 'matched',
-                 reconciliation_note = $2,
-                 reconciled_at = NOW()
-           WHERE id = $3
-        `, [investmentId, `Reviewed Fund migration to ${position.company_name}`, flow.id]);
-        await query(`
-          INSERT INTO fund_transactions
-            (investment_id, cash_flow_id, activity_type, external_hash)
-          VALUES ($1, $2, $3, $4)
-        `, [
-          investmentId,
-          flow.id,
-          flowCandidate.eligible_activity_type,
-          `legacy-cash-flow:${flow.id}`,
-        ]);
-        flowsAttached += 1;
-      }
-      await query('COMMIT');
-      reports.push({
-        investment_id: investmentId,
-        status: 'committed',
-        profile_created: profileCreated,
-        flows_attached: flowsAttached,
-        flows_unchanged: flowsUnchanged,
+        return {
+          investment_id: investmentId,
+          status: 'committed',
+          profile_created: profileCreated,
+          flows_attached: flowsAttached,
+          flows_unchanged: flowsUnchanged,
+        };
       });
+      reports.push(report);
     } catch (error) {
-      await rollback();
       reports.push({ investment_id: investmentId, status: 'failed', error: error.message });
     }
   }

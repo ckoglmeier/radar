@@ -18,7 +18,7 @@
 
 import { writeFileSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { query, isPgliteActive } from './index.js';
+import { query, isPgliteActive, withAtomicWrite } from './index.js';
 
 // Parents before children so a future restore can insert in file order.
 const INSERT_ORDER = [
@@ -27,6 +27,8 @@ const INSERT_ORDER = [
   'portfolio_entities',
   'investments',
   'investment_source_identities',
+  'investment_consolidations',
+  'position_duplicate_reviews',
   // Polymorphic attachment integrity is model-enforced, so documents can be
   // restored before typed records whose explicit source-document FKs need it.
   'documents',
@@ -45,6 +47,7 @@ const INSERT_ORDER = [
   'council_run_events',
   'council_run_dispatch',
   'deal_evaluations',
+  'council_followup_questions',
   'decision_records',
   'rooms',
   'room_holdings',
@@ -53,6 +56,7 @@ const INSERT_ORDER = [
   'fund_transactions',
   'employment_equity_events',
   'investment_lot_allocations',
+  'employment_equity_issuer_marks',
   'employment_equity_valuation_details',
   'issuer_disclosures',
   'room_pipeline',
@@ -62,7 +66,10 @@ const INSERT_ORDER = [
   'company_updates',
   'user_settings',
   'lens_config',
+  'lens_framework_versions',
   'sync_runs',
+  'investment_updates',
+  'command_proposals',
   'pending_intake', // ephemeral preview/confirm staging; no FK dependents, kept last
 ];
 
@@ -101,17 +108,24 @@ function quoteIdentifier(value) {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
+const SELF_REFERENCE_COLUMNS = {
+  deal_evaluations: 'council_parent_evaluation_id',
+  investment_updates: 'previous_update_id',
+  command_proposals: 'supersedes_proposal_id',
+};
+
 function rowsInRestoreOrder(table, rows) {
-  if (table !== 'deal_evaluations') return rows;
+  const parentColumn = SELF_REFERENCE_COLUMNS[table];
+  if (!parentColumn) return rows;
   const remaining = [...rows];
-  const rowIds = new Set(rows.map(row => Number(row.id)));
+  const rowIds = new Set(rows.map(row => String(row.id)));
   const inserted = new Set();
   const ordered = [];
   while (remaining.length > 0) {
     const index = remaining.findIndex(row => {
-      const parentId = row.council_parent_evaluation_id == null
+      const parentId = row[parentColumn] == null
         ? null
-        : Number(row.council_parent_evaluation_id);
+        : String(row[parentColumn]);
       return parentId == null || !rowIds.has(parentId) || inserted.has(parentId);
     });
     if (index === -1) {
@@ -120,7 +134,7 @@ function rowsInRestoreOrder(table, rows) {
     }
     const [row] = remaining.splice(index, 1);
     ordered.push(row);
-    inserted.add(Number(row.id));
+    inserted.add(String(row.id));
   }
   return ordered;
 }
@@ -197,8 +211,7 @@ export async function restoreDatabase({ file } = {}) {
     if (!liveTables.has(table)) throw new Error(`backup contains unknown table: ${table}`);
   }
 
-  await query('BEGIN');
-  try {
+  return withAtomicWrite(async () => {
     if (restoreTables.length > 0) {
       await query(
         `TRUNCATE TABLE ${restoreTables.map(quoteIdentifier).join(', ')} RESTART IDENTITY CASCADE`,
@@ -243,17 +256,9 @@ export async function restoreDatabase({ file } = {}) {
       restored.push({ table, rows: rows.length });
     }
 
-    await query('COMMIT');
     return {
       tables: restored,
       totalRows: restored.reduce((total, table) => total + table.rows, 0),
     };
-  } catch (error) {
-    try {
-      await query('ROLLBACK');
-    } catch {
-      // Preserve the restore error.
-    }
-    throw error;
-  }
+  });
 }

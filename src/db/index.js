@@ -59,6 +59,52 @@ async function getNeonClient(url) {
 // Unified query function (returns plain rows array for all drivers)
 // ---------------------------------------------------------------------------
 
+function normalizePgliteRows(result) {
+  // Normalize DATE columns (oid 1082) to local-midnight Dates so both drivers
+  // represent date-only values identically. PGlite hands back UTC-midnight
+  // Dates; the Neon driver uses local midnight.
+  const dateCols = (result.fields || [])
+    .filter(f => f.dataTypeID === 1082)
+    .map(f => f.name);
+  if (dateCols.length > 0) {
+    for (const row of result.rows) {
+      for (const col of dateCols) {
+        const value = row[col];
+        if (value instanceof Date) {
+          row[col] = new Date(
+            value.getUTCFullYear(),
+            value.getUTCMonth(),
+            value.getUTCDate(),
+          );
+        }
+      }
+    }
+  }
+  return result.rows;
+}
+
+function pgliteDriver(client, { transactionOwner = null } = {}) {
+  const driver = {
+    async query(text, params = []) {
+      return normalizePgliteRows(await client.query(text, params));
+    },
+    async exec(sql) {
+      await client.exec(sql);
+    },
+    isPglite: true,
+    driverName: 'pglite',
+    supportsAtomicWrite: true,
+    serializedWrites: true,
+  };
+
+  if (transactionOwner) {
+    driver.transaction = callback => transactionOwner.transaction(
+      tx => callback(pgliteDriver(tx)),
+    );
+  }
+  return driver;
+}
+
 /**
  * Get the appropriate client for a given connection string.
  * Returns an object with a query(text, params) method that always yields rows[].
@@ -67,34 +113,7 @@ async function getDriver(connectionString) {
   if (isPgliteUrl(connectionString)) {
     const dataDir = pglitePathFromUrl(connectionString);
     const db = await getPgliteInstance(dataDir);
-    return {
-      async query(text, params = []) {
-        const result = await db.query(text, params);
-        // Normalize DATE columns (oid 1082) to local-midnight Dates so both
-        // drivers represent date-only values identically. PGlite hands back
-        // UTC-midnight Dates; the Neon driver uses local midnight — without
-        // this, date-sensitive math (IRR) differs by the TZ offset per flow.
-        const dateCols = (result.fields || [])
-          .filter(f => f.dataTypeID === 1082)
-          .map(f => f.name);
-        if (dateCols.length > 0) {
-          for (const row of result.rows) {
-            for (const col of dateCols) {
-              const v = row[col];
-              if (v instanceof Date) {
-                row[col] = new Date(v.getUTCFullYear(), v.getUTCMonth(), v.getUTCDate());
-              }
-            }
-          }
-        }
-        return result.rows;
-      },
-      // exec handles multi-statement DDL strings (PGlite splits on ;)
-      async exec(sql) {
-        await db.exec(sql);
-      },
-      isPglite: true,
-    };
+    return pgliteDriver(db, { transactionOwner: db });
   } else {
     const client = await getNeonClient(connectionString);
     return {
@@ -112,6 +131,9 @@ async function getDriver(connectionString) {
         }
       },
       isPglite: false,
+      driverName: 'neon-http',
+      supportsAtomicWrite: false,
+      serializedWrites: false,
     };
   }
 }
@@ -135,6 +157,16 @@ function getDefaultDriver() {
 
 // Stores a driver object (from getDriver()) for the current async context.
 const tenantStorage = new AsyncLocalStorage();
+// Stores the tx-scoped driver while the outermost atomic write owns a real
+// transaction. It must win over tenantStorage so ambient query() calls cannot
+// escape to the root PGlite instance.
+const transactionStorage = new AsyncLocalStorage();
+
+async function activeDriver() {
+  return transactionStorage.getStore()
+    ?? tenantStorage.getStore()
+    ?? await getDefaultDriver();
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -169,8 +201,51 @@ export async function closeDb() {
  * against). src/intake's withTx() uses this to pick a strategy.
  */
 export async function isPgliteActive() {
-  const driver = tenantStorage.getStore() ?? await getDefaultDriver();
+  const driver = await activeDriver();
   return driver.isPglite;
+}
+
+export async function writeCapabilities() {
+  const driver = await activeDriver();
+  if (driver.supportsAtomicWrite && driver.serializedWrites) {
+    return {
+      proposalApply: 'transactional',
+      serializedWrites: true,
+      driver: driver.driverName,
+      hosted: false,
+    };
+  }
+  return {
+    proposalApply: 'unavailable',
+    serializedWrites: false,
+    driver: driver.driverName,
+    hosted: true,
+  };
+}
+
+/**
+ * Own one serialized, re-entrant write transaction.
+ *
+ * The outermost PGlite call uses the native transaction callback, which holds
+ * PGlite's transaction mutex for the complete callback. Nested calls
+ * participate through AsyncLocalStorage and never issue transaction-control
+ * statements. Neon HTTP fails closed because it has no cross-statement
+ * transaction session.
+ */
+export async function withAtomicWrite(fn) {
+  if (typeof fn !== 'function') throw new TypeError('withAtomicWrite requires a callback');
+  if (transactionStorage.getStore()) return fn();
+
+  const driver = await activeDriver();
+  if (!driver.isPglite || typeof driver.transaction !== 'function') {
+    const error = new Error('Atomic writes require local PGlite transaction support');
+    error.code = 'ATOMIC_WRITE_UNAVAILABLE';
+    throw error;
+  }
+
+  return driver.transaction(
+    txDriver => transactionStorage.run(txDriver, fn),
+  );
 }
 
 export async function query(text, params = []) {
@@ -178,18 +253,18 @@ export async function query(text, params = []) {
   // single-tenant (today); becomes a cross-tenant hazard once multi-tenancy
   // lands, at which point this must throw instead of falling back. See
   // RADAR_SUPABASE_AUTH_PLAN.md §7.
-  const driver = tenantStorage.getStore() ?? await getDefaultDriver();
+  const driver = await activeDriver();
   return driver.query(text, params);
 }
 
 /** Execute a raw multi-statement SQL string (used by runSchema and tests). */
 export async function exec(sql) {
-  const driver = tenantStorage.getStore() ?? await getDefaultDriver();
+  const driver = await activeDriver();
   return driver.exec(sql);
 }
 
 export async function runSchema(schemaSQL) {
-  const driver = tenantStorage.getStore() ?? await getDefaultDriver();
+  const driver = await activeDriver();
   if (driver.isPglite) {
     // PGlite exec handles multi-statement strings natively
     await driver.exec(schemaSQL);

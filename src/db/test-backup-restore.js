@@ -7,6 +7,8 @@ import { backupDatabase, restoreDatabase } from './backup.js';
 import { closeDb, query, withTenant } from './index.js';
 import { runMigrations } from './migrate.js';
 import { accessDocumentBytes, createDocument } from '../models/documents.js';
+import { createInvestmentUpdate } from '../models/investment-updates.js';
+import { createCommandProposal } from '../models/command-proposals.js';
 import { createFund, fundMetrics, recordFundDistribution } from '../models/funds.js';
 import {
   addIssuerDisclosure,
@@ -31,6 +33,8 @@ try {
   let evaluationId;
   let fundId;
   let employmentEquityId;
+  let latestUpdateId;
+  let latestProposalId;
   await withTenant(sourceUrl, async () => {
     await runMigrations();
     const [entity] = await query(`
@@ -58,6 +62,60 @@ try {
       VALUES ('Backup Former Name', 'backup former name', 'Backup Entity',
               'backup entity', $1)
     `, [entity.id]);
+    const updateDocumentOne = await createDocument({
+      entity_type: 'investment',
+      entity_id: position.id,
+      filename: 'backup-update-one.txt',
+      mime: 'text/plain',
+      content: Buffer.from('first update'),
+    });
+    const firstUpdate = await createInvestmentUpdate({
+      investmentId: position.id,
+      sourceDocumentId: updateDocumentOne.id,
+      updateKind: 'founder_update',
+      processingMode: 'store_only',
+      receivedDate: '2025-01-01',
+    });
+    const updateDocumentTwo = await createDocument({
+      entity_type: 'investment',
+      entity_id: position.id,
+      filename: 'backup-update-two.txt',
+      mime: 'text/plain',
+      content: Buffer.from('second update'),
+    });
+    const secondUpdate = await createInvestmentUpdate({
+      investmentId: position.id,
+      sourceDocumentId: updateDocumentTwo.id,
+      previousUpdateId: firstUpdate.update.id,
+      updateKind: 'founder_update',
+      processingMode: 'store_only',
+      receivedDate: '2025-02-01',
+    });
+    latestUpdateId = secondUpdate.update.id;
+    const firstProposal = await createCommandProposal({
+      registryVersion: 'backup-registry',
+      originSurface: 'investment_update',
+      actorType: 'local_user',
+      sourceDocumentId: updateDocumentOne.id,
+      sourceUpdateId: firstUpdate.update.id,
+      commands: [{ id: 'backup-c1', name: 'direct.record_valuation', version: 1 }],
+      previews: [{ summary: 'First proposal' }],
+      commandSetHash: 'backup-command-set-1',
+      idempotencyKey: 'backup-proposal-1',
+    });
+    const secondProposal = await createCommandProposal({
+      registryVersion: 'backup-registry',
+      originSurface: 'investment_update',
+      actorType: 'local_user',
+      sourceDocumentId: updateDocumentTwo.id,
+      sourceUpdateId: secondUpdate.update.id,
+      supersedesProposalId: firstProposal.proposal.id,
+      commands: [{ id: 'backup-c2', name: 'direct.record_valuation', version: 1 }],
+      previews: [{ summary: 'Second proposal' }],
+      commandSetHash: 'backup-command-set-2',
+      idempotencyKey: 'backup-proposal-2',
+    });
+    latestProposalId = secondProposal.proposal.id;
     const [invite] = await query(
       `INSERT INTO pipeline_invites (deal_slug, company_name, status)
        VALUES ('backup-fixture', 'Backup Fixture', 'invite') RETURNING id`,
@@ -205,6 +263,10 @@ try {
 
   const serialized = readFileSync(backupFile, 'utf8');
   assert.match(serialized, /\$radar_bytes_base64/);
+  const reversedSelfReferences = JSON.parse(serialized);
+  reversedSelfReferences.tables.investment_updates.reverse();
+  reversedSelfReferences.tables.command_proposals.reverse();
+  writeFileSync(backupFile, JSON.stringify(reversedSelfReferences));
 
   await withTenant(targetUrl, async () => {
     await runMigrations();
@@ -231,7 +293,17 @@ try {
     assert.equal(restoredIdentity.position_key, positionKey);
     assert.equal(restoredIdentity.alias_linked, true);
     assert.equal(restoredIdentity.source_key, 'backup-source-key');
-    const [docMeta] = await query(`SELECT id FROM documents`);
+    const [restoredUpdate] = await query(`
+      SELECT previous_update_id FROM investment_updates WHERE id = $1
+    `, [latestUpdateId]);
+    assert.ok(restoredUpdate.previous_update_id, 'investment update self-reference restored');
+    const [restoredProposal] = await query(`
+      SELECT supersedes_proposal_id, source_update_id
+        FROM command_proposals WHERE id = $1
+    `, [latestProposalId]);
+    assert.ok(restoredProposal.supersedes_proposal_id, 'proposal self-reference restored');
+    assert.equal(restoredProposal.source_update_id, latestUpdateId);
+    const [docMeta] = await query(`SELECT id FROM documents WHERE filename = 'fixture.bin'`);
     const restoredDocument = await accessDocumentBytes({
       documentId: docMeta.id,
       purpose: 'backup',

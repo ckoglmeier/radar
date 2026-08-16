@@ -149,6 +149,39 @@ async function run() {
     }
   });
 
+  await test('Direct import identity never reuses a same-name Fund position', async () => {
+    const company = `Test Direct Import Boundary ${stamp}`;
+    try {
+      const [fund] = await query(`
+        INSERT INTO investments
+          (company_name, status, invest_date, invested, source, asset_class)
+        VALUES ($1, 'Live', '2026-01-17', 999, 'fund_manual', 'fund')
+        RETURNING id
+      `, [company]);
+      const imported = await upsertInvestment({
+        ...BASE_FIELDS,
+        status: 'Live',
+        company_name: company,
+        invest_date: '2026-01-17',
+        invested: 5_000,
+      });
+      if (Number(imported.id) === Number(fund.id)) {
+        throw new Error('Direct importer reused the Fund position');
+      }
+      const fundAfter = (await query(`
+        SELECT asset_class, invested FROM investments WHERE id = $1
+      `, [fund.id]))[0];
+      eq(fundAfter.asset_class, 'fund');
+      eq(Number(fundAfter.invested), 999, 'Fund value must remain unchanged');
+      eq(
+        (await query(`SELECT asset_class FROM investments WHERE id = $1`, [imported.id]))[0].asset_class,
+        'direct',
+      );
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
   // Test 1: Closing-status upsert with drifting invest_date hits the same row.
   await test('Closing rows with drifting invest_date update in place', async () => {
     const company = `Test Closing Drift ${stamp}-1`;

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isPgliteActive, query } from '../db/index.js';
+import { isPgliteActive, query, withAtomicWrite } from '../db/index.js';
 import { normalize } from '../utils/company-names.js';
 
 const POSITION_STATUSES = new Set(['active', 'partially_realized', 'realized', 'forfeited', 'archived']);
@@ -67,15 +67,7 @@ async function withEmploymentEquityWrite(fn) {
   if (!(await isPgliteActive())) {
     throw new Error('Employment Equity writes require local PGlite transaction support');
   }
-  await query('BEGIN');
-  try {
-    const result = await fn();
-    await query('COMMIT');
-    return result;
-  } catch (error) {
-    try { await query('ROLLBACK'); } catch { /* preserve operation error */ }
-    throw error;
-  }
+  return withAtomicWrite(fn);
 }
 
 async function position(investmentId, { lock = false } = {}) {
@@ -756,8 +748,8 @@ async function insertEmploymentEquityValuation(investmentId, fields = {}) {
     INSERT INTO employment_equity_valuation_details
       (valuation_id, methodology, vested_value, unvested_value,
        common_fmv_per_unit, tax_fmv_per_unit, issuer_equity_value, hurdle_amount,
-       liquidity_haircut_pct, confidence, source_document_id, notes)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       liquidity_haircut_pct, confidence, source_document_id, notes, issuer_mark_id)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     RETURNING *
   `, [
     valuation.id,
@@ -772,8 +764,106 @@ async function insertEmploymentEquityValuation(investmentId, fields = {}) {
     fields.confidence || (calculated ? 'calculated' : 'estimated'),
     fields.sourceDocumentId || null,
     optionalText(fields.notes),
+    fields.issuerMarkId || null,
   ]);
   return { valuation, details, calculation: calculated, idempotent_replay: false };
+}
+
+export async function recordEmploymentEquityIssuerMark(portfolioEntityId, fields = {}) {
+  assertUsd(fields.currency);
+  const markType = assertEnum(
+    fields.markType,
+    new Set(['common_share_economic', 'tax_409a']),
+    'issuer mark type',
+  );
+  const markDate = isoDate(fields.date, 'Issuer mark date');
+  if (markDate > new Date().toISOString().slice(0, 10)) {
+    throw new TypeError('Issuer mark date cannot be in the future');
+  }
+  const valuePerUnit = number(fields.valuePerUnit, 'Value per unit');
+  const confidence = fields.confidence || 'company_reported';
+  assertEnum(confidence, new Set(['company_reported', 'calculated', 'estimated']), 'confidence');
+
+  return withEmploymentEquityWrite(async () => {
+    const [entity] = await query(`
+      SELECT pe.*
+        FROM portfolio_entities pe
+        JOIN employment_equity_issuer_profiles ep ON ep.portfolio_entity_id = pe.id
+       WHERE pe.id = $1 AND pe.entity_type = 'operating_company'
+       FOR UPDATE OF pe
+    `, [portfolioEntityId]);
+    if (!entity) throw new Error('Issuer mark requires an Employment Equity operating-company issuer');
+
+    const [existing] = await query(`
+      SELECT * FROM employment_equity_issuer_marks
+       WHERE portfolio_entity_id = $1 AND mark_type = $2 AND mark_date = $3
+    `, [portfolioEntityId, markType, markDate]);
+    if (existing) {
+      if (Number(existing.value_per_unit) === valuePerUnit) {
+        return { mark: existing, valuations: [], manual_positions: [], idempotent_replay: true };
+      }
+      const error = new Error('a different Employment Equity issuer mark already exists for this date');
+      error.code = 'ISSUER_MARK_DATE_CONFLICT';
+      throw error;
+    }
+
+    const [mark] = await query(`
+      INSERT INTO employment_equity_issuer_marks
+        (portfolio_entity_id, mark_type, mark_date, value_per_unit, confidence,
+         source_document_id, source_fact_key, notes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING *
+    `, [
+      portfolioEntityId,
+      markType,
+      markDate,
+      valuePerUnit,
+      confidence,
+      fields.sourceDocumentId || null,
+      optionalText(fields.sourceFactKey),
+      optionalText(fields.notes),
+    ]);
+
+    if (markType === 'tax_409a') {
+      return { mark, valuations: [], manual_positions: [], idempotent_replay: false };
+    }
+
+    const positions = await query(`
+      SELECT i.id, eep.display_name, eep.instrument_family
+        FROM investments i
+        JOIN employment_equity_positions eep ON eep.investment_id = i.id
+       WHERE i.portfolio_entity_id = $1
+         AND i.asset_class = 'employment_equity'
+         AND eep.position_status NOT IN ('realized', 'forfeited', 'archived')
+         AND eep.archived_at IS NULL
+       ORDER BY i.id
+       FOR UPDATE OF i
+    `, [portfolioEntityId]);
+    const valuations = [];
+    const manualPositions = [];
+    for (const linked of positions) {
+      if (['ppu', 'profits_interest', 'other'].includes(linked.instrument_family)) {
+        manualPositions.push({ investment_id: linked.id, display_name: linked.display_name });
+        continue;
+      }
+      const result = await insertEmploymentEquityValuation(linked.id, {
+        date: markDate,
+        commonShareValuePerUnit: valuePerUnit,
+        methodology: 'common_fmv',
+        confidence: 'calculated',
+        sourceDocumentId: fields.sourceDocumentId,
+        issuerMarkId: mark.id,
+        notes: fields.notes,
+      });
+      valuations.push({ investment_id: linked.id, ...result });
+    }
+    return {
+      mark,
+      valuations,
+      manual_positions: manualPositions,
+      idempotent_replay: false,
+    };
+  });
 }
 
 export async function recordEmploymentEquityValuation(investmentId, fields = {}) {

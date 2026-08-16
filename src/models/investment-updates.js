@@ -130,11 +130,17 @@ export async function getInvestmentUpdate(updateId) {
   const [update] = await query(`
     SELECT u.*, d.filename, d.mime, d.sha256, d.processing_policy,
            p.source_document_id AS previous_source_document_id,
-           pd.filename AS previous_filename
+           pd.filename AS previous_filename,
+           cp.id AS command_proposal_id, cp.status AS command_proposal_status
       FROM investment_updates u
       JOIN documents d ON d.id = u.source_document_id
       LEFT JOIN investment_updates p ON p.id = u.previous_update_id
       LEFT JOIN documents pd ON pd.id = p.source_document_id
+      LEFT JOIN LATERAL (
+        SELECT id, status FROM command_proposals
+         WHERE source_update_id = u.id
+         ORDER BY created_at DESC LIMIT 1
+      ) cp ON TRUE
      WHERE u.id = $1
   `, [updateId]);
   return update || null;
@@ -146,9 +152,15 @@ export async function listInvestmentUpdates(investmentIds, { limit = 50 } = {}) 
     .filter(id => Number.isInteger(id) && id > 0);
   if (ids.length === 0) return [];
   return query(`
-    SELECT u.*, d.filename, d.mime, d.sha256
+    SELECT u.*, d.filename, d.mime, d.sha256,
+           cp.id AS command_proposal_id, cp.status AS command_proposal_status
       FROM investment_updates u
       JOIN documents d ON d.id = u.source_document_id
+      LEFT JOIN LATERAL (
+        SELECT id, status FROM command_proposals
+         WHERE source_update_id = u.id
+         ORDER BY created_at DESC LIMIT 1
+      ) cp ON TRUE
      WHERE u.investment_id = ANY($1::int[])
      ORDER BY u.received_date DESC, u.created_at DESC
      LIMIT $2
