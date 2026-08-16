@@ -102,6 +102,50 @@ function hasCapabilities(required, held) {
   return required.every(capability => capabilitySet.has(capability));
 }
 
+function validateOverrideAuthorizations(commands, fields) {
+  const overrides = commands.filter(command => command.risk === 'explicit_override');
+  if (overrides.length === 0) return [];
+  const supplied = Array.isArray(fields.overrideAuthorizations) ? fields.overrideAuthorizations : [];
+  const byCommand = new Map();
+  for (const authorization of supplied) {
+    if (!authorization?.commandId || byCommand.has(authorization.commandId)) {
+      throw new CommandError(
+        'COMMAND_OVERRIDE_PERMISSION_REQUIRED',
+        'Each generic write override needs its own one-time permission.',
+        { required_command_ids: overrides.map(command => command.id) },
+      );
+    }
+    byCommand.set(authorization.commandId, authorization);
+  }
+  if (byCommand.size !== overrides.length) {
+    throw new CommandError(
+      'COMMAND_OVERRIDE_PERMISSION_REQUIRED',
+      'Each generic write override needs its own one-time permission.',
+      { required_command_ids: overrides.map(command => command.id) },
+    );
+  }
+  return overrides.map(command => {
+    const authorization = byCommand.get(command.id);
+    const grantedBy = String(authorization?.grantedBy || '').trim();
+    const reason = String(authorization?.reason || '').trim();
+    if (authorization?.permission !== 'single_use' || authorization?.commandHash !== command.command_hash || !grantedBy || grantedBy !== fields.reviewedBy || !reason) {
+      throw new CommandError(
+        'COMMAND_OVERRIDE_PERMISSION_REQUIRED',
+        `Override permission for ${command.target?.label || command.id} is missing or does not match the reviewed change.`,
+        { required_command_id: command.id },
+      );
+    }
+    return {
+      command_id: command.id,
+      command_hash: command.command_hash,
+      permission: 'single_use',
+      granted_by: grantedBy,
+      reason,
+      granted_at: new Date().toISOString(),
+    };
+  });
+}
+
 export async function applyCommandProposal(proposalId, expectedHash, fields = {}, context = {}) {
   let completed;
   try {
@@ -128,10 +172,20 @@ export async function applyCommandProposal(proposalId, expectedHash, fields = {}
         throw new CommandError('PROPOSAL_PAYLOAD_INVALID', 'Stored proposal hashes do not verify.');
       }
 
+      const overrideAuthorizations = validateOverrideAuthorizations(commands, fields);
+
       for (const command of commands) {
         const definition = commandRegistry.get(command.name, command.version);
         if (!hasCapabilities(definition.applyCapabilities, fields.actorCapabilities)) {
-          throw new CommandError('COMMAND_CAPABILITY_DENIED', `Missing capability for ${command.name}.`);
+          throw new CommandError(
+            'COMMAND_CAPABILITY_DENIED',
+            `This change needs ${definition.applyCapabilities.join(', ')} permission. Nothing was applied.`,
+            {
+              command: command.name,
+              required_capabilities: definition.applyCapabilities,
+              held_capabilities: fields.actorCapabilities || [],
+            },
+          );
         }
         commandRegistry.validateInput(command.name, command.version, command.input);
         if (commandHash(command) !== command.command_hash) {
@@ -180,6 +234,7 @@ export async function applyCommandProposal(proposalId, expectedHash, fields = {}
         registry_version: proposal.registry_version,
         applied_at: new Date().toISOString(),
         commands: results,
+        override_authorizations: overrideAuthorizations,
       };
       const applied = await markCommandProposalApplied(proposal.id, expectedHash, {
         result: receipt,
@@ -190,7 +245,13 @@ export async function applyCommandProposal(proposalId, expectedHash, fields = {}
     });
     return completed;
   } catch (error) {
-    if (error.code && !['PROPOSAL_NOT_FOUND', 'PROPOSAL_HASH_MISMATCH', 'PROPOSAL_NOT_APPLICABLE'].includes(error.code)) {
+    if (error.code && ![
+      'PROPOSAL_NOT_FOUND',
+      'PROPOSAL_HASH_MISMATCH',
+      'PROPOSAL_NOT_APPLICABLE',
+      'COMMAND_CAPABILITY_DENIED',
+      'COMMAND_OVERRIDE_PERMISSION_REQUIRED',
+    ].includes(error.code)) {
       try {
         await markCommandProposalFailed(proposalId, expectedHash, {
           errorCode: error.code || 'COMMAND_APPLY_FAILED',

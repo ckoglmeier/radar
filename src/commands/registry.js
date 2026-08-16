@@ -10,6 +10,7 @@ const RISKS = new Set([
   'lifecycle',
   'sensitive_basis',
   'destructive',
+  'explicit_override',
 ]);
 const DOMAIN_ATOMICITY = new Set(['single_statement', 'multi_statement']);
 const NAME_PATTERN = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;

@@ -69,7 +69,10 @@ async function investmentTarget(investmentId, assetClass) {
 
 async function inspectInvestment(target, input = {}) {
   const [row] = await query(`
-    SELECT i.*, fp.commitment, fp.vintage_year, fp.archived_at AS fund_archived_at,
+    SELECT i.*, fp.commitment, fp.manager AS fund_manager,
+           fp.strategy AS fund_strategy, fp.vintage_year,
+           fp.fund_status, fp.description AS fund_description,
+           fp.archived_at AS fund_archived_at,
            eep.display_name, eep.position_status, eep.description,
            eep.archived_at AS employment_archived_at,
            (SELECT id FROM valuations WHERE investment_id = i.id ORDER BY snapshot_date DESC, id DESC LIMIT 1) AS latest_valuation_id,
@@ -115,17 +118,92 @@ function basicPreview(target, current, before, after, warnings = []) {
 }
 
 function definition(base) {
+  const applyCapability = base.risk === 'explicit_override'
+    ? 'portfolio:apply:override'
+    : base.risk === 'metadata_change'
+      ? 'portfolio:apply:metadata'
+      : 'portfolio:apply:additive';
   return {
     tier: 'A',
     version: 1,
     domainAtomicity: 'multi_statement',
     proposeCapabilities: ['portfolio:propose'],
-    applyCapabilities: [`portfolio:apply:${base.risk === 'metadata_change' ? 'metadata' : 'additive'}`],
+    applyCapabilities: [applyCapability],
     resultSchema: objectResult,
     availability: available,
     affectedResources: ({ target, result }) => result?.affected_resources || [target],
     ...base,
   };
+}
+
+const FUND_STATUSES = new Set(['active', 'harvesting', 'realized', 'written_off']);
+
+function overrideText(value, label) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) throw new CommandError('COMMAND_OVERRIDE_VALUE_INVALID', `${label} must be non-empty text.`);
+  return normalized;
+}
+
+function overrideVintage(value) {
+  const year = Number(value);
+  if (!Number.isInteger(year) || year < 1900 || year > 2100) {
+    throw new CommandError('COMMAND_OVERRIDE_VALUE_INVALID', 'Fund vintage year must be between 1900 and 2100.');
+  }
+  return year;
+}
+
+function overrideFundStatus(value) {
+  const status = String(value || '').trim();
+  if (!FUND_STATUSES.has(status)) {
+    throw new CommandError('COMMAND_OVERRIDE_VALUE_INVALID', `Unsupported Fund status: ${status || 'blank'}.`);
+  }
+  return status;
+}
+
+const OVERRIDE_FIELDS = {
+  fund_profile: {
+    manager: {
+      assetClass: 'fund', currentKey: 'fund_manager', normalize: value => overrideText(value, 'Fund manager'),
+      apply: (id, value) => updateFund(id, { manager: value }),
+    },
+    strategy: {
+      assetClass: 'fund', currentKey: 'fund_strategy', normalize: value => overrideText(value, 'Fund strategy'),
+      apply: (id, value) => updateFund(id, { strategy: value }),
+    },
+    vintage_year: {
+      assetClass: 'fund', currentKey: 'vintage_year', normalize: overrideVintage,
+      apply: (id, value) => updateFund(id, { vintageYear: value }),
+    },
+    fund_status: {
+      assetClass: 'fund', currentKey: 'fund_status', normalize: overrideFundStatus,
+      apply: (id, value) => updateFund(id, { fundStatus: value }),
+    },
+    description: {
+      assetClass: 'fund', currentKey: 'fund_description', normalize: value => overrideText(value, 'Fund description'),
+      apply: (id, value) => updateFund(id, { description: value }),
+    },
+  },
+  employment_position: {
+    display_name: {
+      assetClass: 'employment_equity', currentKey: 'display_name', normalize: value => overrideText(value, 'Position display name'),
+      apply: (id, value) => updateEmploymentEquityPosition(id, { displayName: value }),
+    },
+    description: {
+      assetClass: 'employment_equity', currentKey: 'description', normalize: value => overrideText(value, 'Position description'),
+      apply: (id, value) => updateEmploymentEquityPosition(id, { description: value }),
+    },
+  },
+};
+
+function overrideField(input) {
+  const field = OVERRIDE_FIELDS[input.resourceType]?.[input.field];
+  if (!field) {
+    throw new CommandError(
+      'COMMAND_OVERRIDE_NOT_ALLOWLISTED',
+      `No safe generic override exists for ${input.resourceType}.${input.field}.`,
+    );
+  }
+  return field;
 }
 
 function investmentCommand({ name, title, description, risk, assetClass, inputSchema, inspect, preview, preconditions, apply }) {
@@ -218,6 +296,52 @@ export const tierACommandDefinitions = [
       vintage_year: current.vintage_year == null ? null : Number(current.vintage_year),
     }),
     apply: ({ target, input }) => updateFund(target.id, { vintageYear: input.vintageYear }),
+  }),
+  definition({
+    name: 'reporting.override_field', version: 1, tier: 'override',
+    title: 'Request a one-time reporting-field override',
+    description: 'Change one allowlisted reporting metadata field when no dedicated command exists. Every override requires separate user permission.',
+    risk: 'explicit_override',
+    inputSchema: schema({
+      resourceType: { type: 'string', enum: ['fund_profile', 'employment_position'] },
+      resourceId: { type: 'integer', minimum: 1 },
+      field: { type: 'string', enum: ['manager', 'strategy', 'vintage_year', 'fund_status', 'description', 'display_name'] },
+      value: { anyOf: [{ type: 'string' }, { type: 'integer' }] },
+      reason: { type: 'string', minLength: 1 },
+    }, ['resourceType', 'resourceId', 'field', 'value', 'reason']),
+    resolve: async input => {
+      const field = overrideField(input);
+      field.normalize(input.value);
+      return investmentTarget(input.resourceId, field.assetClass);
+    },
+    inspect: (target, input) => inspectInvestment(target, input),
+    preview: ({ target, input, current }) => {
+      const field = overrideField(input);
+      const nextValue = field.normalize(input.value);
+      return {
+        ...basicPreview(
+          target,
+          current,
+          [{ field: input.field, value: current[field.currentKey] ?? null }],
+          [{ field: input.field, value: nextValue }],
+          ['No dedicated command owns this field. This one-time override requires separate approval.'],
+        ),
+        requiredReason: true,
+      };
+    },
+    preconditions: ({ input, current }) => {
+      const field = overrideField(input);
+      return {
+        resource_type: input.resourceType,
+        field: input.field,
+        current_value: current[field.currentKey] ?? null,
+        updated_at: current.updated_at,
+      };
+    },
+    apply: ({ target, input }) => {
+      const field = overrideField(input);
+      return field.apply(target.id, field.normalize(input.value));
+    },
   }),
   investmentCommand({
     name: 'fund.create_capital_call', title: 'Create capital call', description: 'Record a Fund capital-call notice.',

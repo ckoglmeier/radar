@@ -16,7 +16,7 @@ const actorCapabilities = ['portfolio:apply:additive', 'portfolio:apply:metadata
 try {
   await withTenant(databaseUrl, async () => {
     await runMigrations();
-    assert.equal(commandMetadata().commands.length, 15);
+    assert.equal(commandMetadata().commands.length, 16);
 
     const [direct] = await query(`
       INSERT INTO investments
@@ -62,6 +62,80 @@ try {
       `SELECT vintage_year FROM fund_profiles WHERE investment_id = $1`,
       [fund.investment.id],
     ))[0].vintage_year), 2022);
+
+    const overrideProposal = await planCommandProposal([{
+      name: 'reporting.override_field',
+      input: {
+        resourceType: 'fund_profile', resourceId: fund.investment.id,
+        field: 'manager', value: 'Incisive Capital',
+        reason: 'No dedicated Fund manager command exists.',
+      },
+      provenance: { kind: 'user_attested', evidence: 'User supplied the manager.' },
+    }], {
+      originSurface: 'ask_radar', actorType: 'user', actorId: 'fixture',
+      intentText: 'Set the manager', idempotencyKey: 'command:test:override',
+    });
+    const overrideCommand = (typeof overrideProposal.proposal.commands === 'string'
+      ? JSON.parse(overrideProposal.proposal.commands)
+      : overrideProposal.proposal.commands)[0];
+    await assert.rejects(
+      () => applyCommandProposal(
+        overrideProposal.proposal.id,
+        overrideProposal.proposal.command_set_hash,
+        { reviewedBy: 'fixture', actorCapabilities },
+      ),
+      error => error.code === 'COMMAND_OVERRIDE_PERMISSION_REQUIRED',
+    );
+    assert.equal((await query(
+      `SELECT status FROM command_proposals WHERE id = $1`,
+      [overrideProposal.proposal.id],
+    ))[0].status, 'proposed', 'missing override permission leaves the proposal reviewable');
+    const overrideAuthorization = [{
+      commandId: overrideCommand.id,
+      commandHash: overrideCommand.command_hash,
+      permission: 'single_use',
+      grantedBy: 'fixture',
+      reason: 'I reviewed and approve this one override.',
+    }];
+    await assert.rejects(
+      () => applyCommandProposal(
+        overrideProposal.proposal.id,
+        overrideProposal.proposal.command_set_hash,
+        { reviewedBy: 'fixture', actorCapabilities, overrideAuthorizations: overrideAuthorization },
+      ),
+      error => error.code === 'COMMAND_CAPABILITY_DENIED'
+        && error.details.required_capabilities.includes('portfolio:apply:override'),
+    );
+    assert.equal((await query(
+      `SELECT status FROM command_proposals WHERE id = $1`,
+      [overrideProposal.proposal.id],
+    ))[0].status, 'proposed', 'missing capability also leaves the proposal reviewable');
+    const overrideApplied = await applyCommandProposal(
+      overrideProposal.proposal.id,
+      overrideProposal.proposal.command_set_hash,
+      {
+        reviewedBy: 'fixture',
+        actorCapabilities: [...actorCapabilities, 'portfolio:apply:override'],
+        overrideAuthorizations: overrideAuthorization,
+      },
+    );
+    assert.equal(overrideApplied.receipt.override_authorizations.length, 1);
+    assert.equal(overrideApplied.receipt.override_authorizations[0].permission, 'single_use');
+    assert.equal((await query(
+      `SELECT manager FROM fund_profiles WHERE investment_id = $1`,
+      [fund.investment.id],
+    ))[0].manager, 'Incisive Capital');
+
+    await assert.rejects(
+      () => previewCommand({
+        name: 'reporting.override_field',
+        input: {
+          resourceType: 'employment_position', resourceId: employment.investment.id,
+          field: 'manager', value: 'Not allowed', reason: 'Fixture',
+        },
+      }),
+      error => error.code === 'COMMAND_OVERRIDE_NOT_ALLOWLISTED',
+    );
 
     await assert.rejects(
       () => previewCommand({
