@@ -206,9 +206,9 @@ function overrideField(input) {
   return field;
 }
 
-function investmentCommand({ name, title, description, risk, assetClass, inputSchema, inspect, preview, preconditions, apply }) {
+function investmentCommand({ name, title, description, risk, assetClass, inputSchema, editableInputKeys, inspect, preview, preconditions, apply }) {
   return definition({
-    name, title, description, risk, inputSchema,
+    name, title, description, risk, inputSchema, editableInputKeys,
     resolve: input => investmentTarget(input.investmentId, assetClass),
     inspect: inspect || ((target, input) => inspectInvestment(target, input)),
     preview,
@@ -222,6 +222,7 @@ export const tierACommandDefinitions = [
     name: 'direct.record_valuation', title: 'Record Direct valuation',
     description: 'Record the dated unrealized value of a Direct position.',
     risk: 'additive_reporting_fact', assetClass: 'direct',
+    editableInputKeys: ['date', 'unrealizedValue'],
     inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, date, unrealizedValue: money, currency: usd, correctionReason: { type: 'string', minLength: 1 } }, ['investmentId', 'date', 'unrealizedValue', 'currency']),
     preview: ({ target, input, current }) => {
       if (current.same_date_valuation_id && num(current.same_date_unrealized_value) !== input.unrealizedValue && !input.correctionReason) {
@@ -250,6 +251,7 @@ export const tierACommandDefinitions = [
     name: 'direct.set_conviction', title: 'Set Direct conviction',
     description: 'Update current and entry conviction for a Direct position.',
     risk: 'metadata_change', assetClass: 'direct',
+    editableInputKeys: ['now', 'entry'],
     inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, now: { anyOf: [{ type: 'number', minimum: 0, maximum: 5 }, { type: 'null' }] }, entry: { anyOf: [{ type: 'number', minimum: 0, maximum: 5 }, { type: 'null' }] } }, ['investmentId']),
     preview: ({ target, input, current }) => basicPreview(target, current,
       [{ field: 'conviction_now', value: current.conviction_now }, { field: 'conviction_entry', value: current.conviction_entry }],
@@ -260,6 +262,7 @@ export const tierACommandDefinitions = [
   investmentCommand({
     name: 'fund.record_nav', title: 'Record Fund NAV', description: 'Record or correct a dated Fund NAV.',
     risk: 'additive_reporting_fact', assetClass: 'fund',
+    editableInputKeys: ['date', 'nav'],
     inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, date, nav: money, currency: usd, correctionReason: { type: 'string', minLength: 1 } }, ['investmentId', 'date', 'nav', 'currency']),
     preview: ({ target, input, current }) => {
       if (current.same_date_valuation_id && num(current.same_date_net_value) !== input.nav && !input.correctionReason) {
@@ -275,6 +278,7 @@ export const tierACommandDefinitions = [
   investmentCommand({
     name: 'fund.update_commitment', title: 'Update Fund commitment', description: 'Update the reporting commitment for a Fund.',
     risk: 'metadata_change', assetClass: 'fund',
+    editableInputKeys: ['commitment'],
     inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, commitment: money, note: nullableText }, ['investmentId', 'commitment']),
     preview: ({ target, input, current }) => basicPreview(target, current,
       [{ field: 'commitment', value: num(current.commitment) }], [{ field: 'commitment', value: input.commitment }]),
@@ -285,6 +289,7 @@ export const tierACommandDefinitions = [
     name: 'fund.set_vintage_year', title: 'Set Fund vintage year',
     description: 'Set the reporting vintage year for a Fund vehicle.',
     risk: 'metadata_change', assetClass: 'fund',
+    editableInputKeys: ['vintageYear'],
     inputSchema: schema({
       investmentId: { type: 'integer', minimum: 1 },
       vintageYear: { type: 'integer', minimum: 1900, maximum: 2100 },
@@ -302,6 +307,7 @@ export const tierACommandDefinitions = [
     title: 'Request a one-time reporting-field override',
     description: 'Change one allowlisted reporting metadata field when no dedicated command exists. Every override requires separate user permission.',
     risk: 'explicit_override',
+    editableInputKeys: ['value'],
     inputSchema: schema({
       resourceType: { type: 'string', enum: ['fund_profile', 'employment_position'] },
       resourceId: { type: 'integer', minimum: 1 },
@@ -346,6 +352,7 @@ export const tierACommandDefinitions = [
   investmentCommand({
     name: 'fund.create_capital_call', title: 'Create capital call', description: 'Record a Fund capital-call notice.',
     risk: 'additive_reporting_fact', assetClass: 'fund',
+    editableInputKeys: ['noticeDate', 'dueDate', 'amount', 'description'],
     inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, noticeDate: date, dueDate: date, amount: positiveMoney, currency: usd, description: nullableText }, ['investmentId', 'noticeDate', 'amount', 'currency']),
     preview: ({ target, input, current }) => basicPreview(target, current, [], [{ field: 'capital_call', value: input.amount, as_of: input.noticeDate }]),
     preconditions: () => ({}),
@@ -354,6 +361,7 @@ export const tierACommandDefinitions = [
   definition({
     name: 'fund.settle_capital_call', version: 1, title: 'Settle capital call', description: 'Settle an open capital-call notice.',
     risk: 'additive_reporting_fact',
+    editableInputKeys: ['settlementDate', 'amount', 'description'],
     inputSchema: schema({ noticeId: { type: 'string', format: 'uuid' }, settlementDate: date, amount: positiveMoney, currency: usd, description: nullableText }, ['noticeId', 'settlementDate', 'currency']),
     resolve: async input => {
       const [notice] = await query(`SELECT * FROM fund_notices WHERE id = $1`, [input.noticeId]);
@@ -368,6 +376,7 @@ export const tierACommandDefinitions = [
   }),
   ...['distribution', 'fee'].map(activity => investmentCommand({
     name: `fund.record_${activity}`, title: `Record Fund ${activity}`, description: `Record a settled Fund ${activity}.`,
+    editableInputKeys: ['date', 'amount', 'description'],
     risk: 'additive_reporting_fact', assetClass: 'fund',
     inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, date, amount: positiveMoney, currency: usd, description: nullableText }, ['investmentId', 'date', 'amount', 'currency']),
     preview: ({ target, input, current }) => basicPreview(target, current, [], [{ field: activity, value: input.amount, as_of: input.date }]),
@@ -377,6 +386,7 @@ export const tierACommandDefinitions = [
   definition({
     name: 'employment.record_issuer_mark', version: 1, title: 'Record issuer share mark', description: 'Record one dated issuer-level common economic or 409A price.',
     risk: 'additive_reporting_fact',
+    editableInputKeys: ['markType', 'date', 'valuePerUnit', 'confidence', 'notes'],
     inputSchema: schema({ portfolioEntityId: { type: 'string', format: 'uuid' }, markType: { type: 'string', enum: ['common_share_economic', 'tax_409a'] }, date, valuePerUnit: money, currency: usd, confidence: { type: 'string', enum: ['company_reported', 'calculated', 'estimated'] }, notes: nullableText, sourceFactKey: { type: 'string', minLength: 1 }, sourceDocumentId: { type: 'integer', minimum: 1 } }, ['portfolioEntityId', 'markType', 'date', 'valuePerUnit', 'currency']),
     resolve: async input => {
       const [entity] = await query(`SELECT * FROM portfolio_entities WHERE id = $1`, [input.portfolioEntityId]);
@@ -420,6 +430,7 @@ export const tierACommandDefinitions = [
   investmentCommand({
     name: 'employment.record_valuation', title: 'Record Employment valuation', description: 'Record a manually confirmed Employment position value.',
     risk: 'additive_reporting_fact', assetClass: 'employment_equity',
+    editableInputKeys: ['date', 'vestedValue', 'unvestedValue', 'methodology', 'confidence', 'notes'],
     inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, date, vestedValue: money, unvestedValue: money, currency: usd, methodology: { type: 'string', enum: ['company_statement', 'common_fmv', 'tender', 'waterfall', 'manual', 'other'] }, confidence: { type: 'string', enum: ['company_reported', 'calculated', 'estimated'] }, notes: nullableText, sourceDocumentId: { type: 'integer', minimum: 1 } }, ['investmentId', 'date', 'vestedValue', 'currency']),
     preview: ({ target, input, current }) => {
       if (current.same_date_valuation_id && num(current.same_date_net_value) !== input.vestedValue) {
@@ -433,6 +444,7 @@ export const tierACommandDefinitions = [
   investmentCommand({
     name: 'employment.update_position', title: 'Update Employment position', description: 'Update narrow reporting metadata for an Employment position.',
     risk: 'metadata_change', assetClass: 'employment_equity',
+    editableInputKeys: ['displayName', 'positionStatus', 'description'],
     inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, displayName: { type: 'string', minLength: 1 }, positionStatus: { type: 'string', enum: ['active', 'partially_realized', 'realized', 'forfeited', 'archived'] }, description: nullableText }, ['investmentId']),
     preview: ({ target, input, current }) => basicPreview(target, current, [{ field: 'display_name', value: current.display_name }, { field: 'position_status', value: current.position_status }, { field: 'description', value: current.description }], [{ field: 'display_name', value: input.displayName ?? current.display_name }, { field: 'position_status', value: input.positionStatus ?? current.position_status }, { field: 'description', value: input.description === undefined ? current.description : input.description }]),
     preconditions: ({ current }) => ({ display_name: current.display_name, position_status: current.position_status, description: current.description }),

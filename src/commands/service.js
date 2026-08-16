@@ -6,6 +6,7 @@ import {
   markCommandProposalApplied,
   markCommandProposalFailed,
   markCommandProposalStale,
+  supersedeCommandProposal,
 } from '../models/command-proposals.js';
 import { canonicalHash, commandHash, commandSetHash, NORMALIZER_VERSION } from './canonical.js';
 import { CommandError } from './errors.js';
@@ -85,6 +86,88 @@ export async function planCommandProposal(candidates, fields = {}, context = {})
     commandSetHash: setHash,
     idempotencyKey: fields.idempotencyKey || `proposal:${setHash}`,
   });
+}
+
+export async function reviseCommandProposal(proposalId, expectedHash, edits, fields = {}, context = {}) {
+  const proposal = await getCommandProposal(proposalId);
+  if (!proposal) throw new CommandError('PROPOSAL_NOT_FOUND', `Proposal not found: ${proposalId}`);
+  if (proposal.command_set_hash !== expectedHash) {
+    throw new CommandError('PROPOSAL_HASH_MISMATCH', 'The reviewed proposal hash does not match.');
+  }
+  if (proposal.status !== 'proposed') {
+    throw new CommandError('PROPOSAL_NOT_EDITABLE', `Proposal is ${proposal.status}.`);
+  }
+  if (proposal.registry_version !== commandRegistry.registryVersion()) {
+    throw new CommandError('REGISTRY_VERSION_CHANGED', 'The command registry changed. Ask Radar to create a fresh proposal.');
+  }
+  if (!Array.isArray(edits) || edits.length === 0) {
+    throw new CommandError('PROPOSAL_EDITS_REQUIRED', 'Change at least one proposed value before saving.');
+  }
+
+  const commands = jsonValue(proposal.commands);
+  const byId = new Map(commands.map(command => [command.id, command]));
+  const seen = new Set();
+  const editedInputs = new Map();
+  for (const edit of edits) {
+    const command = byId.get(edit?.commandId);
+    if (!command || seen.has(edit.commandId) || !edit.input || typeof edit.input !== 'object' || Array.isArray(edit.input)) {
+      throw new CommandError('PROPOSAL_EDIT_INVALID', 'The proposal edit does not match one reviewed command.');
+    }
+    seen.add(edit.commandId);
+    const definition = commandRegistry.get(command.name, command.version);
+    const allowed = new Set(definition.editableInputKeys || []);
+    for (const key of Object.keys(edit.input)) {
+      if (!allowed.has(key)) {
+        throw new CommandError('PROPOSAL_EDIT_NOT_ALLOWED', `${command.name}.${key} cannot be changed during review.`);
+      }
+    }
+    editedInputs.set(command.id, { ...command.input, ...edit.input });
+  }
+
+  const hasChange = commands.some(command => editedInputs.has(command.id)
+    && canonicalHash(editedInputs.get(command.id)) !== canonicalHash(command.input));
+  if (!hasChange) {
+    throw new CommandError('PROPOSAL_EDIT_UNCHANGED', 'Change at least one proposed value before saving.');
+  }
+
+  const planned = [];
+  for (const command of commands) {
+    planned.push(await previewCommand({
+      id: command.id,
+      name: command.name,
+      version: command.version,
+      input: editedInputs.get(command.id) || command.input,
+      provenance: {
+        ...(command.provenance || {}),
+        review_edit: { reviewed_by: fields.reviewedBy || 'local_user' },
+      },
+    }, context));
+  }
+  const revisedCommands = planned.map(item => item.command);
+  const registryVersion = commandRegistry.registryVersion();
+  const setHash = commandSetHash({ registryVersion, commands: revisedCommands });
+  const replacementFields = {
+    originSurface: proposal.origin_surface,
+    actorType: proposal.actor_type,
+    actorId: proposal.actor_id,
+    intentText: proposal.intent_text,
+    sourceDocumentId: proposal.source_document_id,
+    sourceUpdateId: proposal.source_update_id,
+    plannerProvider: proposal.planner_provider,
+    plannerModel: proposal.planner_model,
+    plannerRunKey: proposal.planner_run_key,
+    registryVersion,
+    normalizerVersion: NORMALIZER_VERSION,
+    commands: revisedCommands,
+    previews: planned.map(item => item.preview),
+    commandSetHash: setHash,
+    idempotencyKey: `proposal-revision:${proposal.id}:${setHash}`,
+  };
+  const revised = await supersedeCommandProposal(proposal.id, expectedHash, replacementFields);
+  if (!revised.replacement) {
+    throw new CommandError('PROPOSAL_CONCURRENT_TRANSITION', 'Proposal changed while the edit was being saved.');
+  }
+  return revised;
 }
 
 async function assertCorrectionGucsOff() {

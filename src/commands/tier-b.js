@@ -33,6 +33,7 @@ export const tierBCommandDefinitions = [
   definition({
     name: 'transaction.match_to_position', title: 'Match transactions to Direct position',
     description: 'Match exact pending cash-flow IDs to one exact Direct position ID.',
+    editableInputKeys: [],
     inputSchema: {
       type: 'object', additionalProperties: false,
       properties: {
@@ -55,6 +56,7 @@ export const tierBCommandDefinitions = [
   definition({
     name: 'transaction.classify', title: 'Classify pending transactions',
     description: 'Classify exact pending cash-flow IDs as ignored or routed to Funds.',
+    editableInputKeys: ['action', 'note'],
     inputSchema: {
       type: 'object', additionalProperties: false,
       properties: {
@@ -73,6 +75,7 @@ export const tierBCommandDefinitions = [
   definition({
     name: 'company.save_alias', title: 'Save company alias',
     description: 'Save an alternate company name against an exact Direct position.',
+    editableInputKeys: ['alias', 'note'],
     risk: 'metadata_change',
     applyCapabilities: ['portfolio:apply:metadata'],
     inputSchema: {

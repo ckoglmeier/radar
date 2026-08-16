@@ -40,6 +40,7 @@ function semanticMetadata(definition) {
     domainAtomicity: definition.domainAtomicity,
     proposeCapabilities: definition.proposeCapabilities,
     applyCapabilities: definition.applyCapabilities,
+    editableInputKeys: definition.editableInputKeys || [],
     inputSchema: definition.inputSchema,
     resultSchema: definition.resultSchema,
   };
@@ -86,6 +87,14 @@ export class CommandRegistry {
     }
     if (!Array.isArray(definition.proposeCapabilities) || !Array.isArray(definition.applyCapabilities)) {
       throw new TypeError(`command ${definition.name} requires propose/apply capability arrays`);
+    }
+    if (!Array.isArray(definition.editableInputKeys || [])) {
+      throw new TypeError(`command ${definition.name} editableInputKeys must be an array`);
+    }
+    for (const inputKey of definition.editableInputKeys || []) {
+      if (!Object.hasOwn(definition.inputSchema?.properties || {}, inputKey)) {
+        throw new TypeError(`command ${definition.name} editable input is missing from its schema: ${inputKey}`);
+      }
     }
     for (const key of ['availability', 'resolve', 'inspect', 'preview', 'preconditions', 'affectedResources']) {
       requiredFunction(definition, key);

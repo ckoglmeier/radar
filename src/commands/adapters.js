@@ -4,6 +4,7 @@ import {
   planCommandProposal,
   previewCommand,
   proposalHistory,
+  reviseCommandProposal,
 } from './service.js';
 
 export function apiCommandMetadata() {
@@ -20,6 +21,10 @@ export async function apiProposeCommands(body, context = {}) {
 
 export async function apiGetProposal(id) {
   return getCommandProposal(id);
+}
+
+export async function apiReviseProposal(id, expectedHash, edits, fields, context = {}) {
+  return reviseCommandProposal(id, expectedHash, edits, fields, context);
 }
 
 export async function apiProposalHistory(options) {

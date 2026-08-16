@@ -7,7 +7,7 @@ import { runMigrations } from '../db/migrate.js';
 import { createFund } from '../models/funds.js';
 import { createEmploymentEquityIssuer, createEmploymentEquityPosition } from '../models/employment-equity.js';
 import { setConviction } from '../models/investments.js';
-import { applyCommandProposal, commandMetadata, planCommandProposal, previewCommand } from './service.js';
+import { applyCommandProposal, commandMetadata, planCommandProposal, previewCommand, reviseCommandProposal } from './service.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-command-service-'));
 const databaseUrl = `file:${join(scratch, 'db')}`;
@@ -53,15 +53,38 @@ try {
     assert.deepEqual(vintageProposal.proposal.previews[0].after, [
       { field: 'vintage_year', value: 2022 },
     ]);
-    await applyCommandProposal(
+    await assert.rejects(
+      () => reviseCommandProposal(
+        vintageProposal.proposal.id,
+        vintageProposal.proposal.command_set_hash,
+        [{ commandId: JSON.parse(JSON.stringify(vintageProposal.proposal.commands))[0].id, input: { investmentId: fund.investment.id } }],
+        { reviewedBy: 'fixture' },
+      ),
+      error => error.code === 'PROPOSAL_EDIT_NOT_ALLOWED',
+    );
+    const vintageCommand = (typeof vintageProposal.proposal.commands === 'string'
+      ? JSON.parse(vintageProposal.proposal.commands)
+      : vintageProposal.proposal.commands)[0];
+    const vintageRevision = await reviseCommandProposal(
       vintageProposal.proposal.id,
       vintageProposal.proposal.command_set_hash,
+      [{ commandId: vintageCommand.id, input: { vintageYear: 2023 } }],
+      { reviewedBy: 'fixture' },
+    );
+    assert.equal(vintageRevision.proposal.status, 'superseded');
+    assert.equal(vintageRevision.replacement.status, 'proposed');
+    assert.deepEqual(vintageRevision.replacement.previews[0].after, [
+      { field: 'vintage_year', value: 2023 },
+    ]);
+    await applyCommandProposal(
+      vintageRevision.replacement.id,
+      vintageRevision.replacement.command_set_hash,
       { reviewedBy: 'fixture', actorCapabilities },
     );
     assert.equal(Number((await query(
       `SELECT vintage_year FROM fund_profiles WHERE investment_id = $1`,
       [fund.investment.id],
-    ))[0].vintage_year), 2022);
+    ))[0].vintage_year), 2023);
 
     const overrideProposal = await planCommandProposal([{
       name: 'reporting.override_field',
