@@ -28,6 +28,10 @@ try {
     company_name: 'Source Backed Update Test', invest_date: '2026-01-01',
     status: 'Live', invested: 1000, source: 'test', asset_class: 'direct',
   });
+  const fund = await upsertInvestment({
+    company_name: 'Source Backed Fund I', invest_date: '2024-01-01',
+    status: 'Live', invested: 1000, source: 'test', asset_class: 'fund',
+  });
   const document = await createDocument({
     entity_type: 'investment', entity_id: investment.id,
     filename: 'founder-update.eml', mime: 'message/rfc822',
@@ -76,6 +80,24 @@ try {
   });
   await failInvestmentUpdate(retryable.update.id, 'model unavailable');
   assert.equal((await retryInvestmentUpdate(retryable.update.id)).status, 'pending');
+
+  const k1Document = await createDocument({
+    entity_type: 'investment', entity_id: fund.id,
+    filename: '2025-k1.pdf', mime: 'application/pdf', content: Buffer.from('Schedule K-1'),
+  });
+  const k1 = await createInvestmentUpdate({
+    investmentId: fund.id, sourceDocumentId: k1Document.id,
+    updateKind: 'fund_k1', taxYear: 2025,
+    receivedDate: '2026-03-15', processingMode: 'store_only',
+  });
+  assert.equal(k1.update.update_kind, 'fund_k1');
+  assert.equal(Number(k1.update.tax_year), 2025);
+
+  await assert.rejects(() => createInvestmentUpdate({
+    investmentId: investment.id, sourceDocumentId: document.id,
+    updateKind: 'fund_k1', taxYear: 2025,
+    receivedDate: '2026-03-15', processingMode: 'store_only',
+  }), /Fund investment/);
 
   await assert.rejects(() => createInvestmentUpdate({
     investmentId: investment.id + 999,

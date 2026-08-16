@@ -6,6 +6,7 @@ import { query } from '../db/index.js';
 const UPDATE_KINDS = new Set([
   'founder_update',
   'fund_update',
+  'fund_k1',
   'employment_disclosure',
   'valuation_update',
   'financial_update',
@@ -37,9 +38,14 @@ export async function createInvestmentUpdate(fields = {}) {
   const processingMode = requiredText(fields.processingMode, 'Processing mode');
   if (!UPDATE_KINDS.has(updateKind)) throw new Error(`Invalid update kind: ${updateKind}`);
   if (!PROCESSING_MODES.has(processingMode)) throw new Error(`Invalid processing mode: ${processingMode}`);
+  const taxYear = fields.taxYear == null || fields.taxYear === '' ? null : Number(fields.taxYear);
+  if (updateKind === 'fund_k1' && (!Number.isInteger(taxYear) || taxYear < 1900 || taxYear > 2100)) {
+    throw new Error('K-1 tax year must be between 1900 and 2100');
+  }
+  if (updateKind !== 'fund_k1' && taxYear != null) throw new Error('Tax year is supported only for K-1 updates');
 
   const [source] = await query(`
-    SELECT d.id
+    SELECT d.id, i.asset_class
       FROM documents d
       JOIN investments i ON i.id = $1
      WHERE d.id = $2
@@ -47,6 +53,9 @@ export async function createInvestmentUpdate(fields = {}) {
        AND d.entity_id = i.id::text
   `, [investmentId, sourceDocumentId]);
   if (!source) throw new Error('Source document must be attached to the same investment');
+  if (updateKind === 'fund_k1' && source.asset_class !== 'fund') {
+    throw new Error('K-1 updates require a Fund investment');
+  }
 
   const [existing] = await query(`SELECT * FROM investment_updates WHERE source_document_id = $1`, [sourceDocumentId]);
   if (existing) return { update: existing, idempotent_replay: true };
@@ -65,8 +74,8 @@ export async function createInvestmentUpdate(fields = {}) {
   const [update] = await query(`
     INSERT INTO investment_updates
       (investment_id, source_document_id, previous_update_id, update_kind,
-       title, received_date, processing_mode, status)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       title, received_date, processing_mode, status, tax_year)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
     RETURNING *
   `, [
     investmentId,
@@ -77,6 +86,7 @@ export async function createInvestmentUpdate(fields = {}) {
     fields.receivedDate,
     processingMode,
     processingMode === 'store_only' ? 'stored' : 'pending',
+    taxYear,
   ]);
   return { update, idempotent_replay: false };
 }
