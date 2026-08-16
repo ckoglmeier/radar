@@ -132,6 +132,26 @@ try {
     assert.equal(classified[0].reconciliation_status, 'matched');
     assert.equal(classified[1].reconciliation_status, 'ignored');
     assert.equal((await query(`SELECT canonical_company_name FROM company_aliases WHERE alias = 'CD Ventures'`))[0].canonical_company_name, 'Command Direct');
+
+    const [parallelDirect] = await query(`
+      INSERT INTO investments (company_name, status, invested, source, asset_class)
+      VALUES ('Parallel Command Direct', 'Live', 200, 'manual', 'direct') RETURNING id
+    `);
+    const parallelPlans = await Promise.all([
+      planCommandProposal([{ name: 'direct.record_valuation', input: { investmentId: direct.id, date: '2025-07-31', unrealizedValue: 1_700, currency: 'USD' } }], {
+        originSurface: 'manual_ui', actorType: 'user', idempotencyKey: 'command:test:parallel-a',
+      }),
+      planCommandProposal([{ name: 'direct.record_valuation', input: { investmentId: parallelDirect.id, date: '2025-07-31', unrealizedValue: 300, currency: 'USD' } }], {
+        originSurface: 'mcp', actorType: 'mcp_client', idempotencyKey: 'command:test:parallel-b',
+      }),
+    ]);
+    const parallelReceipts = await Promise.all(parallelPlans.map(plan => applyCommandProposal(
+      plan.proposal.id,
+      plan.proposal.command_set_hash,
+      { reviewedBy: 'fixture', actorCapabilities },
+    )));
+    assert.equal(parallelReceipts.every(result => result.proposal.status === 'applied'), true);
+    assert.equal(Number((await query(`SELECT net_value FROM investments WHERE id = $1`, [parallelDirect.id]))[0].net_value), 300);
   });
   console.log('Command service tests passed');
 } finally {

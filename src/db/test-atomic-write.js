@@ -91,9 +91,36 @@ try {
       { writer: 'second', step: 1 },
       { writer: 'second', step: 2 },
     ]);
+
+    let releaseTransaction;
+    let transactionStarted;
+    const transactionEntered = new Promise(resolve => { transactionStarted = resolve; });
+    const transactionMayFinish = new Promise(resolve => { releaseTransaction = resolve; });
+    const guarded = withAtomicWrite(async () => {
+      await query(`INSERT INTO atomic_write_events (writer, step) VALUES ('guarded', 1)`);
+      transactionStarted();
+      await transactionMayFinish;
+      await query(`INSERT INTO atomic_write_events (writer, step) VALUES ('guarded', 2)`);
+    });
+    await transactionEntered;
+    let ordinaryFinished = false;
+    const ordinary = query(`INSERT INTO atomic_write_events (writer, step) VALUES ('ordinary', 1)`)
+      .then(() => { ordinaryFinished = true; });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(ordinaryFinished, false, 'an ordinary write bypassed the active serialized transaction');
+    releaseTransaction();
+    await Promise.all([guarded, ordinary]);
+    assert.deepEqual(await query(`
+      SELECT writer, step FROM atomic_write_events
+       WHERE writer IN ('guarded', 'ordinary') ORDER BY id
+    `), [
+      { writer: 'guarded', step: 1 },
+      { writer: 'guarded', step: 2 },
+      { writer: 'ordinary', step: 1 },
+    ]);
   });
 
-  console.log('atomic writes: capabilities, nesting, rollback, and serialization passed');
+  console.log('atomic writes: capabilities, nesting, rollback, serialized writers, and legacy-write exclusion passed');
 } finally {
   await closeDb();
   rmSync(scratch, { recursive: true, force: true });
