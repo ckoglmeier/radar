@@ -5,6 +5,7 @@ import {
   recordFundFee,
   recordFundValuation,
   settleCapitalCall,
+  updateFund,
   updateFundCommitment,
 } from '../models/funds.js';
 import {
@@ -68,7 +69,7 @@ async function investmentTarget(investmentId, assetClass) {
 
 async function inspectInvestment(target, input = {}) {
   const [row] = await query(`
-    SELECT i.*, fp.commitment, fp.archived_at AS fund_archived_at,
+    SELECT i.*, fp.commitment, fp.vintage_year, fp.archived_at AS fund_archived_at,
            eep.display_name, eep.position_status, eep.description,
            eep.archived_at AS employment_archived_at,
            (SELECT id FROM valuations WHERE investment_id = i.id ORDER BY snapshot_date DESC, id DESC LIMIT 1) AS latest_valuation_id,
@@ -201,6 +202,22 @@ export const tierACommandDefinitions = [
       [{ field: 'commitment', value: num(current.commitment) }], [{ field: 'commitment', value: input.commitment }]),
     preconditions: ({ current }) => ({ commitment: num(current.commitment) }),
     apply: ({ target, input }) => updateFundCommitment(target.id, input.commitment, input.note),
+  }),
+  investmentCommand({
+    name: 'fund.set_vintage_year', title: 'Set Fund vintage year',
+    description: 'Set the reporting vintage year for a Fund vehicle.',
+    risk: 'metadata_change', assetClass: 'fund',
+    inputSchema: schema({
+      investmentId: { type: 'integer', minimum: 1 },
+      vintageYear: { type: 'integer', minimum: 1900, maximum: 2100 },
+    }, ['investmentId', 'vintageYear']),
+    preview: ({ target, input, current }) => basicPreview(target, current,
+      [{ field: 'vintage_year', value: current.vintage_year == null ? null : Number(current.vintage_year) }],
+      [{ field: 'vintage_year', value: input.vintageYear }]),
+    preconditions: ({ current }) => ({
+      vintage_year: current.vintage_year == null ? null : Number(current.vintage_year),
+    }),
+    apply: ({ target, input }) => updateFund(target.id, { vintageYear: input.vintageYear }),
   }),
   investmentCommand({
     name: 'fund.create_capital_call', title: 'Create capital call', description: 'Record a Fund capital-call notice.',

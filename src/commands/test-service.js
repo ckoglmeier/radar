@@ -16,7 +16,7 @@ const actorCapabilities = ['portfolio:apply:additive', 'portfolio:apply:metadata
 try {
   await withTenant(databaseUrl, async () => {
     await runMigrations();
-    assert.equal(commandMetadata().commands.length, 14);
+    assert.equal(commandMetadata().commands.length, 15);
 
     const [direct] = await query(`
       INSERT INTO investments
@@ -37,6 +37,31 @@ try {
         grantDate: '2024-01-01', unitsGranted: 100, unitsVestedConfirmed: 100, strikePrice: 1,
       },
     });
+
+    const vintageProposal = await planCommandProposal([{
+      name: 'fund.set_vintage_year',
+      input: { investmentId: fund.investment.id, vintageYear: 2022 },
+      provenance: { kind: 'user_attested', evidence: 'User supplied the vintage year.' },
+    }], {
+      originSurface: 'ask_radar', actorType: 'user', actorId: 'fixture',
+      intentText: 'Add a 2022 vintage year to Command Fund I',
+      idempotencyKey: 'command:test:fund-vintage',
+    });
+    assert.deepEqual(vintageProposal.proposal.previews[0].before, [
+      { field: 'vintage_year', value: null },
+    ]);
+    assert.deepEqual(vintageProposal.proposal.previews[0].after, [
+      { field: 'vintage_year', value: 2022 },
+    ]);
+    await applyCommandProposal(
+      vintageProposal.proposal.id,
+      vintageProposal.proposal.command_set_hash,
+      { reviewedBy: 'fixture', actorCapabilities },
+    );
+    assert.equal(Number((await query(
+      `SELECT vintage_year FROM fund_profiles WHERE investment_id = $1`,
+      [fund.investment.id],
+    ))[0].vintage_year), 2022);
 
     await assert.rejects(
       () => previewCommand({
