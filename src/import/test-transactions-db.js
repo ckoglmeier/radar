@@ -149,8 +149,11 @@ async function run() {
       eq(rowResults.first.inserted, fileResults.first.inserted, 'rows first inserted');
       eq(rowResults.first.skipped, fileResults.first.skipped, 'rows first skipped');
       eq(rowResults.first.matched, fileResults.first.matched, 'rows first matched');
+      eq(rowResults.first.matched, 2, 'new matched rows');
       eq(rowResults.second.inserted, fileResults.second.inserted, 'rows second inserted');
       eq(rowResults.second.skipped, fileResults.second.skipped, 'rows second skipped');
+      eq(rowResults.second.matched, 0, 'duplicate rows are not reported as newly matched');
+      eq(rowResults.second.unmatched, 0, 'duplicate rows are not reported as newly unmatched');
       eq(
         rowResults.first.unmatched_company_refs.join(','),
         fileResults.first.unmatched_company_refs.join(','),

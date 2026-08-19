@@ -191,6 +191,7 @@ async function runTransactionImportRows(rows, options = {}) {
     skipped: 0,
     errors: 0,
     matched: 0,
+    unmatched: 0,
     unmatched_company_refs: new Set(),
     details: [],
   };
@@ -217,13 +218,13 @@ async function runTransactionImportRows(rows, options = {}) {
 
       // Link to investment if we have a company reference
       let investment_id = null;
+      let unmatchedCompany = null;
       if (company) {
         const match = await matchCompanyToInvestment(company, { universe });
         if (match.confidence === 'exact' || match.confidence === 'token') {
           investment_id = match.investment_id;
-          results.matched++;
         } else {
-          results.unmatched_company_refs.add(company);
+          unmatchedCompany = company;
         }
       }
 
@@ -243,6 +244,11 @@ async function runTransactionImportRows(rows, options = {}) {
 
       if (inserted) {
         results.inserted++;
+        if (investment_id) results.matched++;
+        if (unmatchedCompany) {
+          results.unmatched++;
+          results.unmatched_company_refs.add(unmatchedCompany);
+        }
       } else {
         results.skipped++;
         continue;
