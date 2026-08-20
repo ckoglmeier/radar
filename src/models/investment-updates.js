@@ -31,6 +31,17 @@ function jsonArray(value) {
   return JSON.stringify(Array.isArray(value) ? value : []);
 }
 
+function receivedDate(value) {
+  const text = requiredText(value, 'Received date');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error('Received date must use YYYY-MM-DD');
+  const parsed = new Date(`${text}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
+    throw new Error('Received date must be a real calendar date');
+  }
+  if (text > new Date().toISOString().slice(0, 10)) throw new Error('Received date cannot be in the future');
+  return text;
+}
+
 export async function createInvestmentUpdate(fields = {}) {
   const investmentId = Number(fields.investmentId);
   const sourceDocumentId = Number(fields.sourceDocumentId);
@@ -85,12 +96,23 @@ export async function createInvestmentUpdate(fields = {}) {
     previousUpdateId,
     updateKind,
     optionalText(fields.title),
-    fields.receivedDate,
+    receivedDate(fields.receivedDate),
     processingMode,
     processingMode === 'store_only' ? 'stored' : 'pending',
     taxYear,
   ]);
   return { update, idempotent_replay: false };
+}
+
+export async function updateInvestmentUpdateMetadata(updateId, fields = {}) {
+  const [update] = await query(`
+    UPDATE investment_updates
+       SET received_date = $2, updated_at = NOW()
+     WHERE id = $1
+     RETURNING *
+  `, [updateId, receivedDate(fields.receivedDate)]);
+  if (!update) throw new Error(`Investment update not found: ${updateId}`);
+  return update;
 }
 
 export async function completeInvestmentUpdate(updateId, fields = {}) {

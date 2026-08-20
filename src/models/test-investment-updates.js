@@ -21,6 +21,7 @@ const {
   listInvestmentUpdates,
   reviewInvestmentUpdate,
   retryInvestmentUpdate,
+  updateInvestmentUpdateMetadata,
 } = await import('./investment-updates.js');
 
 try {
@@ -100,6 +101,14 @@ try {
   });
   assert.equal(stored.update.status, 'stored');
   assert.equal(stored.update.previous_update_id, created.update.id);
+
+  const corrected = await updateInvestmentUpdateMetadata(stored.update.id, {
+    receivedDate: '2026-07-01',
+  });
+  assert.equal(corrected.received_date.toISOString().slice(0, 10), '2026-07-01');
+  await assert.rejects(() => updateInvestmentUpdateMetadata(stored.update.id, {
+    receivedDate: '2100-01-01',
+  }), /future/);
 
   const failedDocument = await createDocument({
     entity_type: 'investment', entity_id: investment.id,
