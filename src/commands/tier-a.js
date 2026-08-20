@@ -1,5 +1,6 @@
 import { query, writeCapabilities } from '../db/index.js';
 import {
+  createAndSettleCapitalCall,
   createCapitalCallNotice,
   recordFundDistribution,
   recordFundFee,
@@ -357,6 +358,19 @@ export const tierACommandDefinitions = [
     preview: ({ target, input, current }) => basicPreview(target, current, [], [{ field: 'capital_call', value: input.amount, as_of: input.noticeDate }]),
     preconditions: () => ({}),
     apply: ({ target, input, idempotencyKey }) => createCapitalCallNotice(target.id, { ...input, externalHash: idempotencyKey }),
+  }),
+  investmentCommand({
+    name: 'fund.create_and_settle_capital_call', title: 'Create and settle capital call',
+    description: 'Record a Fund capital-call notice and its settled contribution atomically.',
+    risk: 'additive_reporting_fact', assetClass: 'fund',
+    editableInputKeys: ['noticeDate', 'dueDate', 'settlementDate', 'amount', 'description'],
+    inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, noticeDate: date, dueDate: date, settlementDate: date, amount: positiveMoney, currency: usd, description: nullableText }, ['investmentId', 'noticeDate', 'settlementDate', 'amount', 'currency']),
+    preview: ({ target, input, current }) => basicPreview(target, current, [], [
+      { field: 'capital_call', value: input.amount, as_of: input.noticeDate },
+      { field: 'settled_contribution', value: input.amount, as_of: input.settlementDate },
+    ]),
+    preconditions: () => ({}),
+    apply: ({ target, input, idempotencyKey }) => createAndSettleCapitalCall(target.id, { ...input, externalHash: idempotencyKey }),
   }),
   definition({
     name: 'fund.settle_capital_call', version: 1, title: 'Settle capital call', description: 'Settle an open capital-call notice.',

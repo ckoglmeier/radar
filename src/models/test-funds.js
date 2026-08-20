@@ -6,6 +6,7 @@ import { closeDb, query, withAtomicWrite, withTenant } from '../db/index.js';
 import { runMigrations } from '../db/migrate.js';
 import {
   archiveFund,
+  createAndSettleCapitalCall,
   createCapitalCallNotice,
   createFund,
   createFundProfile,
@@ -112,6 +113,41 @@ try {
       /idempotency key conflicts/,
     );
 
+    const combinedCall = await createAndSettleCapitalCall(fundId, {
+      noticeDate: '2025-01-27',
+      settlementDate: '2025-01-27',
+      amount: 10,
+      currency: 'USD',
+      description: 'Requested and paid together',
+      externalHash: 'test:call:combined',
+    });
+    assert.equal(combinedCall.notice.status, 'settled');
+    assert.equal(combinedCall.transaction.notice_id, combinedCall.notice.id);
+    assert.equal(Number(combinedCall.cash_flow.amount), -10);
+    const replayedCombinedCall = await createAndSettleCapitalCall(fundId, {
+      noticeDate: '2025-01-27',
+      settlementDate: '2025-01-27',
+      amount: 10,
+      currency: 'USD',
+      externalHash: 'test:call:combined',
+    });
+    assert.equal(replayedCombinedCall.idempotent_replay, true);
+    assert.equal(replayedCombinedCall.notice.id, combinedCall.notice.id);
+    await assert.rejects(
+      () => createAndSettleCapitalCall(fundId, {
+        noticeDate: '2025-01-28',
+        settlementDate: 'invalid',
+        amount: 5,
+        currency: 'USD',
+        externalHash: 'test:call:combined:rollback',
+      }),
+      /Settlement date must be an ISO date/,
+    );
+    assert.equal(Number((await query(
+      `SELECT COUNT(*) AS count FROM fund_notices WHERE external_hash = $1`,
+      ['test:call:combined:rollback:notice'],
+    ))[0].count), 0, 'failed combined settlement rolls back its notice');
+
     const distribution = await recordFundDistribution(fundId, {
       date: '2025-02-15',
       amount: 25,
@@ -127,12 +163,12 @@ try {
     assert.equal(Number(fee.cash_flow.amount), -5);
 
     metrics = await fundMetrics(fundId);
-    assert.equal(metrics.paid_in, 150);
+    assert.equal(metrics.paid_in, 160);
     assert.equal(metrics.distributed, 25);
     assert.equal(metrics.fees_to_date, 5);
-    assert.equal(metrics.unfunded, 50);
-    assertClose(metrics.dpi, 25 / 150);
-    assertClose(metrics.tvpi, 150 / 150);
+    assert.equal(metrics.unfunded, 40);
+    assertClose(metrics.dpi, 25 / 160);
+    assertClose(metrics.tvpi, 150 / 160);
 
     await assert.rejects(
       () => query(`
@@ -165,7 +201,7 @@ try {
     await updateFundCommitment(fundId, 250, 'Approved commitment increase');
     metrics = await fundMetrics(fundId);
     assert.equal(metrics.commitment, 250);
-    assert.equal(metrics.unfunded, 100);
+    assert.equal(metrics.unfunded, 90);
     const commitmentEvents = await query(`
       SELECT * FROM investment_events
        WHERE investment_id = $1 AND event_type = 'fund_commitment_changed'

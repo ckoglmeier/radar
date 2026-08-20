@@ -16,7 +16,7 @@ const actorCapabilities = ['portfolio:apply:additive', 'portfolio:apply:metadata
 try {
   await withTenant(databaseUrl, async () => {
     await runMigrations();
-    assert.equal(commandMetadata().commands.length, 16);
+    assert.equal(commandMetadata().commands.length, 17);
 
     const [direct] = await query(`
       INSERT INTO investments
@@ -85,6 +85,43 @@ try {
       `SELECT vintage_year FROM fund_profiles WHERE investment_id = $1`,
       [fund.investment.id],
     ))[0].vintage_year), 2023);
+
+    const combinedCallProposal = await planCommandProposal([{
+      name: 'fund.create_and_settle_capital_call',
+      input: {
+        investmentId: fund.investment.id,
+        noticeDate: '2025-01-15',
+        settlementDate: '2025-01-15',
+        amount: 2_500,
+        currency: 'USD',
+        description: 'Requested and settled together',
+      },
+      provenance: { kind: 'user_attested', evidence: 'Submitted through the Fund activity form.' },
+    }], {
+      originSurface: 'manual_ui', actorType: 'user', actorId: 'fixture',
+      intentText: 'Record a requested and settled capital call',
+      idempotencyKey: 'command:test:combined-capital-call',
+    });
+    assert.deepEqual(combinedCallProposal.proposal.previews[0].after, [
+      { field: 'capital_call', value: 2_500, as_of: '2025-01-15' },
+      { field: 'settled_contribution', value: 2_500, as_of: '2025-01-15' },
+    ]);
+    await applyCommandProposal(
+      combinedCallProposal.proposal.id,
+      combinedCallProposal.proposal.command_set_hash,
+      { reviewedBy: 'fixture', actorCapabilities },
+    );
+    const [combinedNotice] = await query(`
+      SELECT fn.status, ft.activity_type, cf.flow_date::text AS flow_date, cf.amount
+        FROM fund_notices fn
+        JOIN fund_transactions ft ON ft.notice_id = fn.id
+        JOIN cash_flows cf ON cf.id = ft.cash_flow_id
+       WHERE fn.investment_id = $1 AND fn.amount = 2500
+    `, [fund.investment.id]);
+    assert.equal(combinedNotice.status, 'settled');
+    assert.equal(combinedNotice.activity_type, 'contribution');
+    assert.equal(String(combinedNotice.flow_date).slice(0, 10), '2025-01-15');
+    assert.equal(Number(combinedNotice.amount), -2_500);
 
     const overrideProposal = await planCommandProposal([{
       name: 'reporting.override_field',

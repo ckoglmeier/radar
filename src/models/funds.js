@@ -425,6 +425,35 @@ export async function settleCapitalCall(noticeId, fields = {}) {
   });
 }
 
+export async function createAndSettleCapitalCall(investmentId, fields = {}) {
+  assertUsd(fields.currency);
+  return withFundWrite(async () => {
+    const requestKey = optionalText(fields.externalHash) || randomUUID();
+    const noticeResult = await createCapitalCallNotice(investmentId, {
+      noticeDate: fields.noticeDate,
+      dueDate: fields.dueDate,
+      amount: fields.amount,
+      currency: fields.currency,
+      description: fields.description,
+      externalHash: `${requestKey}:notice`,
+    });
+    const settlementResult = await settleCapitalCall(noticeResult.notice.id, {
+      settlementDate: fields.settlementDate,
+      amount: fields.amount,
+      currency: fields.currency,
+      description: fields.description,
+      externalHash: `${requestKey}:settlement`,
+    });
+    const [notice] = await query(`SELECT * FROM fund_notices WHERE id = $1`, [noticeResult.notice.id]);
+    return {
+      notice,
+      transaction: settlementResult.transaction,
+      cash_flow: settlementResult.cash_flow,
+      idempotent_replay: noticeResult.idempotent_replay && settlementResult.idempotent_replay,
+    };
+  });
+}
+
 async function recordStandaloneActivity(investmentId, activityType, fields) {
   assertUsd(fields.currency);
   return withFundWrite(async () => {
