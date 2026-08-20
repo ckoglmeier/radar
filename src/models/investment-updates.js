@@ -1,7 +1,8 @@
 // Source-backed updates shared by every investment type. Source documents are
 // authoritative. Interpretation is derived and never applies portfolio facts.
 
-import { query } from '../db/index.js';
+import { query, withAtomicWrite } from '../db/index.js';
+import { rejectCommandProposal } from './command-proposals.js';
 
 const UPDATE_KINDS = new Set([
   'founder_update',
@@ -13,6 +14,7 @@ const UPDATE_KINDS = new Set([
   'general',
 ]);
 const PROCESSING_MODES = new Set(['store_only', 'interpret']);
+const REVIEW_OUTCOMES = new Set(['reviewed_no_changes', 'interpretation_rejected']);
 
 function requiredText(value, label) {
   const text = String(value || '').trim();
@@ -95,7 +97,7 @@ export async function completeInvestmentUpdate(updateId, fields = {}) {
   const summary = requiredText(fields.summary, 'Update summary');
   const [update] = await query(`
     UPDATE investment_updates
-       SET status = 'complete', summary = $2,
+       SET status = 'complete', review_status = 'pending_review', summary = $2,
            observed_changes = $3::jsonb, proposed_facts = $4::jsonb,
            evaluation_signals = $5::jsonb, actions = $6::jsonb,
            model = $7, error_message = NULL, interpreted_at = NOW(), updated_at = NOW()
@@ -112,6 +114,54 @@ export async function completeInvestmentUpdate(updateId, fields = {}) {
   ]);
   if (!update) throw new Error(`Investment update not found: ${updateId}`);
   return update;
+}
+
+export async function reviewInvestmentUpdate(updateId, fields = {}) {
+  const outcome = requiredText(fields.outcome, 'Review outcome');
+  if (!REVIEW_OUTCOMES.has(outcome)) throw new Error(`Invalid review outcome: ${outcome}`);
+  const reviewedBy = requiredText(fields.reviewedBy, 'Reviewer');
+
+  return withAtomicWrite(async () => {
+    const [current] = await query(`
+      SELECT * FROM investment_updates WHERE id = $1 FOR UPDATE
+    `, [updateId]);
+    if (!current) throw new Error(`Investment update not found: ${updateId}`);
+    if (current.status !== 'complete') throw new Error('Only completed interpretations can be reviewed');
+    if (current.review_status !== 'pending_review') {
+      return { update: current, proposal: null, idempotent_replay: true };
+    }
+
+    const [proposal] = await query(`
+      SELECT * FROM command_proposals
+       WHERE source_update_id = $1
+       ORDER BY created_at DESC
+       LIMIT 1
+       FOR UPDATE
+    `, [updateId]);
+    let rejectedProposal = null;
+    if (proposal?.status === 'applied') {
+      throw new Error('This update already has applied record changes');
+    }
+    if (proposal?.status === 'proposed') {
+      rejectedProposal = await rejectCommandProposal(proposal.id, proposal.command_set_hash, {
+        reviewedBy,
+        reason: outcome === 'reviewed_no_changes'
+          ? 'Source reviewed; no record changes needed.'
+          : 'Source interpretation rejected by reviewer.',
+      });
+      if (!rejectedProposal) throw new Error('The linked proposal changed during review');
+    }
+
+    const [update] = await query(`
+      UPDATE investment_updates
+         SET review_status = $2, reviewed_at = NOW(), reviewed_by = $3,
+             review_note = $4, updated_at = NOW()
+       WHERE id = $1 AND review_status = 'pending_review'
+       RETURNING *
+    `, [updateId, outcome, reviewedBy, optionalText(fields.note)]);
+    if (!update) throw new Error('The update review changed concurrently');
+    return { update, proposal: rejectedProposal, idempotent_replay: false };
+  });
 }
 
 export async function failInvestmentUpdate(updateId, errorMessage) {

@@ -324,6 +324,14 @@ export async function applyCommandProposal(proposalId, expectedHash, fields = {}
         reviewedBy: fields.reviewedBy || 'local_user',
       });
       if (!applied) throw new CommandError('PROPOSAL_CONCURRENT_TRANSITION', 'Proposal changed during apply.');
+      if (proposal.source_update_id) {
+        await query(`
+          UPDATE investment_updates
+             SET review_status = 'changes_applied', reviewed_at = NOW(),
+                 reviewed_by = $2, updated_at = NOW()
+           WHERE id = $1
+        `, [proposal.source_update_id, fields.reviewedBy || 'local_user']);
+      }
       return { proposal: applied, receipt, idempotent_replay: false };
     });
     return completed;

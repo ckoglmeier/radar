@@ -12,12 +12,14 @@ const { closeDb, withTenant } = await import('../db/index.js');
 const { runMigrations } = await import('../db/migrate.js');
 const { upsertInvestment } = await import('./investments.js');
 const { createDocument } = await import('./documents.js');
+const { createCommandProposal, getCommandProposal } = await import('./command-proposals.js');
 const {
   completeInvestmentUpdate,
   createInvestmentUpdate,
   failInvestmentUpdate,
   getInvestmentUpdate,
   listInvestmentUpdates,
+  reviewInvestmentUpdate,
   retryInvestmentUpdate,
 } = await import('./investment-updates.js');
 
@@ -55,9 +57,38 @@ try {
     model: 'test-model',
   });
   assert.equal(completed.status, 'complete');
+  assert.equal(completed.review_status, 'pending_review');
   assert.equal(completed.proposed_facts[0].field, 'runway_months');
   assert.equal((await listInvestmentUpdates(investment.id))[0].filename, 'founder-update.eml');
   assert.equal((await getInvestmentUpdate(created.update.id)).previous_source_document_id, null);
+  const reviewed = await reviewInvestmentUpdate(created.update.id, {
+    outcome: 'reviewed_no_changes', reviewedBy: 'test-reviewer',
+  });
+  assert.equal(reviewed.update.review_status, 'reviewed_no_changes');
+  assert.equal(reviewed.update.reviewed_by, 'test-reviewer');
+  assert.equal((await reviewInvestmentUpdate(created.update.id, {
+    outcome: 'reviewed_no_changes', reviewedBy: 'test-reviewer',
+  })).idempotent_replay, true);
+
+  const proposedDocument = await createDocument({
+    entity_type: 'investment', entity_id: investment.id,
+    filename: 'proposal-update.txt', mime: 'text/plain', content: Buffer.from('candidate fact'),
+  });
+  const proposedUpdate = await createInvestmentUpdate({
+    investmentId: investment.id, sourceDocumentId: proposedDocument.id,
+    updateKind: 'general', receivedDate: '2026-08-01', processingMode: 'interpret',
+  });
+  await completeInvestmentUpdate(proposedUpdate.update.id, { summary: 'Candidate fact.' });
+  const linkedProposal = await createCommandProposal({
+    originSurface: 'investment_update', actorType: 'test', sourceDocumentId: proposedDocument.id,
+    sourceUpdateId: proposedUpdate.update.id, commands: [{ name: 'test' }], previews: [],
+    commandSetHash: 'test-linked-update-hash', idempotencyKey: 'test-linked-update', registryVersion: 'test',
+  });
+  const closed = await reviewInvestmentUpdate(proposedUpdate.update.id, {
+    outcome: 'interpretation_rejected', reviewedBy: 'test-reviewer',
+  });
+  assert.equal(closed.update.review_status, 'interpretation_rejected');
+  assert.equal((await getCommandProposal(linkedProposal.proposal.id)).status, 'rejected');
 
   const storedDocument = await createDocument({
     entity_type: 'investment', entity_id: investment.id,
