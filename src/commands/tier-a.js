@@ -76,6 +76,8 @@ async function inspectInvestment(target, input = {}) {
            fp.archived_at AS fund_archived_at,
            eep.display_name, eep.position_status, eep.description,
            eep.archived_at AS employment_archived_at,
+           (SELECT COUNT(*) FROM investment_lots WHERE investment_id = i.id) AS employment_lot_count,
+           (SELECT cash_outlay FROM investment_lots WHERE investment_id = i.id ORDER BY id LIMIT 1) AS employment_cash_outlay,
            (SELECT id FROM valuations WHERE investment_id = i.id ORDER BY snapshot_date DESC, id DESC LIMIT 1) AS latest_valuation_id,
            (SELECT snapshot_date FROM valuations WHERE investment_id = i.id ORDER BY snapshot_date DESC, id DESC LIMIT 1) AS latest_valuation_date,
            (SELECT net_value FROM valuations WHERE investment_id = i.id ORDER BY snapshot_date DESC, id DESC LIMIT 1) AS latest_valuation_value
@@ -458,10 +460,24 @@ export const tierACommandDefinitions = [
   investmentCommand({
     name: 'employment.update_position', title: 'Update Employment position', description: 'Update narrow reporting metadata for an Employment position.',
     risk: 'metadata_change', assetClass: 'employment_equity',
-    editableInputKeys: ['displayName', 'positionStatus', 'description'],
-    inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, displayName: { type: 'string', minLength: 1 }, positionStatus: { type: 'string', enum: ['active', 'partially_realized', 'realized', 'forfeited', 'archived'] }, description: nullableText }, ['investmentId']),
-    preview: ({ target, input, current }) => basicPreview(target, current, [{ field: 'display_name', value: current.display_name }, { field: 'position_status', value: current.position_status }, { field: 'description', value: current.description }], [{ field: 'display_name', value: input.displayName ?? current.display_name }, { field: 'position_status', value: input.positionStatus ?? current.position_status }, { field: 'description', value: input.description === undefined ? current.description : input.description }]),
-    preconditions: ({ current }) => ({ display_name: current.display_name, position_status: current.position_status, description: current.description }),
+    editableInputKeys: ['displayName', 'positionStatus', 'investDate', 'ownershipEntity', 'cashOutlay', 'description'],
+    inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, displayName: { type: 'string', minLength: 1 }, positionStatus: { type: 'string', enum: ['active', 'partially_realized', 'realized', 'forfeited', 'archived'] }, investDate: date, ownershipEntity: nullableText, cashOutlay: money, description: nullableText }, ['investmentId']),
+    preview: ({ target, input, current }) => basicPreview(target, current, [
+      { field: 'display_name', value: current.display_name },
+      { field: 'position_status', value: current.position_status },
+      { field: 'invest_date', value: dateOnly(current.invest_date) },
+      { field: 'ownership_entity', value: current.investment_entity },
+      { field: 'cash_outlay', value: num(current.employment_cash_outlay) },
+      { field: 'description', value: current.description },
+    ], [
+      { field: 'display_name', value: input.displayName ?? current.display_name },
+      { field: 'position_status', value: input.positionStatus ?? current.position_status },
+      { field: 'invest_date', value: input.investDate ?? dateOnly(current.invest_date) },
+      { field: 'ownership_entity', value: input.ownershipEntity === undefined ? current.investment_entity : input.ownershipEntity },
+      { field: 'cash_outlay', value: input.cashOutlay ?? num(current.employment_cash_outlay) },
+      { field: 'description', value: input.description === undefined ? current.description : input.description },
+    ], Number(current.employment_lot_count) > 1 && input.cashOutlay !== undefined ? ['Cash outlay must be edited per lot for this position.'] : []),
+    preconditions: ({ current }) => ({ display_name: current.display_name, position_status: current.position_status, invest_date: dateOnly(current.invest_date), ownership_entity: current.investment_entity, cash_outlay: num(current.employment_cash_outlay), lot_count: Number(current.employment_lot_count), description: current.description }),
     apply: ({ target, input }) => updateEmploymentEquityPosition(target.id, input),
   }),
 ];

@@ -27,6 +27,7 @@ import {
   recordForfeitureOrExpiration,
   recordSettlement,
   restoreEmploymentEquityPosition,
+  updateEmploymentEquityPosition,
 } from './employment-equity.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-employment-equity-'));
@@ -321,6 +322,25 @@ try {
     assert.deepEqual(
       artworkIssuerMark.manual_positions.map(row => Number(row.investment_id)),
       [Number(ppu.investment.id)],
+    );
+    const updatedPpu = await updateEmploymentEquityPosition(ppu.investment.id, {
+      displayName: 'Employment-origin PPU grant',
+      investDate: '2020-05-15',
+      ownershipEntity: 'Koglmeier Family',
+      cashOutlay: 250,
+      description: 'Reporting facts corrected after creation',
+    });
+    assert.equal(updatedPpu.display_name, 'Employment-origin PPU grant');
+    assert.equal(dateOnly(updatedPpu.investment.invest_date), '2020-05-15');
+    assert.equal(updatedPpu.investment.investment_entity, 'Koglmeier Family');
+    assert.equal(Number(updatedPpu.lot.cash_outlay), 250);
+    assert.equal((await employmentEquityMetrics(ppu.investment.id)).remaining_cash_outlay, 250);
+    await updateEmploymentEquityPosition(ppu.investment.id, { cashOutlay: 300 });
+    assert.equal((await getEmploymentEquityPosition(ppu.investment.id)).lots.length, 1, 'cash correction updates the summary lot');
+    assert.equal((await employmentEquityMetrics(ppu.investment.id)).remaining_cash_outlay, 300);
+    await assert.rejects(
+      () => updateEmploymentEquityPosition(common.investment.id, { cashOutlay: 500 }),
+      /edited per lot/,
     );
 
     const disclosureDocument = await createDocument({

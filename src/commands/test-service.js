@@ -13,6 +13,10 @@ const scratch = mkdtempSync(join(tmpdir(), 'radar-command-service-'));
 const databaseUrl = `file:${join(scratch, 'db')}`;
 const actorCapabilities = ['portfolio:apply:additive', 'portfolio:apply:metadata'];
 
+function dateOnly(value) {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+}
+
 try {
   await withTenant(databaseUrl, async () => {
     await runMigrations();
@@ -37,6 +41,34 @@ try {
         grantDate: '2024-01-01', unitsGranted: 100, unitsVestedConfirmed: 100, strikePrice: 1,
       },
     });
+
+    const employmentEdit = await planCommandProposal([{
+      name: 'employment.update_position',
+      input: {
+        investmentId: employment.investment.id,
+        displayName: 'Edited option grant',
+        investDate: '2024-02-01',
+        ownershipEntity: 'Individual',
+        cashOutlay: 125,
+        description: 'Corrected after initial entry',
+      },
+      provenance: { kind: 'user_attested', evidence: 'Submitted through the Employment Equity edit form.' },
+    }], {
+      originSurface: 'manual_ui', actorType: 'user', actorId: 'fixture',
+      intentText: 'Edit Employment Equity reporting details',
+      idempotencyKey: 'command:test:employment-edit',
+    });
+    assert.equal(employmentEdit.proposal.previews[0].after.find(row => row.field === 'cash_outlay').value, 125);
+    await applyCommandProposal(
+      employmentEdit.proposal.id,
+      employmentEdit.proposal.command_set_hash,
+      { reviewedBy: 'fixture', actorCapabilities },
+    );
+    const [editedEmployment] = await query(`SELECT invest_date, investment_entity, invested FROM investments WHERE id = $1`, [employment.investment.id]);
+    assert.equal(dateOnly(editedEmployment.invest_date), '2024-02-01');
+    assert.equal(editedEmployment.investment_entity, 'Individual');
+    assert.equal(Number(editedEmployment.invested), 125);
+    assert.equal(Number((await query(`SELECT cash_outlay FROM investment_lots WHERE investment_id = $1`, [employment.investment.id]))[0].cash_outlay), 125);
 
     const vintageProposal = await planCommandProposal([{
       name: 'fund.set_vintage_year',

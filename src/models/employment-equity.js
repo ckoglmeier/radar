@@ -905,6 +905,24 @@ export async function updateEmploymentEquityPosition(investmentId, fields = {}) 
     const current = await position(investmentId, { lock: true });
     const status = fields.positionStatus === undefined ? current.position_status
       : assertEnum(fields.positionStatus, POSITION_STATUSES, 'position status');
+    const investDate = fields.investDate === undefined
+      ? dateOnly(current.invest_date)
+      : isoDate(fields.investDate, 'Position date');
+    const ownershipEntity = fields.ownershipEntity === undefined
+      ? current.investment_entity
+      : optionalText(fields.ownershipEntity);
+    const cashOutlay = fields.cashOutlay === undefined
+      ? undefined
+      : number(fields.cashOutlay, 'Cash outlay');
+    const [updatedInvestment] = await query(`
+      UPDATE investments
+         SET invest_date = $2,
+             investment_entity = $3,
+             invested = CASE WHEN $4::boolean THEN $5 ELSE invested END,
+             updated_at = NOW()
+       WHERE id = $1
+       RETURNING *
+    `, [investmentId, investDate, ownershipEntity, cashOutlay !== undefined, cashOutlay ?? null]);
     const [updated] = await query(`
       UPDATE employment_equity_positions
          SET display_name = $2, position_status = $3, description = $4,
@@ -917,7 +935,45 @@ export async function updateEmploymentEquityPosition(investmentId, fields = {}) 
       status,
       fields.description === undefined ? current.description : optionalText(fields.description),
     ]);
-    return updated;
+    let updatedLot = null;
+    if (cashOutlay !== undefined) {
+      const lots = await query(`
+        SELECT * FROM investment_lots WHERE investment_id = $1 ORDER BY id FOR UPDATE
+      `, [investmentId]);
+      if (lots.length > 1) {
+        throw new Error('Cash outlay must be edited per lot when an Employment position has multiple lots');
+      }
+      if (lots.length === 0) {
+        updatedLot = await insertLot(investmentId, {
+          acquisitionDate: investDate,
+          instrumentType: current.instrument_family,
+          cashOutlay,
+          basisAsOfDate: investDate,
+          basisSource: 'manual',
+          migrationKey: `employment-summary:${investmentId}`,
+        });
+      } else {
+        [updatedLot] = await query(`
+          UPDATE investment_lots
+             SET cash_outlay = $2,
+                 acquisition_date = CASE
+                   WHEN units_acquired IS NULL AND units_remaining IS NULL AND basis_source = 'manual'
+                     THEN $3
+                   ELSE acquisition_date
+                 END,
+                 basis_as_of_date = CASE
+                   WHEN units_acquired IS NULL AND units_remaining IS NULL AND basis_source = 'manual'
+                     THEN $3
+                   ELSE COALESCE(basis_as_of_date, $3)
+                 END,
+                 basis_source = COALESCE(basis_source, 'manual'),
+                 updated_at = NOW()
+           WHERE id = $1
+           RETURNING *
+        `, [lots[0].id, cashOutlay, investDate]);
+      }
+    }
+    return { ...updated, investment: updatedInvestment, lot: updatedLot };
   });
 }
 
