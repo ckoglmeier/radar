@@ -23,6 +23,7 @@ const usd = { type: 'string', const: 'USD' };
 const date = { type: 'string', format: 'date' };
 const money = { type: 'number', minimum: 0 };
 const positiveMoney = { type: 'number', exclusiveMinimum: 0 };
+const positiveNumber = { type: 'number', exclusiveMinimum: 0 };
 const nullableText = { anyOf: [{ type: 'string' }, { type: 'null' }] };
 
 function schema(properties, required) {
@@ -78,6 +79,17 @@ async function inspectInvestment(target, input = {}) {
            eep.archived_at AS employment_archived_at,
            (SELECT COUNT(*) FROM investment_lots WHERE investment_id = i.id) AS employment_lot_count,
            (SELECT cash_outlay FROM investment_lots WHERE investment_id = i.id ORDER BY id LIMIT 1) AS employment_cash_outlay,
+           (SELECT COUNT(*) FROM employment_equity_grants WHERE investment_id = i.id) AS employment_grant_count,
+           (SELECT COUNT(*) FROM investment_lots WHERE investment_id = i.id AND units_acquired IS NOT NULL) AS employment_economic_lot_count,
+           (SELECT COUNT(*) FROM employment_equity_events WHERE investment_id = i.id AND voided_at IS NULL) AS employment_event_count,
+           COALESCE(
+             (SELECT units_vested_confirmed FROM employment_equity_grants WHERE investment_id = i.id ORDER BY id LIMIT 1),
+             (SELECT units_remaining FROM investment_lots WHERE investment_id = i.id AND units_acquired IS NOT NULL ORDER BY id LIMIT 1)
+           ) AS employment_reported_units,
+           COALESCE(
+             (SELECT strike_price FROM employment_equity_grants WHERE investment_id = i.id ORDER BY id LIMIT 1),
+             (SELECT acquisition_price_per_unit FROM investment_lots WHERE investment_id = i.id AND units_acquired IS NOT NULL ORDER BY id LIMIT 1)
+           ) AS employment_strike_price,
            (SELECT id FROM valuations WHERE investment_id = i.id ORDER BY snapshot_date DESC, id DESC LIMIT 1) AS latest_valuation_id,
            (SELECT snapshot_date FROM valuations WHERE investment_id = i.id ORDER BY snapshot_date DESC, id DESC LIMIT 1) AS latest_valuation_date,
            (SELECT net_value FROM valuations WHERE investment_id = i.id ORDER BY snapshot_date DESC, id DESC LIMIT 1) AS latest_valuation_value
@@ -460,13 +472,15 @@ export const tierACommandDefinitions = [
   investmentCommand({
     name: 'employment.update_position', title: 'Update Employment position', description: 'Update narrow reporting metadata for an Employment position.',
     risk: 'metadata_change', assetClass: 'employment_equity',
-    editableInputKeys: ['displayName', 'positionStatus', 'investDate', 'ownershipEntity', 'cashOutlay', 'description'],
-    inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, displayName: { type: 'string', minLength: 1 }, positionStatus: { type: 'string', enum: ['active', 'partially_realized', 'realized', 'forfeited', 'archived'] }, investDate: date, ownershipEntity: nullableText, cashOutlay: money, description: nullableText }, ['investmentId']),
+    editableInputKeys: ['displayName', 'positionStatus', 'investDate', 'ownershipEntity', 'reportedUnits', 'strikePrice', 'cashOutlay', 'description'],
+    inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, displayName: { type: 'string', minLength: 1 }, positionStatus: { type: 'string', enum: ['active', 'partially_realized', 'realized', 'forfeited', 'archived'] }, investDate: date, ownershipEntity: nullableText, reportedUnits: positiveNumber, strikePrice: money, cashOutlay: money, description: nullableText }, ['investmentId']),
     preview: ({ target, input, current }) => basicPreview(target, current, [
       { field: 'display_name', value: current.display_name },
       { field: 'position_status', value: current.position_status },
       { field: 'invest_date', value: dateOnly(current.invest_date) },
       { field: 'ownership_entity', value: current.investment_entity },
+      { field: 'reported_units', value: num(current.employment_reported_units) },
+      { field: 'strike_price', value: num(current.employment_strike_price) },
       { field: 'cash_outlay', value: num(current.employment_cash_outlay) },
       { field: 'description', value: current.description },
     ], [
@@ -474,10 +488,16 @@ export const tierACommandDefinitions = [
       { field: 'position_status', value: input.positionStatus ?? current.position_status },
       { field: 'invest_date', value: input.investDate ?? dateOnly(current.invest_date) },
       { field: 'ownership_entity', value: input.ownershipEntity === undefined ? current.investment_entity : input.ownershipEntity },
+      { field: 'reported_units', value: input.reportedUnits ?? num(current.employment_reported_units) },
+      { field: 'strike_price', value: input.strikePrice ?? num(current.employment_strike_price) },
       { field: 'cash_outlay', value: input.cashOutlay ?? num(current.employment_cash_outlay) },
       { field: 'description', value: input.description === undefined ? current.description : input.description },
-    ], Number(current.employment_lot_count) > 1 && input.cashOutlay !== undefined ? ['Cash outlay must be edited per lot for this position.'] : []),
-    preconditions: ({ current }) => ({ display_name: current.display_name, position_status: current.position_status, invest_date: dateOnly(current.invest_date), ownership_entity: current.investment_entity, cash_outlay: num(current.employment_cash_outlay), lot_count: Number(current.employment_lot_count), description: current.description }),
+    ], [
+      ...(Number(current.employment_lot_count) > 1 && input.cashOutlay !== undefined ? ['Cash outlay must be edited per lot for this position.'] : []),
+      ...((input.reportedUnits !== undefined || input.strikePrice !== undefined) && (Number(current.employment_grant_count) + Number(current.employment_economic_lot_count) !== 1 || Number(current.employment_event_count) > 0)
+        ? ['Shares and strike must be edited in supporting records for a complex position.'] : []),
+    ]),
+    preconditions: ({ current }) => ({ display_name: current.display_name, position_status: current.position_status, invest_date: dateOnly(current.invest_date), ownership_entity: current.investment_entity, reported_units: num(current.employment_reported_units), strike_price: num(current.employment_strike_price), grant_count: Number(current.employment_grant_count), economic_lot_count: Number(current.employment_economic_lot_count), event_count: Number(current.employment_event_count), cash_outlay: num(current.employment_cash_outlay), lot_count: Number(current.employment_lot_count), description: current.description }),
     apply: ({ target, input }) => updateEmploymentEquityPosition(target.id, input),
   }),
 ];

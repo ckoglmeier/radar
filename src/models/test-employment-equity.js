@@ -98,6 +98,12 @@ try {
     });
     assert.notEqual(options.investment.id, common.investment.id);
     assert.equal(options.investment.portfolio_entity_id, common.investment.portfolio_entity_id);
+    const updatedCommonTerms = await updateEmploymentEquityPosition(common.investment.id, {
+      reportedUnits: 50,
+      strikePrice: 2,
+    });
+    assert.equal(Number(updatedCommonTerms.lot.units_remaining), 50);
+    assert.equal(Number(updatedCommonTerms.lot.acquisition_price_per_unit), 2);
 
     const exercise = await recordExerciseOrPurchase(options.investment.id, {
       grantId: options.grant.id,
@@ -327,12 +333,17 @@ try {
       displayName: 'Employment-origin PPU grant',
       investDate: '2020-05-15',
       ownershipEntity: 'Koglmeier Family',
+      reportedUnits: 120,
+      strikePrice: 0.25,
       cashOutlay: 250,
       description: 'Reporting facts corrected after creation',
     });
     assert.equal(updatedPpu.display_name, 'Employment-origin PPU grant');
     assert.equal(dateOnly(updatedPpu.investment.invest_date), '2020-05-15');
     assert.equal(updatedPpu.investment.investment_entity, 'Koglmeier Family');
+    assert.equal(Number(updatedPpu.grant.units_granted), 120);
+    assert.equal(Number(updatedPpu.grant.units_vested_confirmed), 120);
+    assert.equal(Number(updatedPpu.grant.strike_price), 0.25);
     assert.equal(Number(updatedPpu.lot.cash_outlay), 250);
     assert.equal((await employmentEquityMetrics(ppu.investment.id)).remaining_cash_outlay, 250);
     await updateEmploymentEquityPosition(ppu.investment.id, { cashOutlay: 300 });

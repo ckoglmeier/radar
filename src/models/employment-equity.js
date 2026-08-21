@@ -914,6 +914,12 @@ export async function updateEmploymentEquityPosition(investmentId, fields = {}) 
     const cashOutlay = fields.cashOutlay === undefined
       ? undefined
       : number(fields.cashOutlay, 'Cash outlay');
+    const reportedUnits = fields.reportedUnits === undefined
+      ? undefined
+      : number(fields.reportedUnits, 'Shares or units', { positive: true });
+    const strikePrice = fields.strikePrice === undefined
+      ? undefined
+      : number(fields.strikePrice, 'Strike or purchase price');
     const [updatedInvestment] = await query(`
       UPDATE investments
          SET invest_date = $2,
@@ -935,7 +941,56 @@ export async function updateEmploymentEquityPosition(investmentId, fields = {}) 
       status,
       fields.description === undefined ? current.description : optionalText(fields.description),
     ]);
+    let updatedGrant = null;
     let updatedLot = null;
+    if (reportedUnits !== undefined || strikePrice !== undefined) {
+      const grants = await query(`
+        SELECT * FROM employment_equity_grants WHERE investment_id = $1 ORDER BY id FOR UPDATE
+      `, [investmentId]);
+      const lots = await query(`
+        SELECT * FROM investment_lots
+         WHERE investment_id = $1 AND units_acquired IS NOT NULL
+         ORDER BY id FOR UPDATE
+      `, [investmentId]);
+      const [activity] = await query(`
+        SELECT COUNT(*) AS count FROM employment_equity_events
+         WHERE investment_id = $1 AND voided_at IS NULL
+      `, [investmentId]);
+      if (Number(activity.count) > 0 || grants.length + lots.length !== 1) {
+        throw new Error('Shares and strike must be edited in supporting records when an Employment position has multiple grants, lots, or recorded activity');
+      }
+      if (grants.length === 1) {
+        [updatedGrant] = await query(`
+          UPDATE employment_equity_grants
+             SET units_granted = CASE
+                   WHEN $2::boolean THEN GREATEST(units_granted, $3)
+                   ELSE units_granted
+                 END,
+                 units_vested_confirmed = CASE
+                   WHEN $2::boolean THEN $3
+                   ELSE units_vested_confirmed
+                 END,
+                 balance_as_of_date = CASE
+                   WHEN $2::boolean THEN COALESCE(balance_as_of_date, CURRENT_DATE)
+                   ELSE balance_as_of_date
+                 END,
+                 strike_price = CASE WHEN $4::boolean THEN $5 ELSE strike_price END,
+                 updated_at = NOW()
+           WHERE id = $1
+           RETURNING *
+        `, [grants[0].id, reportedUnits !== undefined, reportedUnits ?? null, strikePrice !== undefined, strikePrice ?? null]);
+      } else {
+        [updatedLot] = await query(`
+          UPDATE investment_lots
+             SET units_acquired = CASE WHEN $2::boolean THEN $3 ELSE units_acquired END,
+                 units_remaining = CASE WHEN $2::boolean THEN $3 ELSE units_remaining END,
+                 acquisition_price_per_unit = CASE WHEN $4::boolean THEN $5 ELSE acquisition_price_per_unit END,
+                 updated_at = NOW()
+           WHERE id = $1
+           RETURNING *
+        `, [lots[0].id, reportedUnits !== undefined, reportedUnits ?? null, strikePrice !== undefined, strikePrice ?? null]);
+      }
+    }
     if (cashOutlay !== undefined) {
       const lots = await query(`
         SELECT * FROM investment_lots WHERE investment_id = $1 ORDER BY id FOR UPDATE
@@ -973,7 +1028,7 @@ export async function updateEmploymentEquityPosition(investmentId, fields = {}) 
         `, [lots[0].id, cashOutlay, investDate]);
       }
     }
-    return { ...updated, investment: updatedInvestment, lot: updatedLot };
+    return { ...updated, investment: updatedInvestment, grant: updatedGrant, lot: updatedLot };
   });
 }
 

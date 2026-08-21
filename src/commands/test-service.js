@@ -49,6 +49,8 @@ try {
         displayName: 'Edited option grant',
         investDate: '2024-02-01',
         ownershipEntity: 'Individual',
+        reportedUnits: 125,
+        strikePrice: 1.25,
         cashOutlay: 125,
         description: 'Corrected after initial entry',
       },
@@ -68,6 +70,10 @@ try {
     assert.equal(dateOnly(editedEmployment.invest_date), '2024-02-01');
     assert.equal(editedEmployment.investment_entity, 'Individual');
     assert.equal(Number(editedEmployment.invested), 125);
+    const [editedGrant] = await query(`SELECT units_granted, units_vested_confirmed, strike_price FROM employment_equity_grants WHERE investment_id = $1`, [employment.investment.id]);
+    assert.equal(Number(editedGrant.units_granted), 125);
+    assert.equal(Number(editedGrant.units_vested_confirmed), 125);
+    assert.equal(Number(editedGrant.strike_price), 1.25);
     assert.equal(Number((await query(`SELECT cash_outlay FROM investment_lots WHERE investment_id = $1`, [employment.investment.id]))[0].cash_outlay), 125);
 
     const vintageProposal = await planCommandProposal([{
