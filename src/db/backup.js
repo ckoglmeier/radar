@@ -29,6 +29,7 @@ const INSERT_ORDER = [
   'investment_source_identities',
   'investment_consolidations',
   'position_duplicate_reviews',
+  'file_vault_entries',
   // Polymorphic attachment integrity is model-enforced, so documents can be
   // restored before typed records whose explicit source-document FKs need it.
   'documents',

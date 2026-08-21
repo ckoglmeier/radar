@@ -20,9 +20,10 @@ export const ENTITY_TABLES = {
   deal_evaluation: 'deal_evaluations',
   portfolio_entity: 'portfolio_entities',
   room_holding: 'room_holdings',
+  file_vault_entry: 'file_vault_entries',
 };
 
-const CONFIDENTIALITY_VALUES = new Set(['standard', 'confidential_company', 'tax_sensitive']);
+const CONFIDENTIALITY_VALUES = new Set(['standard', 'confidential_company', 'tax_sensitive', 'personal_sensitive']);
 const PROCESSING_POLICY_VALUES = new Set(['local_only', 'model_allowed']);
 const SYNC_POLICY_VALUES = new Set(['local_only', 'encrypted_backup_allowed']);
 const BYTE_ACCESS_PURPOSES = new Set([
