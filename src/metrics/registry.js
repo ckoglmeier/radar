@@ -2,7 +2,7 @@ import { query } from '../db/index.js';
 import { calculateIRR } from '../utils/irr.js';
 import { gpSummary } from '../reports/gp.js';
 import { performanceWindows, computeWindowMetrics, cashFlowsInRange } from '../reports/performance.js';
-import { portfolioSummary } from '../reports/portfolio.js';
+import { directReturnRegister } from '../reports/portfolio.js';
 import { stageBreakdown, thesisPerformance } from '../reports/thesis.js';
 import {
   METRIC_FORMULAS,
@@ -422,25 +422,6 @@ async function existingReportValues(metricQuery) {
   const dimensions = metricQuery.groupBy;
   const metric = metricQuery.metric;
 
-  if (dimensions.length === 0 && RETURN_METRICS.has(metric)) {
-    const { summary } = await portfolioSummary();
-    const invested = numeric(summary.total_invested);
-    const value = metric === 'tvpi'
-      ? numeric(summary.tvpi, null)
-      : metric === 'dpi'
-        ? (invested > 0 ? numeric(summary.total_realized) / invested : null)
-        : (summary.irr == null ? null : Number(summary.irr));
-    return new Map([['', {
-      value,
-      details: {
-        positions: Number(summary.total_investments || 0),
-        invested,
-        current_value: metric === 'tvpi' && value != null ? value * invested : numeric(summary.total_net_value),
-        realized: numeric(summary.total_realized),
-      },
-    }]]);
-  }
-
   if (dimensions.length === 1 && dimensions[0] === 'vintage' && RETURN_METRICS.has(metric)) {
     const { byVintageYear } = await performanceWindows();
     return new Map(byVintageYear.map(row => [
@@ -515,7 +496,12 @@ async function applyExistingReportAdapter(metricQuery, rows) {
     const key = groupKey(metricQuery.groupBy, row.group);
     if (!adapted.has(key)) return row;
     const existing = adapted.get(key);
-    return { ...row, value: existing.value, details: existing.details };
+    return {
+      ...row,
+      value: existing.value,
+      coverage: existing.coverage ?? row.coverage,
+      details: existing.details,
+    };
   });
 }
 
@@ -539,7 +525,23 @@ export async function metricQuery(input) {
     rows = groups.map(group => periodReturnRow(group, resolved));
   } else if (RETURN_METRICS.has(resolved.metric)) {
     rows = groups.map(group => sinceInceptionRow(group, resolved, asOf));
-    rows = await applyExistingReportAdapter(resolved, rows);
+    if (adapterEligible(resolved) && resolved.groupBy.length === 0) {
+      const register = await directReturnRegister({ asOf });
+      rows[0] = {
+        ...rows[0],
+        value: register[resolved.metric],
+        coverage: register.coverage[resolved.metric],
+        details: {
+          positions: register.coverage[resolved.metric].position_count,
+          invested_basis: register.invested_basis,
+          realized_value: register.realized_value,
+          current_total_value: register.current_total_value,
+          unrealized_terminal_value: register.unrealized_terminal_value,
+        },
+      };
+    } else {
+      rows = await applyExistingReportAdapter(resolved, rows);
+    }
   } else {
     rows = groups.map(group => flowRow(group, resolved));
     if (resolved.groupBy.length === 0 && Object.keys(resolved.filters).length === 0 && resolved.excludeIds.length === 0) {

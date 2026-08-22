@@ -5,6 +5,220 @@ import { query } from '../db/index.js';
 import { calculateIRR } from '../utils/irr.js';
 import { stageToBarbellGroup } from '../utils/stage.js';
 
+const MONEY_TOLERANCE = 0.01;
+
+function numberOrNull(value) {
+  return value == null ? null : Number(value);
+}
+
+function reportDate(value) {
+  const date = value ? String(value).slice(0, 10) : new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new TypeError('asOf must be an ISO date');
+  return date;
+}
+
+function returnCoverage(base, overrides = {}) {
+  return {
+    position_count: base.positionCount,
+    invested_basis_positions: base.investedBasisPositions,
+    realized_value_positions: base.realizedValuePositions,
+    current_mark_positions: base.currentMarkPositions,
+    opening_flow_sources: base.openingFlowSources,
+    dated_positive_return_positions: base.datedPositiveReturnPositions,
+    linked_flow_count: base.linkedFlowCount,
+    linked_invested_amount: base.linkedInvestedAmount,
+    linked_returned_amount: base.linkedReturnedAmount,
+    unresolved_positions: base.unresolvedPositions,
+    ...overrides,
+  };
+}
+
+/**
+ * Canonical since-inception return register for Direct positions.
+ *
+ * Position facts own DPI/TVPI. The linked ledger supplies dated IRR and cash
+ * activity only; it never silently replaces the position-basis denominator.
+ */
+export async function directReturnRegister(options = {}) {
+  const asOf = reportDate(options.asOf);
+  const [positionRows, flowRows] = await Promise.all([
+    query(`
+      SELECT
+        i.id, i.company_name, i.invest_date, i.invested,
+        i.computed_net_invested, i.computed_realized, i.computed_total_value,
+        i.realized_value, i.unrealized_value, i.net_value, i.multiple,
+        latest.realized_value AS latest_realized_value,
+        latest.unrealized_value AS latest_unrealized_value,
+        latest.net_value AS latest_net_value
+      FROM investments i
+      LEFT JOIN LATERAL (
+        SELECT v.realized_value, v.unrealized_value, v.net_value
+        FROM valuations v
+        WHERE v.investment_id = i.id AND v.snapshot_date <= $1
+        ORDER BY v.snapshot_date DESC, v.id DESC
+        LIMIT 1
+      ) latest ON TRUE
+      WHERE i.asset_class = 'direct'
+        AND (i.invest_date IS NULL OR i.invest_date <= $1)
+      ORDER BY i.id
+    `, [asOf]),
+    query(`
+      SELECT cf.id, cf.investment_id, cf.flow_date, cf.type, cf.amount
+      FROM cash_flows cf
+      JOIN investments i ON i.id = cf.investment_id
+      WHERE i.asset_class = 'direct'
+        AND cf.flow_date <= $1
+        AND cf.type IN ('investment', 'distribution', 'refund', 'adjustment')
+      ORDER BY cf.flow_date, cf.id
+    `, [asOf]),
+  ]);
+
+  const flowsByPosition = new Map();
+  for (const row of flowRows) {
+    const investmentId = Number(row.investment_id);
+    if (!flowsByPosition.has(investmentId)) flowsByPosition.set(investmentId, []);
+    flowsByPosition.get(investmentId).push({
+      id: Number(row.id),
+      date: String(row.flow_date).slice(0, 10),
+      type: row.type,
+      amount: Number(row.amount),
+    });
+  }
+
+  let investedBasis = 0;
+  let realizedValue = 0;
+  let currentTotalValue = 0;
+  let unrealizedTerminalValue = 0;
+  let investedBasisPositions = 0;
+  let realizedValuePositions = 0;
+  let currentMarkPositions = 0;
+  let datedPositiveReturnPositions = 0;
+  let linkedInvestedAmount = 0;
+  let linkedReturnedAmount = 0;
+  const openingFlowSources = { linked_ledger: 0, position_basis_fallback: 0 };
+  const unresolvedPositions = [];
+  const irrFlows = [];
+
+  for (const row of positionRows) {
+    const positionBasis = numberOrNull(row.computed_net_invested) ?? Number(row.invested || 0);
+    const positionRealized = numberOrNull(row.computed_realized)
+      ?? numberOrNull(row.latest_realized_value)
+      ?? numberOrNull(row.realized_value)
+      ?? 0;
+    const hasCurrentMark = [
+      row.computed_total_value,
+      row.latest_net_value,
+      row.latest_unrealized_value,
+      row.net_value,
+      row.unrealized_value,
+      row.multiple,
+    ].some(value => value != null);
+    const hasReportedValue = hasCurrentMark || row.realized_value != null;
+    const positionTotal = numberOrNull(row.computed_total_value)
+      ?? numberOrNull(row.latest_net_value)
+      ?? numberOrNull(row.net_value)
+      ?? (row.unrealized_value != null || row.realized_value != null
+        ? Number(row.unrealized_value || 0) + Number(row.realized_value || 0)
+        : positionBasis);
+    const positionTerminal = Math.max(0,
+      row.computed_total_value != null
+        ? positionTotal - positionRealized
+        : numberOrNull(row.latest_unrealized_value)
+          ?? numberOrNull(row.unrealized_value)
+          ?? (hasReportedValue ? positionTotal - positionRealized : positionBasis),
+    );
+
+    investedBasis += positionBasis;
+    realizedValue += positionRealized;
+    currentTotalValue += positionTotal;
+    unrealizedTerminalValue += positionTerminal;
+    if (Number.isFinite(positionBasis) && positionBasis > 0) investedBasisPositions += 1;
+    if (Number.isFinite(positionRealized)) realizedValuePositions += 1;
+    if (hasCurrentMark) currentMarkPositions += 1;
+
+    const positionFlows = flowsByPosition.get(Number(row.id)) || [];
+    const openingFlows = positionFlows.filter(flow => flow.type === 'investment' || flow.type === 'refund');
+    const investmentFlows = openingFlows.filter(flow => flow.type === 'investment');
+    const distributionFlows = positionFlows.filter(flow => flow.type === 'distribution');
+    const adjustmentFlows = positionFlows.filter(flow => flow.type === 'adjustment');
+    const linkedBasis = -openingFlows.reduce((sum, flow) => sum + flow.amount, 0);
+    const datedDistributions = distributionFlows.reduce((sum, flow) => sum + flow.amount, 0);
+    const reasons = [];
+
+    linkedInvestedAmount += investmentFlows.reduce((sum, flow) => sum + Math.abs(flow.amount), 0);
+    linkedReturnedAmount += positionFlows.reduce(
+      (sum, flow) => flow.amount > 0 ? sum + flow.amount : sum,
+      0,
+    );
+    if (distributionFlows.some(flow => flow.amount > 0)) datedPositiveReturnPositions += 1;
+
+    if (investmentFlows.length > 0 && Math.abs(linkedBasis - positionBasis) <= MONEY_TOLERANCE) {
+      openingFlowSources.linked_ledger += 1;
+      irrFlows.push(...openingFlows.map(flow => ({ date: flow.date, amount: flow.amount })));
+    } else if (row.invest_date && positionBasis > 0) {
+      openingFlowSources.position_basis_fallback += 1;
+      irrFlows.push({ date: String(row.invest_date).slice(0, 10), amount: -positionBasis });
+    } else {
+      if (!row.invest_date) reasons.push('missing_investment_date');
+      if (!(positionBasis > 0)) reasons.push('missing_invested_basis');
+    }
+
+    irrFlows.push(...distributionFlows.map(flow => ({ date: flow.date, amount: flow.amount })));
+    irrFlows.push(...adjustmentFlows.map(flow => ({ date: flow.date, amount: flow.amount })));
+    if (positionRealized - datedDistributions > MONEY_TOLERANCE) {
+      reasons.push('realized_value_exceeds_dated_distributions');
+    }
+    if (positionTerminal > 0) irrFlows.push({ date: asOf, amount: positionTerminal });
+    if (reasons.length > 0) {
+      unresolvedPositions.push({
+        id: Number(row.id),
+        company_name: row.company_name,
+        reasons,
+      });
+    }
+  }
+
+  const dpi = investedBasis > 0 ? realizedValue / investedBasis : null;
+  const tvpi = investedBasis > 0 ? currentTotalValue / investedBasis : null;
+  const computedIrr = unresolvedPositions.length === 0 ? calculateIRR(irrFlows) : null;
+  const irrState = unresolvedPositions.length === 0 && computedIrr != null ? 'available' : 'unavailable';
+  const baseCoverage = {
+    positionCount: positionRows.length,
+    investedBasisPositions,
+    realizedValuePositions,
+    currentMarkPositions,
+    openingFlowSources,
+    datedPositiveReturnPositions,
+    linkedFlowCount: flowRows.length,
+    linkedInvestedAmount,
+    linkedReturnedAmount,
+    unresolvedPositions,
+  };
+
+  return {
+    as_of: asOf,
+    scope: 'direct',
+    invested_basis: investedBasis,
+    realized_value: realizedValue,
+    current_total_value: currentTotalValue,
+    unrealized_terminal_value: unrealizedTerminalValue,
+    dpi,
+    tvpi,
+    irr: irrState === 'available' ? computedIrr : null,
+    coverage: {
+      dpi: returnCoverage(baseCoverage),
+      tvpi: returnCoverage(baseCoverage),
+      irr: returnCoverage(baseCoverage, {
+        state: irrState,
+        calculation_error: unresolvedPositions.length === 0 && computedIrr == null
+          ? 'irr_not_computable'
+          : null,
+      }),
+      cash_activity: returnCoverage(baseCoverage),
+    },
+  };
+}
+
 export async function portfolioSummary(opts = {}) {
   const { since, until } = opts;
 

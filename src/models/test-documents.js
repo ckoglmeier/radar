@@ -428,6 +428,13 @@ async function run() {
     ok(afterCommit, 'row still fetchable after commit');
     eq(afterCommit.status, 'committed');
     eq(afterCommit.created_refs.id, 42);
+    eq(afterCommit.sha256, sha256, 'committed receipt retains the source hash');
+    eq(Number(afterCommit.size_bytes), content.length, 'committed receipt retains the byte count');
+    eq(afterCommit.preview.type, 'company_update', 'committed receipt retains the preview');
+    const committedContent = Buffer.isBuffer(afterCommit.content)
+      ? afterCommit.content
+      : Buffer.from(afterCommit.content);
+    eq(committedContent.length, 0, 'committed receipt clears staging bytes');
   });
 
   await test('getPendingIntake returns null for an expired row', async () => {
@@ -449,7 +456,7 @@ async function run() {
     eq(fetched, null, 'expired row is not returned');
   });
 
-  await test('sweepExpiredPending deletes only expired pending rows', async () => {
+  await test('sweepExpiredPending deletes expired pending and committed receipts', async () => {
     const content = Buffer.from('sweep fixture');
     const sha256 = createHash('sha256').update(content).digest('hex');
 
@@ -463,6 +470,17 @@ async function run() {
     });
     await query(`UPDATE pending_intake SET expires_at = NOW() - interval '1 hour' WHERE id = $1`, [toExpire.id]);
 
+    const committedToExpire = await createPendingIntake({
+      filename: 'sweep-committed.txt',
+      mime: 'text/plain',
+      sha256,
+      content,
+      preview: { type: 'unknown' },
+      ttlHours: 24,
+    });
+    await markPendingCommitted(committedToExpire.id, { document_id: 42 });
+    await query(`UPDATE pending_intake SET expires_at = NOW() - interval '1 hour' WHERE id = $1`, [committedToExpire.id]);
+
     const stillValid = await createPendingIntake({
       filename: 'keep-me.txt',
       mime: 'text/plain',
@@ -473,10 +491,13 @@ async function run() {
     });
 
     const deletedCount = await sweepExpiredPending();
-    ok(deletedCount >= 1, 'sweep reports at least the one expired row deleted');
+    ok(deletedCount >= 2, 'sweep reports both expired lifecycle states deleted');
 
     const goneRows = await query(`SELECT id FROM pending_intake WHERE id = $1`, [toExpire.id]);
     eq(goneRows.length, 0, 'expired row physically deleted');
+
+    const committedGoneRows = await query(`SELECT id FROM pending_intake WHERE id = $1`, [committedToExpire.id]);
+    eq(committedGoneRows.length, 0, 'expired committed receipt physically deleted');
 
     const keptRows = await query(`SELECT id FROM pending_intake WHERE id = $1`, [stillValid.id]);
     eq(keptRows.length, 1, 'unexpired row untouched by the sweep');

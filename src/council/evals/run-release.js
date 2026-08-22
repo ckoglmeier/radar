@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { councilEvaluate } from '../evaluate.js';
 import { AgentSdkProvider } from '../../providers/agent-sdk-provider.js';
@@ -7,6 +7,7 @@ import {
   evidenceConfidenceSemanticFixtures,
   substantialRoomFixture,
 } from './fixtures.js';
+import { atomicWriteJson, runCheckpointedCase } from './checkpoint-runner.js';
 
 const RUNS_PER_MODE = 3;
 const MODES = Object.freeze({
@@ -120,34 +121,68 @@ const fixture = substantialRoomFixture();
 const authMode = resolveAuthMode(process.env);
 const outputDir = resolve(process.argv[2] || 'src/council/evals/results');
 mkdirSync(outputDir, { recursive: true });
-const provider = new AgentSdkProvider({ authMode, cwd: outputDir });
 const reportPath = resolve(outputDir, 'v0.3.0-release-eval.json');
+const selectorArguments = process.argv.slice(3);
+const selectedIds = new Set();
+for (let index = 0; index < selectorArguments.length; index += 1) {
+  if (selectorArguments[index] !== '--selector' || !selectorArguments[index + 1]) {
+    throw new Error('Usage: run-release.js [output-dir] [--selector <case-id>]');
+  }
+  selectedIds.add(selectorArguments[index + 1]);
+  index += 1;
+}
 const resetModes = new Set(
   String(process.env.RADAR_COUNCIL_EVAL_RESET_MODES || '')
     .split(',')
     .map(value => value.trim())
     .filter(Boolean),
 );
-const checkpointResults = existsSync(reportPath)
-  ? JSON.parse(readFileSync(reportPath, 'utf8')).results || []
-  : [];
-const checkpointSemanticResults = existsSync(reportPath)
-  ? JSON.parse(readFileSync(reportPath, 'utf8')).semantic_results || []
-  : [];
+const checkpoint = existsSync(reportPath) ? JSON.parse(readFileSync(reportPath, 'utf8')) : {};
+const checkpointResults = checkpoint.results || [];
+const checkpointSemanticResults = checkpoint.semantic_results || [];
 const results = checkpointResults.filter(result => !resetModes.has(result.mode));
 const semanticResults = checkpointSemanticResults;
+const attempts = checkpoint.attempts || [];
+const semanticFixtures = evidenceConfidenceSemanticFixtures();
+const knownIds = new Set([
+  ...Object.keys(MODES).flatMap(mode =>
+    Array.from({ length: RUNS_PER_MODE }, (_, index) => `${mode}-${index + 1}`),
+  ),
+  ...semanticFixtures.map(entry => `semantic-${entry.id}`),
+]);
+for (const id of selectedIds) {
+  if (!knownIds.has(id)) throw new Error(`Unknown release evaluation selector: ${id}`);
+}
+
+function incompleteSelectors() {
+  const incomplete = [];
+  for (const mode of Object.keys(MODES)) {
+    for (let run = 1; run <= RUNS_PER_MODE; run += 1) {
+      const id = `${mode}-${run}`;
+      if (!results.some(result => result.id === id)) incomplete.push(id);
+    }
+  }
+  for (const semanticFixture of semanticFixtures) {
+    if (!semanticResults.some(result => result.fixtureId === semanticFixture.id)) {
+      incomplete.push(`semantic-${semanticFixture.id}`);
+    }
+  }
+  return incomplete;
+}
 
 function writeReport({ failures = [], passed = null } = {}) {
-  writeFileSync(reportPath, `${JSON.stringify({
+  atomicWriteJson(reportPath, {
     contract: 'v0.3.0-evaluation-integrity',
     generated_at: new Date().toISOString(),
     fictional_fixture: 'Nimbus Forge',
     model_policy: results[0]?.modelPolicy || null,
     results,
     semantic_results: semanticResults,
+    attempts,
+    incomplete_selectors: incompleteSelectors(),
     failures,
     passed,
-  }, null, 2)}\n`, 'utf8');
+  });
 }
 
 for (const [mode, directContextBudgetTokens] of Object.entries(MODES)) {
@@ -156,18 +191,28 @@ for (const [mode, directContextBudgetTokens] of Object.entries(MODES)) {
       console.log(`[${mode}-${run}] resumed from checkpoint`);
       continue;
     }
-    const output = await councilEvaluate(fixture.deal, {
-      provider,
-      env: process.env,
-      dealLogDir: outputDir,
-      policyId: 'balanced',
-      executionId: `v0.3.0-${mode}-${run}`,
-      directContextBudgetTokens,
-      sourceManifest: fixture.manifest,
-      evidenceContractVersion: 2,
-      reuse: false,
-      stageTimeoutMs: Number(process.env.RADAR_COUNCIL_RELEASE_STAGE_TIMEOUT_MS || 20 * 60 * 1_000),
-      onStage: stage => console.log(`[${mode}-${run}] ${stage}`),
+    const id = `${mode}-${run}`;
+    if (selectedIds.size > 0 && !selectedIds.has(id)) {
+      console.log(`[${id}] not selected`);
+      continue;
+    }
+    const output = await runCheckpointedCase({
+      selector: { suite: 'release', case_id: id },
+      attempts,
+      onCheckpoint: () => writeReport(),
+      operation: attempt => councilEvaluate(fixture.deal, {
+        provider: new AgentSdkProvider({ authMode, cwd: outputDir }),
+        env: process.env,
+        dealLogDir: outputDir,
+        policyId: 'balanced',
+        executionId: `v0.3.0-${id}-attempt-${attempt}`,
+        directContextBudgetTokens,
+        sourceManifest: fixture.manifest,
+        evidenceContractVersion: 2,
+        reuse: false,
+        stageTimeoutMs: Number(process.env.RADAR_COUNCIL_RELEASE_STAGE_TIMEOUT_MS || 20 * 60 * 1_000),
+        onStage: stage => console.log(`[${id} attempt ${attempt}] ${stage}`),
+      }),
     });
     const researchSnapshot = output.provenance?.researchSnapshot || {};
     const researchText = joinedEvidence(output);
@@ -181,7 +226,7 @@ for (const [mode, directContextBudgetTokens] of Object.entries(MODES)) {
       ...(researchSnapshot.contradictions_to_resolve || []),
     ];
     results.push({
-      id: `${mode}-${run}`,
+      id,
       mode,
       run,
       score: score(output),
@@ -216,23 +261,32 @@ for (const [mode, directContextBudgetTokens] of Object.entries(MODES)) {
   }
 }
 
-const semanticFixtures = evidenceConfidenceSemanticFixtures();
 for (const semanticFixture of semanticFixtures) {
   if (semanticResults.some(result => result.fixtureId === semanticFixture.id)) {
     console.log(`[semantic-${semanticFixture.id}] resumed from checkpoint`);
     continue;
   }
-  const output = await councilEvaluate(semanticFixture.deal, {
-    provider,
-    env: process.env,
-    dealLogDir: outputDir,
-    policyId: 'balanced',
-    executionId: `v0.4.0-semantic-${semanticFixture.id}`,
-    researchSnapshot: semanticFixture.researchSnapshot,
-    evidenceContractVersion: 2,
-    reuse: false,
-    stageTimeoutMs: Number(process.env.RADAR_COUNCIL_RELEASE_STAGE_TIMEOUT_MS || 20 * 60 * 1_000),
-    onStage: stage => console.log(`[semantic-${semanticFixture.id}] ${stage}`),
+  const id = `semantic-${semanticFixture.id}`;
+  if (selectedIds.size > 0 && !selectedIds.has(id)) {
+    console.log(`[${id}] not selected`);
+    continue;
+  }
+  const output = await runCheckpointedCase({
+    selector: { suite: 'semantic', fixture_id: semanticFixture.id },
+    attempts,
+    onCheckpoint: () => writeReport(),
+    operation: attempt => councilEvaluate(semanticFixture.deal, {
+      provider: new AgentSdkProvider({ authMode, cwd: outputDir }),
+      env: process.env,
+      dealLogDir: outputDir,
+      policyId: 'balanced',
+      executionId: `v0.4.0-${id}-attempt-${attempt}`,
+      researchSnapshot: semanticFixture.researchSnapshot,
+      evidenceContractVersion: 2,
+      reuse: false,
+      stageTimeoutMs: Number(process.env.RADAR_COUNCIL_RELEASE_STAGE_TIMEOUT_MS || 20 * 60 * 1_000),
+      onStage: stage => console.log(`[${id} attempt ${attempt}] ${stage}`),
+    }),
   });
   const calibrator = output.result.structuredOutput.calibrator;
   const serializedOutput = JSON.stringify(calibrator).toLowerCase();
@@ -251,6 +305,12 @@ for (const semanticFixture of semanticFixtures) {
     modelPolicy: output.modelPolicy,
   });
   writeReport();
+}
+
+if (incompleteSelectors().length > 0) {
+  writeReport({ passed: null });
+  console.log(`INCOMPLETE ${reportPath}: ${incompleteSelectors().join(', ')}`);
+  process.exit(0);
 }
 
 const failures = [

@@ -231,10 +231,10 @@ export async function getPendingIntake(id) {
 export async function markPendingCommitted(id, created_refs) {
   const rows = await query(`
     UPDATE pending_intake
-    SET status = 'committed', created_refs = $2::jsonb
+    SET status = 'committed', created_refs = $2::jsonb, content = $3
     WHERE id = $1
     RETURNING *
-  `, [id, JSON.stringify(created_refs)]);
+  `, [id, JSON.stringify(created_refs), Buffer.alloc(0)]);
   return rows[0] || null;
 }
 
@@ -253,11 +253,12 @@ export async function updatePendingRefs(id, created_refs) {
   return rows[0] || null;
 }
 
-// Deletes pending (not committed) rows past expiry. Returns count deleted.
+// Deletes expired preview receipts in either lifecycle state. Committed rows
+// retain no staging bytes, but their replay metadata expires with the receipt.
 export async function sweepExpiredPending() {
   const rows = await query(`
     DELETE FROM pending_intake
-    WHERE status = 'pending' AND expires_at <= NOW()
+    WHERE expires_at <= NOW()
     RETURNING id
   `);
   return rows.length;

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
-import { query } from '../db/index.js';
+import { closeDb, query } from '../db/index.js';
 import { accessDocumentBytes } from './documents.js';
 import { createVaultFile, listVaultFiles } from './file-vault.js';
 
@@ -90,4 +90,5 @@ try {
     await query(`DELETE FROM file_vault_entries WHERE id = ANY($1::uuid[])`, [rows.map(row => row.id)]);
   }
   await query(`DELETE FROM investments WHERE company_name = 'Vault Test Investment' AND source = 'test'`);
+  await closeDb();
 }

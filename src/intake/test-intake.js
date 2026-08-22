@@ -348,6 +348,29 @@ async function run() {
     eq(afterFirst.deal_evaluations, before.deal_evaluations + 1);
     eq(afterFirst.documents, before.documents + 1);
 
+    const [committedReceipt] = await query(
+      `SELECT sha256, size_bytes, preview, created_refs, content
+       FROM pending_intake WHERE id = $1`,
+      [preview.preview_id],
+    );
+    eq(
+      committedReceipt.sha256,
+      createHash('sha256').update(content).digest('hex'),
+      'receipt retains source hash',
+    );
+    eq(Number(committedReceipt.size_bytes), content.length, 'receipt retains original byte count');
+    eq(committedReceipt.preview.type, preview.type, 'receipt retains preview metadata');
+    eq(committedReceipt.created_refs.document_id, first.document_id, 'receipt retains replay refs');
+    const cleared = Buffer.isBuffer(committedReceipt.content)
+      ? committedReceipt.content
+      : Buffer.from(committedReceipt.content);
+    eq(cleared.length, 0, 'receipt clears committed staging bytes');
+    const [storedDocument] = await query(`SELECT content FROM documents WHERE id = $1`, [first.document_id]);
+    const durableContent = Buffer.isBuffer(storedDocument.content)
+      ? storedDocument.content
+      : Buffer.from(storedDocument.content);
+    eq(durableContent.toString(), content.toString(), 'durable document retains original bytes');
+
     const second = await intakeCommit({ preview_id: preview.preview_id, overrides: {} });
     eq(second.idempotent_replay, true);
     eq(second.created.id, first.created.id, 'same domain row id on replay');

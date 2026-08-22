@@ -209,13 +209,14 @@ try {
     );
     assert.equal(deployed.rows[0].value, 350, 'fund cash flow is excluded');
 
-    assert.deepEqual(scalarTvpi.rows[0].coverage, {
-      state: 'descriptive',
-      positions: 3,
-      marked: 2,
-      value_share_marked: 130 / 330,
-      unmarked_positions: [{ id: orbital, company_name: 'Orbital Forge' }],
+    assert.equal(scalarTvpi.rows[0].coverage.position_count, 3);
+    assert.equal(scalarTvpi.rows[0].coverage.invested_basis_positions, 3);
+    assert.equal(scalarTvpi.rows[0].coverage.current_mark_positions, 2);
+    assert.deepEqual(scalarTvpi.rows[0].coverage.opening_flow_sources, {
+      linked_ledger: 3,
+      position_basis_fallback: 0,
     });
+    assert.deepEqual(scalarTvpi.rows[0].coverage.unresolved_positions, []);
   });
 
   console.log('metric registry: adapter and coverage tests passed');
