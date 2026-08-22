@@ -2,10 +2,13 @@ import { renameSync, writeFileSync } from 'node:fs';
 
 const TRANSIENT_PATTERNS = [
   /connection closed/i,
+  /connectionrefused/i,
   /connection reset/i,
+  /econnrefused/i,
   /econnreset/i,
   /etimedout/i,
   /socket hang up/i,
+  /unable to connect/i,
   /ended without a result/i,
 ];
 

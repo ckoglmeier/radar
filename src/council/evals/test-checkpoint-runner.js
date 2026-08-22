@@ -13,6 +13,12 @@ assert.deepEqual(classifyEvalFailure({ code: 'COUNCIL_STAGE_TIMEOUT' }), {
   outcome: 'timed_out', retryable: true, errorKind: 'stage_timeout',
 });
 assert.equal(classifyEvalFailure({ detail: 'Connection closed mid-response' }).retryable, true);
+assert.deepEqual(classifyEvalFailure({
+  kind: 'other',
+  detail: 'Agent SDK session failed: API Error: Unable to connect to API (ConnectionRefused)',
+}), {
+  outcome: 'transport_failed', retryable: true, errorKind: 'other',
+});
 assert.equal(classifyEvalFailure(new Error('schema mismatch')).retryable, false);
 
 const attempts = [];
