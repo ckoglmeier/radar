@@ -56,12 +56,25 @@ function dimensionScores(likert) {
   return DIMENSIONS.map(name => ({ name, likert, rationale: `${name} rationale` }));
 }
 
+function calibratorDimensionScores(likert) {
+  return DIMENSIONS.map(name => ({
+    name,
+    quality_likert: likert,
+    rationale: `${name} rationale`,
+    missing_evidence_treatment: 'confidence_only',
+    stage_cap_id: null,
+  }));
+}
+
 function evidenceAssessments() {
   return DIMENSIONS.map((name, index) => ({
     name,
     sufficiency: index === 0 ? 'thin' : 'strong',
     rationale: `${name} evidence rationale`,
     missing_evidence: index === 0 ? ['Founder confirmation'] : [],
+    confidence: index === 0 ? 'low' : 'high',
+    score_effect: 'confidence_only',
+    stage_cap_id: null,
   }));
 }
 
@@ -108,7 +121,7 @@ function researchAdaptation() {
   };
 }
 
-function fakeProvider({ delay = 0, malformedOnceStage = null } = {}) {
+function fakeProvider({ delay = 0, malformedOnceStage = null, inconsistentOnceStage = null } = {}) {
   const calls = [];
   const malformedStages = new Set();
   return {
@@ -140,7 +153,7 @@ function fakeProvider({ delay = 0, malformedOnceStage = null } = {}) {
         bull: { dimension_scores: dimensionScores(4), key_argument: 'Bull case' },
         bear: { dimension_scores: dimensionScores(2), key_argument: 'Bear case' },
         calibrator: {
-          dimension_scores: dimensionScores(3),
+          dimension_scores: calibratorDimensionScores(3),
           evidence_assessments: evidenceAssessments(),
           key_argument: 'Calibrated case',
           kill_criteria: 'No kill criteria triggered',
@@ -171,6 +184,14 @@ function fakeProvider({ delay = 0, malformedOnceStage = null } = {}) {
           dimension_scores: structuredOutput.dimension_scores.filter(
             choice => choice.name !== 'Structural tailwind',
           ),
+        };
+      }
+      if (stage === inconsistentOnceStage && !malformedStages.has(`inconsistent-${stage}`)) {
+        malformedStages.add(`inconsistent-${stage}`);
+        structuredOutput = {
+          ...structuredOutput,
+          evidence_assessments: structuredOutput.evidence_assessments.map((item, index) =>
+            index === 0 ? { ...item, score_effect: 'stage_cap' } : item),
         };
       }
       return {
@@ -333,7 +354,9 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     eq(out.usage.outputTokens, 100, 'aggregates output usage');
     eq(out.usage.totalCostUsd, 0.05, 'aggregates direct API cost');
     eq(out.stageMetrics.length, 6, 'returns per-stage usage');
-    eq(out.provenance.policyVersion, 8);
+    eq(out.provenance.policyVersion, 9);
+    eq(out.provenance.evidenceContractVersion, 2);
+    eq(out.provenance.evidenceCapReceipt.applied.length, 0);
     ok(out.provenance.instructionHash && out.provenance.lensHash, 'provenance fingerprints');
     eq(out.provenance.researchPlanSeedVersion, 'baseline-v1');
     ok(out.provenance.researchPlanSeedHash, 'fingerprints the deterministic seed plan');
@@ -349,7 +372,8 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     eq(stages.join(','), 'research,bull_bear,calibrator,cfo,finalizing', 'reported durable UI stages');
     const artifact = readFileSync(join(dealLogDir, out.writtenFiles[0]), 'utf8');
     ok(artifact.includes('## Research Plan'), 'artifact records the research plan');
-    ok(artifact.includes('## Evidence Sufficiency'), 'artifact separates evidence confidence');
+    ok(artifact.includes('## Evidence Confidence'), 'artifact separates evidence confidence');
+    ok(artifact.includes('Missing public corroboration does not reduce the score.'));
     ok(artifact.includes('retention-proof'), 'artifact records actionable founder questions');
     ok(artifact.includes('## Council Evaluation'), 'Radar wrote Council table');
     ok(artifact.includes('| Calibrator | 30/50 |'), 'Radar computed the canonical total');
@@ -379,6 +403,19 @@ test('councilEvaluate: repairs one incomplete rubric response and counts both at
     eq(out.usage.inputTokens, 600, 'usage includes the rejected attempt');
     eq(out.stageMetrics.length, 7, 'stage metrics retain the rejected attempt');
     eq(out.stageMetrics[0].stage, 'bull_invalid');
+  }));
+
+test('councilEvaluate: repairs inconsistent confidence and cap output', async () =>
+  withTempDir(async dealLogDir => {
+    const fake = fakeProvider({ inconsistentOnceStage: 'calibrator' });
+    const out = await councilEvaluate(
+      { company: 'Evidence Repair Co', round: 'Seed' },
+      { provider: fake, env: {}, dealLogDir },
+    );
+    const calls = fake.calls.filter(req => req.prompt.startsWith('STAGE: calibrator'));
+    eq(calls.length, 2, 'retries inconsistent evidence output once');
+    ok(calls[1].prompt.includes('REPAIR REQUIRED'));
+    eq(out.stageMetrics.find(stage => stage.stage === 'calibrator_invalid').numTurns, 1);
   }));
 
 test('councilEvaluate: identical run fingerprint reuses the stored evaluation', async () => {

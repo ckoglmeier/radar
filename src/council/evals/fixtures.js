@@ -127,3 +127,53 @@ export const EXTRACTION_STATE_FIXTURE = Object.freeze([
   },
 ]);
 
+const semanticResearch = ({ corroborated = false, contradicted = false, unitEconomics = true } = {}) => ({
+  evidence: [
+    `[baseline-team] ${corroborated ? 'verified' : 'supplied'} | Founder led industrial workflow deployments for eight years | current | ${corroborated ? 'fictional trade profile' : 'private founder biography'} | synthetic://team`,
+    '[baseline-traction-economics] supplied | 24 customers and $1.8M ARR with 118% net revenue retention | current | private operating report | synthetic://metrics',
+    `[baseline-product-moat] ${corroborated ? 'verified' : 'supplied'} | Customer-labeled exception data improves routing accuracy and raises workflow switching costs | current | ${corroborated ? 'fictional technical review' : 'private product appendix'} | synthetic://product`,
+    `[baseline-traction-economics] ${unitEconomics ? 'supplied | 72% gross margin and positive contribution margin were reported' : 'unavailable | Proven unit economics were not supplied or verified'} | current | private finance appendix | synthetic://economics`,
+    ...(contradicted ? [
+      '[baseline-traction-economics] conflicting | The board appendix reports $1.1M ARR for the same company and period | current | synthetic board appendix | synthetic://conflict',
+    ] : []),
+  ],
+  team_dossier: `${corroborated ? 'Verified public and private records' : 'Private supplied materials'} describe the same eight years of relevant founder operating experience.`,
+  company_context: `The company sells industrial workflow software. ${unitEconomics ? 'Stage-appropriate unit-economics evidence is supplied.' : 'Proven unit economics remain unavailable.'}`,
+  custom_questions: [],
+  critical_unknowns: unitEconomics ? [] : ['Proven unit economics'],
+  contradictions_to_resolve: contradicted ? ['Same-company, same-period ARR differs between operating and board appendices.'] : [],
+});
+
+export function evidenceConfidenceSemanticFixtures() {
+  const baseDeal = {
+    company: 'Fictional Meridian Relay',
+    market: 'Industrial workflow software',
+    round: 'Seed',
+    source: 'private deal room',
+    notes: 'Synthetic non-confidential evidence-confidence fixture.',
+  };
+  return [
+    {
+      id: 'private-only-seed',
+      deal: { ...baseDeal, company: 'Fictional Meridian Relay Private' },
+      researchSnapshot: semanticResearch(),
+    },
+    {
+      id: 'corroborated-twin',
+      deal: { ...baseDeal, company: 'Fictional Meridian Relay Corroborated' },
+      researchSnapshot: semanticResearch({ corroborated: true }),
+    },
+    {
+      id: 'contradicted-twin',
+      deal: { ...baseDeal, company: 'Fictional Meridian Relay Contradicted' },
+      researchSnapshot: semanticResearch({ contradicted: true }),
+      affectedDimension: 'Business model clarity',
+    },
+    {
+      id: 'later-stage-missing-disclosure',
+      deal: { ...baseDeal, company: 'Fictional Meridian Relay Series B', round: 'Series B' },
+      researchSnapshot: semanticResearch({ unitEconomics: false }),
+      expectedCapId: 'series_b_unit_economics_missing',
+    },
+  ];
+}

@@ -9,6 +9,13 @@ import { resolveAuthMode } from '../providers/auth-mode.js';
 import { resolveFallbackFlag, runWithFallback } from '../providers/session-errors.js';
 import { parseCouncilChoices, scoreCouncilChoices } from './scoring.js';
 import { COUNCIL_POLICY_VERSION } from './evaluate.js';
+import {
+  applyEvidencePolicy,
+  capsForStage,
+  EVIDENCE_CONTRACT_VERSION,
+  normalizeHistoricalAssessment,
+  normalizeHistoricalChoice,
+} from './evidence-policy.js';
 
 const SKILL_DIR = join(
   dirname(fileURLToPath(String(import.meta.url))),
@@ -25,8 +32,9 @@ const FOLLOWUP_CONTRACT = readFileSync(
 const FOLLOWUP_PROMPT =
   'STAGE: founder_followup\nAssess only the supplied founder answers against the frozen base evaluation. ' +
   'Do not search or reconsider unrelated dimensions. Return one assessment for every answer. Return a dimension ' +
-  'update only where an answer materially changes the rating or evidence sufficiency; an update may preserve the ' +
-  'same rating. Use rubric dimension names exactly as written. Radar preserves untouched ratings and computes totals. ' +
+  'update only where an answer materially changes quality, confidence, or cap status; an update may preserve the ' +
+  'same quality rating. Choose quality before missing-evidence treatment and use only Radar-provided stage caps. ' +
+  'Use rubric dimension names exactly as written. Radar preserves untouched ratings and computes effective scores. ' +
   'Use at most two short sentences per rationale and no more than three concrete missing-evidence items. Do not ' +
   'restate the frozen evaluation, rubric, or unrelated facts.';
 
@@ -39,9 +47,15 @@ const FOLLOWUP_SCHEMA = {
         type: 'object',
         properties: {
           name: { type: 'string' },
-          likert: { type: 'number', minimum: 1, maximum: 5 },
+          quality_likert: { type: 'number', minimum: 1, maximum: 5 },
           rationale: { type: 'string', maxLength: 480 },
           evidence_sufficiency: { type: 'string', enum: ['strong', 'partial', 'thin'] },
+          confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+          missing_evidence_treatment: {
+            type: 'string',
+            enum: ['none', 'confidence_only', 'stage_cap'],
+          },
+          stage_cap_id: { type: ['string', 'null'] },
           missing_evidence: {
             type: 'array',
             maxItems: 3,
@@ -50,9 +64,12 @@ const FOLLOWUP_SCHEMA = {
         },
         required: [
           'name',
-          'likert',
+          'quality_likert',
           'rationale',
           'evidence_sufficiency',
+          'confidence',
+          'missing_evidence_treatment',
+          'stage_cap_id',
           'missing_evidence',
         ],
         additionalProperties: false,
@@ -107,12 +124,15 @@ function structured(result) {
 
 function baseEvidenceAssessments(baseEvaluation, choices) {
   const saved = jsonValue(baseEvaluation.council_evidence_assessments, null);
-  if (Array.isArray(saved) && saved.length > 0) return saved;
+  if (Array.isArray(saved) && saved.length > 0) return saved.map(normalizeHistoricalAssessment);
   return choices.map(choice => ({
     name: choice.name,
     sufficiency: 'thin',
     rationale: 'Evidence sufficiency was not recorded in the base evaluation.',
     missing_evidence: ['Reconfirm the evidence supporting this dimension.'],
+    confidence: 'low',
+    score_effect: 'confidence_only',
+    stage_cap_id: null,
   }));
 }
 
@@ -159,10 +179,16 @@ function validateOutput(output, answers, choices, rubric) {
   const dimensionScores = choices.map(choice => {
     const update = updateByName.get(normalizedName(choice.name));
     return update
-      ? { name: choice.name, likert: update.likert, rationale: update.rationale }
+      ? {
+        ...choice,
+        name: choice.name,
+        quality_likert: update.quality_likert,
+        rationale: update.rationale,
+        missing_evidence_treatment: update.missing_evidence_treatment,
+        stage_cap_id: update.stage_cap_id,
+      }
       : choice;
   });
-  scoreCouncilChoices(dimensionScores, rubric);
   return { ...output, dimension_updates: updates, dimension_scores: dimensionScores };
 }
 
@@ -176,6 +202,9 @@ function mergedEvidenceAssessments(base, updates) {
         sufficiency: update.evidence_sufficiency,
         rationale: update.rationale,
         missing_evidence: update.missing_evidence,
+        confidence: update.confidence,
+        score_effect: update.missing_evidence_treatment,
+        stage_cap_id: update.stage_cap_id,
       }
       : assessment;
   });
@@ -222,7 +251,10 @@ function renderArtifact({
     const missing = assessment.missing_evidence?.length
       ? ` Missing: ${assessment.missing_evidence.join('; ')}.`
       : '';
-    return `- **${assessment.name}: ${assessment.sufficiency}** — ${assessment.rationale}${missing}`;
+    const effect = assessment.score_effect === 'stage_cap'
+      ? `Stage cap: ${assessment.stage_cap_id}`
+      : 'No score effect';
+    return `- **${assessment.name}: ${assessment.confidence} confidence** — ${effect}. ${assessment.rationale}${missing}`;
   }).join('\n');
   const timestamp = new Date().toISOString();
   const date = timestamp.slice(0, 10);
@@ -236,7 +268,7 @@ function renderArtifact({
 ## Founder Follow-up
 ${answerText}
 
-## Evidence Sufficiency
+## Evidence Confidence
 ${sufficiencyText}
 
 ${sections}
@@ -280,9 +312,9 @@ export async function councilFollowupEvaluate({
   const baseContent = baseEvaluation.raw_content || baseEvaluation.content_markdown;
   if (!baseContent) throw new Error('Founder follow-up requires the base evaluation artifact');
   const savedChoices = jsonValue(baseEvaluation.council_dimension_scores, null);
-  const choices = Array.isArray(savedChoices) && savedChoices.length > 0
+  const choices = (Array.isArray(savedChoices) && savedChoices.length > 0
     ? savedChoices
-    : parseCouncilChoices(baseContent, rubric);
+    : parseCouncilChoices(baseContent, rubric)).map(normalizeHistoricalChoice);
   scoreCouncilChoices(choices, rubric);
 
   const policy = resolveCouncilModels(models);
@@ -317,6 +349,7 @@ export async function councilFollowupEvaluate({
   const provenance = {
     policyId,
     policyVersion: COUNCIL_POLICY_VERSION,
+    evidenceContractVersion: EVIDENCE_CONTRACT_VERSION,
     instructionHash,
     lensHash: baseEvaluation.council_lens_hash || hash(rubric),
     calibrationHash: baseEvaluation.council_calibration_hash || null,
@@ -341,6 +374,8 @@ export async function councilFollowupEvaluate({
       JSON.stringify(choices),
       'FROZEN BASE EVIDENCE SUFFICIENCY',
       JSON.stringify(baseEvidenceAssessments(baseEvaluation, choices)),
+      'VALID STAGE CAPS (only these IDs may be proposed)',
+      JSON.stringify(capsForStage(baseEvaluation.stage || baseEvaluation.round || baseEvaluation.deal_stage)),
       'FOUNDER QUESTIONS AND ANSWERS',
       JSON.stringify(input.questions),
     ].join('\n\n'),
@@ -358,10 +393,18 @@ export async function councilFollowupEvaluate({
     env,
   });
   const output = validateOutput(structured(outcome.result), answers, choices, rubric);
-  const evidenceAssessments = mergedEvidenceAssessments(
+  let evidenceAssessments = mergedEvidenceAssessments(
     baseEvidenceAssessments(baseEvaluation, choices),
     output.dimension_updates,
   );
+  const policyResult = applyEvidencePolicy({
+    stage: baseEvaluation.stage || baseEvaluation.round || baseEvaluation.deal_stage,
+    dimensionChoices: output.dimension_scores,
+    evidenceAssessments,
+  });
+  output.dimension_scores = policyResult.dimensionChoices;
+  output.cap_receipt = policyResult.capReceipt;
+  evidenceAssessments = policyResult.evidenceAssessments;
   const artifact = renderArtifact({
     company,
     baseEvaluation,
@@ -375,6 +418,7 @@ export async function councilFollowupEvaluate({
   writeFileSync(join(dealLogDir, artifact.filename), artifact.content, 'utf8');
   provenance.dimensionScores = output.dimension_scores;
   provenance.evidenceAssessments = evidenceAssessments;
+  provenance.evidenceCapReceipt = policyResult.capReceipt;
   provenance.followupQuestions = [];
   provenance.artifactHashes = { [artifact.filename]: hash(artifact.content) };
   provenance.sessionId = outcome.result.sessionId || null;

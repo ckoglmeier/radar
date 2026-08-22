@@ -30,6 +30,7 @@ function baseEvaluation() {
   const dimensions = rubric.sections.flatMap(section => section.dimensions || []);
   return {
     id: 41,
+    round: 'Seed',
     council_policy: 'balanced',
     council_lens_hash: 'lens-hash',
     council_calibration_hash: 'calibration-hash',
@@ -82,9 +83,12 @@ function validOutput() {
   return {
     dimension_updates: [{
       name: 'Compounding structure',
-      likert: 5,
+      quality_likert: 5,
       rationale: 'Founder-reported retention supports strong expansion dynamics.',
       evidence_sufficiency: 'partial',
+      confidence: 'medium',
+      missing_evidence_treatment: 'confidence_only',
+      stage_cap_id: null,
       missing_evidence: ['Cohort export or customer-level retention report'],
     }],
     answer_assessments: [{
@@ -177,7 +181,7 @@ test('uses one retrieval-free Calibrator pass and preserves unrelated dimensions
     const artifact = readFileSync(join(dealLogDir, result.writtenFiles[0]), 'utf8');
     ok(artifact.includes('## Founder Follow-up'));
     ok(artifact.includes('Net revenue retention is 142%'));
-    ok(artifact.includes('## Evidence Sufficiency'));
+    ok(artifact.includes('## Evidence Confidence'));
     ok(artifact.includes('## Total: 33/50'));
   }));
 
@@ -208,6 +212,72 @@ test('requires an assessment for every founder answer', async () =>
         company: 'Acme',
       }, { provider, dealLogDir, env: {} }),
       'assess every supplied answer',
+    );
+  }));
+
+test('uses the shared policy to remove a cap without changing unrelated dimensions', async () =>
+  withTempDir(async dealLogDir => {
+    const base = baseEvaluation();
+    base.round = 'Series A';
+    base.council_dimension_scores = base.council_dimension_scores.map(choice =>
+      choice.name === 'Business model clarity'
+        ? {
+          ...choice,
+          quality_likert: 5,
+          likert: 3,
+          missing_evidence_treatment: 'stage_cap',
+          stage_cap_id: 'series_a_actual_revenue_missing',
+        }
+        : choice);
+    base.council_evidence_assessments = base.council_evidence_assessments.map(item =>
+      item.name === 'Business model clarity'
+        ? {
+          ...item,
+          confidence: 'low',
+          score_effect: 'stage_cap',
+          stage_cap_id: 'series_a_actual_revenue_missing',
+        }
+        : item);
+    const answer = {
+      id: 9,
+      question: 'What actual revenue has the company generated?',
+      why_it_matters: 'Series A requires actual revenue evidence.',
+      rubric_dimension: 'Business model clarity',
+      answer: 'The attached ledger reports $1.2M of recognized revenue.',
+      answer_source: 'founder',
+    };
+    const provider = fakeProvider({
+      dimension_updates: [{
+        name: 'Business model clarity',
+        quality_likert: 5,
+        rationale: 'The supplied revenue ledger satisfies the named Series A requirement.',
+        evidence_sufficiency: 'partial',
+        confidence: 'medium',
+        missing_evidence_treatment: 'confidence_only',
+        stage_cap_id: null,
+        missing_evidence: ['Reconcile recognized revenue to bank records'],
+      }],
+      answer_assessments: [{
+        question_id: '9',
+        assessment: 'supports',
+        rationale: 'The answer supplies actual revenue evidence.',
+      }],
+    });
+    const result = await councilFollowupEvaluate({
+      baseEvaluation: base,
+      answers: [answer],
+      company: 'Acme',
+    }, { provider, dealLogDir, env: {} });
+    const businessModel = result.provenance.dimensionScores.find(
+      item => item.name === 'Business model clarity',
+    );
+    eq(businessModel.quality_likert, 5);
+    eq(businessModel.likert, 5, 'removed cap restores effective quality Likert');
+    eq(result.provenance.evidenceCapReceipt.applied.length, 0);
+    eq(
+      result.provenance.dimensionScores.find(item => item.name === 'Domain match').likert,
+      3,
+      'unrelated v1 choice remains unchanged',
     );
   }));
 

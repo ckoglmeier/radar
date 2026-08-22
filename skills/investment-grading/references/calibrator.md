@@ -10,9 +10,11 @@ Use:
 - the supplied calibration examples and invest line;
 - the deal's stage and source context.
 
-For every dimension, choose one 1–5 value and explain briefly which evidence or
-voice controls. Treat uncertainty consistently: missing evidence is not proof
-of a negative fact, but stage-critical missing evidence can cap conviction.
+For every dimension, first choose one 1–5 `quality_likert` from the substantive
+facts supplied or verified and explain briefly which evidence or voice
+controls. Then assign `missing_evidence_treatment`: `none`, `confidence_only`,
+or `stage_cap`. Use `stage_cap` only with a cap ID supplied by Radar for the
+deal's stage and dimension. Never invent a cap.
 
 Apply these anchor tie-breakers consistently when evidence falls between
 adjacent ratings:
@@ -32,10 +34,17 @@ Assess evidence sufficiency separately for every rubric dimension:
 
 - `strong`: current, decision-relevant evidence supports the rating;
 - `partial`: some relevant evidence exists, but a material fact is still open;
-- `thin`: the rating relies primarily on supplied claims or unavailable facts.
+- `thin`: the rating relies primarily on limited supplied claims or unavailable facts.
 
 Evidence sufficiency is not investment quality. A weak company can have strong
 evidence, and an attractive company can have thin evidence.
+
+Also assign `confidence` (`high`, `medium`, or `low`) and make `score_effect`
+match the dimension's missing-evidence treatment. Missing public corroboration
+is confidence-only. A concrete supplied moat or operating mechanism counts as
+evidence; public validation, patents, retention cohorts, or technical review
+are not prerequisites unless the rubric itself says so. Source quality affects
+only Source quality and cannot leak into another dimension.
 
 Treat current offering terms in the DEAL block as authoritative evidence of
 what is being offered. The named lead is the deal source or syndicate unless

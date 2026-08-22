@@ -16,7 +16,9 @@ For every required question ID, return at least one evidence line in this form:
 Verify the company identity and event date before recording a claim. If
 credible sources disagree, preserve both dated claims and label the conflict;
 do not pick one silently. A failed search is not proof that an event did not
-happen, so record the claim as `Unavailable` rather than negative evidence.
+happen. Preserve a supplied claim as `Supplied` and describe the search result
+as "not independently corroborated." Use `Unavailable` only when the fact was
+not supplied and could not otherwise be established.
 
 ## Required coverage
 
@@ -61,6 +63,8 @@ rather than reporting every search result.
   syndicate from the company's cap-table announcements is not a conflict.
 - Use `Conflicting` only when credible evidence makes an explicit, mutually
   incompatible claim about the same entity, event, and time period.
+- Omission of a role from a public biography is not a contradiction. Omitted
+  private operating metrics are `Unavailable`, not adverse facts.
 - Label every ledger item `Supplied`, `Verified`, `Conflicting`, or
   `Unavailable`.
 - Include a source name or URL in every item.

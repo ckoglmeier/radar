@@ -10,14 +10,20 @@ For each answer:
   case;
 - explain the assessment briefly;
 - update only a rubric dimension the answer materially affects;
+- choose `quality_likert` independently from confidence and missing-evidence
+  treatment;
+- use only a stage cap ID supplied by Radar, and remove a cap when the answer
+  supplies the named requirement;
 - preserve the base rating when the answer is vague, unsupported, or
   non-responsive;
 - distinguish evidence sufficiency from investment quality.
 
-Return a dimension update even when the rating stays unchanged if the answer
-materially changes evidence sufficiency. Radar preserves every untouched
-dimension, computes points and verdicts, appends an amendment, and links the
-answer to that amendment.
+Return a dimension update even when quality stays unchanged if the answer
+materially changes confidence or cap status. Supplied founder answers are
+usable evidence; lack of public corroboration is confidence-only. Radar applies
+the same deterministic evidence policy as the initial evaluation, preserves
+every untouched dimension, computes points and verdicts, appends an amendment,
+and links the answer to that amendment.
 
 Keep the amendment compact:
 

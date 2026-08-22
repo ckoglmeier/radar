@@ -30,6 +30,12 @@ import { runWithFallback, resolveFallbackFlag } from '../providers/session-error
 import { resolveAuthMode } from '../providers/auth-mode.js';
 import { scoreCouncilChoices } from './scoring.js';
 import {
+  applyEvidencePolicy,
+  capsForStage,
+  EVIDENCE_CONTRACT_VERSION,
+  EVIDENCE_POLICY_VERSION,
+} from './evidence-policy.js';
+import {
   assertCompleteChunkCoverage,
   batchRoomChunks,
   chunkRoomDocuments,
@@ -68,7 +74,7 @@ function loadRolePrompt(stage) {
   return _rolePrompts.get(stage);
 }
 
-export const COUNCIL_POLICY_VERSION = 8;
+export const COUNCIL_POLICY_VERSION = EVIDENCE_POLICY_VERSION;
 const EXPLICIT_PIPELINE_VERSION = 'sonnet-seeded-research-v1';
 const RESEARCH_PLAN_SEED_VERSION = 'baseline-v1';
 const inFlightRuns = new Map();
@@ -103,6 +109,28 @@ const DIMENSION_ARRAY = {
   },
 };
 
+const CALIBRATOR_DIMENSION_ARRAY = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      quality_likert: { type: 'number', minimum: 1, maximum: 5 },
+      rationale: { type: 'string' },
+      missing_evidence_treatment: {
+        type: 'string',
+        enum: ['none', 'confidence_only', 'stage_cap'],
+      },
+      stage_cap_id: { type: ['string', 'null'] },
+    },
+    required: [
+      'name', 'quality_likert', 'rationale',
+      'missing_evidence_treatment', 'stage_cap_id',
+    ],
+    additionalProperties: false,
+  },
+};
+
 const GRADER_SCHEMA = {
   type: 'object',
   properties: {
@@ -122,8 +150,14 @@ const EVIDENCE_ASSESSMENT_ARRAY = {
       sufficiency: { type: 'string', enum: ['strong', 'partial', 'thin'] },
       rationale: { type: 'string' },
       missing_evidence: { type: 'array', items: { type: 'string' } },
+      confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+      score_effect: { type: 'string', enum: ['none', 'confidence_only', 'stage_cap'] },
+      stage_cap_id: { type: ['string', 'null'] },
     },
-    required: ['name', 'sufficiency', 'rationale', 'missing_evidence'],
+    required: [
+      'name', 'sufficiency', 'rationale', 'missing_evidence',
+      'confidence', 'score_effect', 'stage_cap_id',
+    ],
     additionalProperties: false,
   },
 };
@@ -157,7 +191,7 @@ const FOLLOWUP_QUESTION_ARRAY = {
 const CALIBRATOR_SCHEMA = {
   type: 'object',
   properties: {
-    dimension_scores: DIMENSION_ARRAY,
+    dimension_scores: CALIBRATOR_DIMENSION_ARRAY,
     evidence_assessments: EVIDENCE_ASSESSMENT_ARRAY,
     key_argument: { type: 'string' },
     kill_criteria: { type: 'string' },
@@ -478,17 +512,21 @@ const STAGE_PROMPTS = {
   bull:
     'STAGE: bull\nPerform only the Bull evaluation. Use only the frozen research packet in context; ' +
     'do not search or add facts. Return exactly one 1–5 Likert choice for every rubric dimension, ' +
-    'using each dimension name exactly as written in the rubric, plus the strongest credible upside argument.',
+    'using each dimension name exactly as written in the rubric, plus the strongest credible upside argument. ' +
+    'Treat supplied private facts as evidence. Public silence is not a negative fact.',
   bear:
     'STAGE: bear\nPerform only the Bear evaluation. Use only the frozen research packet in context; ' +
     'do not search or add facts. Return exactly one 1–5 Likert choice for every rubric dimension, ' +
-    'using each dimension name exactly as written in the rubric, plus the strongest credible skeptical argument.',
+    'using each dimension name exactly as written in the rubric, plus the strongest credible skeptical argument. ' +
+    'Treat supplied private facts as evidence. Challenge plausibility without treating public silence as adverse.',
   calibrator:
     'STAGE: calibrator\nPerform only calibration. Reconcile the frozen Bull and Bear outputs against ' +
     'the authoritative rubric and calibration examples. Do not search or add facts. Return exactly one ' +
-    '1–5 Likert choice for every rubric dimension, using each dimension name exactly as written. ' +
-    'Separately rate evidence sufficiency for every dimension as strong, partial, or thin; do not use ' +
-    'evidence sufficiency as a synonym for investment quality. Return no more than five founder follow-up ' +
+    'quality_likert for every rubric dimension, using each dimension name exactly as written. Choose quality ' +
+    'before missing-evidence treatment. Route missing evidence to confidence_only unless one of Radar’s supplied ' +
+    'stage cap IDs applies; never invent a cap. Public silence never reduces quality by itself. Separately rate ' +
+    'evidence sufficiency and confidence for every dimension; do not use evidence sufficiency as a synonym for ' +
+    'investment quality. Source quality cannot affect another dimension. Return no more than five founder follow-up ' +
     'questions. Each question must name one primary rubric dimension and the plausible 1–5 score if the ' +
     'founder answer confirms or weakens the current case. Ask for concrete facts, not opinions. ' +
     'Radar—not you—will calculate weighted points and the verdict.',
@@ -640,13 +678,10 @@ function normalizedDimensionName(value) {
     .replace(/[^a-z0-9]+/g, '');
 }
 
-function enrichCalibratorData(data, rubric) {
+function enrichCalibratorData(data, rubric, stage) {
   const expected = rubric.sections.flatMap(section => section.dimensions || []);
   const expectedByName = new Map(
     expected.map(dimension => [normalizedDimensionName(dimension.name), dimension.name]),
-  );
-  const choicesByName = new Map(
-    data.dimension_scores.map(choice => [normalizedDimensionName(choice.name), choice]),
   );
   const assessments = data.evidence_assessments || [];
   if (assessments.length !== expected.length) {
@@ -666,7 +701,16 @@ function enrichCalibratorData(data, rubric) {
   if ((data.key_questions || []).length > 5) {
     throw new Error('Council output must contain no more than five founder follow-up questions');
   }
-  const canonical = scoreCouncilChoices(data.dimension_scores, rubric);
+  const policyResult = applyEvidencePolicy({
+    stage,
+    dimensionChoices: data.dimension_scores,
+    evidenceAssessments,
+  });
+  const dimensionScores = policyResult.dimensionChoices;
+  const choicesByName = new Map(
+    dimensionScores.map(choice => [normalizedDimensionName(choice.name), choice]),
+  );
+  const canonical = scoreCouncilChoices(dimensionScores, rubric);
   const seenQuestions = new Set();
   const followupQuestions = (data.key_questions || []).map(question => {
     const key = normalizedDimensionName(question.rubric_dimension);
@@ -680,7 +724,7 @@ function enrichCalibratorData(data, rubric) {
     seenQuestions.add(question.question_id);
     const currentLikert = Number(choicesByName.get(key)?.likert);
     const scoreAt = likert => scoreCouncilChoices(
-      data.dimension_scores.map(choice => (
+      dimensionScores.map(choice => (
         normalizedDimensionName(choice.name) === key ? { ...choice, likert } : choice
       )),
       rubric,
@@ -696,7 +740,9 @@ function enrichCalibratorData(data, rubric) {
 
   return {
     ...data,
-    evidence_assessments: evidenceAssessments,
+    dimension_scores: dimensionScores,
+    evidence_assessments: policyResult.evidenceAssessments,
+    cap_receipt: policyResult.capReceipt,
     key_questions: followupQuestions,
   };
 }
@@ -731,8 +777,16 @@ function renderArtifact({ deal, planner, research, bull, bear, calibrator, cfo, 
     const missing = (assessment.missing_evidence || []).length > 0
       ? ` Missing: ${assessment.missing_evidence.join('; ')}.`
       : '';
-    return `- **${assessment.name}: ${assessment.sufficiency}** — ${assessment.rationale}${missing}`;
+    const effect = assessment.score_effect === 'stage_cap'
+      ? `Stage cap: ${assessment.stage_cap_id}`
+      : 'No score effect';
+    return `- **${assessment.name}: ${assessment.confidence} confidence** — ${effect}. ${assessment.rationale}${missing}`;
   }).join('\n');
+  const capText = calibrator.cap_receipt?.applied?.length
+    ? calibrator.cap_receipt.applied.map(cap =>
+      `- **${cap.dimension}: ${cap.cap_id}** — quality ${cap.quality_likert}/5, effective ${cap.effective_likert}/5. ${cap.requirement}`,
+    ).join('\n')
+    : '- No stage caps applied.';
   const founderQuestions = (calibrator.key_questions || []).map(question => {
     const upside = Number(question.upside_points || 0);
     const downside = Number(question.downside_points || 0);
@@ -774,8 +828,13 @@ ${research.team_dossier}
 ## Company Context
 ${research.company_context}
 
-## Evidence Sufficiency
+## Evidence Confidence
 ${evidenceSufficiency}
+
+Missing public corroboration does not reduce the score.
+
+### Stage caps
+${capText}
 
 ## Gates
 Kill criteria: ${calibrator.kill_criteria}
@@ -829,10 +888,12 @@ function contractBlock(
   const lines = [
     'COUNCIL RUN CONTRACT',
     `  Policy version: ${provenance.policyVersion || COUNCIL_POLICY_VERSION}`,
+    `  Evidence contract: ${provenance.evidenceContractVersion || EVIDENCE_CONTRACT_VERSION}`,
     `  Instruction hash: ${provenance.instructionHash || hash(loadSkill())}`,
     `  Input hash: ${provenance.inputHash || hash(deal || {})}`,
     '  Research produces one shared Evidence Ledger. Later roles cannot add facts.',
     '  Models choose 1–5 dimension values. Radar computes points and verdicts.',
+    '  The Calibrator chooses quality before missing-evidence treatment. Radar alone validates and applies named stage caps.',
     '  Current DEAL fields are first-party intake evidence and authoritative as the terms presently offered.',
     '  The DEAL lead is the source or syndicate presenting access unless explicitly identified as the company round lead.',
     '  Public silence or an older public round does not contradict a current private offering; only an explicit same-event incompatibility does.',
@@ -1130,7 +1191,7 @@ export async function councilEvaluate(deal, opts = {}) {
     researchSnapshot,
     sourceManifest = [],
     sourceCoverage = null,
-    evidenceContractVersion = null,
+    evidenceContractVersion = EVIDENCE_CONTRACT_VERSION,
     directContextBudgetTokens,
     stageTimeoutMs = Number(env.RADAR_COUNCIL_STAGE_TIMEOUT_MS || 20 * 60 * 1_000),
   } = opts;
@@ -1181,6 +1242,7 @@ export async function councilEvaluate(deal, opts = {}) {
     sourceManifestHash: hash(sourceManifest),
     sourceCoverageHash: sourceCoverage ? hash(sourceCoverage) : null,
     evidenceContractVersion,
+    stageCaps: capsForStage(deal.stage || deal.round),
   };
   provenance.runKey = hash({
     ...provenance,
@@ -1412,6 +1474,8 @@ export async function councilEvaluate(deal, opts = {}) {
 
     const calibratorContext = [
       context,
+      'VALID STAGE CAPS (only these IDs may be proposed)',
+      JSON.stringify(capsForStage(deal.stage || deal.round)),
       'FROZEN RESEARCH PACKET',
       frozenResearch,
       'FROZEN BULL OUTPUT',
@@ -1425,7 +1489,7 @@ export async function councilEvaluate(deal, opts = {}) {
       context: calibratorContext,
       schema: CALIBRATOR_SCHEMA,
       maxTurns: turnPolicy.judgment,
-    }), runtime, data => enrichCalibratorData(data, lens.rubric));
+    }), runtime, data => enrichCalibratorData(data, lens.rubric, deal.stage || deal.round));
     const calibrator = calibratorRun.outcome;
     rejectedAttempts.push(...calibratorRun.rejectedAttempts);
     const canonical = scoreCouncilChoices(calibrator.data.dimension_scores, lens.rubric);
@@ -1492,6 +1556,7 @@ export async function councilEvaluate(deal, opts = {}) {
         modelPolicy: policy,
         dimensionScores: calibrator.data.dimension_scores,
         evidenceAssessments: calibrator.data.evidence_assessments,
+        evidenceCapReceipt: calibrator.data.cap_receipt,
         followupQuestions: calibrator.data.key_questions,
         rubricSnapshot: lens.rubric,
         artifactHashes: { [artifact.filename]: hash(artifact.content) },

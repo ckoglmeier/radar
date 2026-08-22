@@ -3,7 +3,10 @@ import { resolve } from 'node:path';
 import { councilEvaluate } from '../evaluate.js';
 import { AgentSdkProvider } from '../../providers/agent-sdk-provider.js';
 import { resolveAuthMode } from '../../providers/auth-mode.js';
-import { substantialRoomFixture } from './fixtures.js';
+import {
+  evidenceConfidenceSemanticFixtures,
+  substantialRoomFixture,
+} from './fixtures.js';
 
 const RUNS_PER_MODE = 3;
 const MODES = Object.freeze({
@@ -77,6 +80,42 @@ function validate(results, fixture) {
   return failures;
 }
 
+function validateSemantic(results, fixtures) {
+  const failures = [];
+  const byId = new Map(results.map(result => [result.fixtureId, result]));
+  const privateOnly = byId.get('private-only-seed');
+  const corroborated = byId.get('corroborated-twin');
+  const contradicted = byId.get('contradicted-twin');
+  const laterStage = byId.get('later-stage-missing-disclosure');
+  if (!privateOnly || !corroborated || !contradicted || !laterStage) {
+    return ['semantic evidence-confidence fixtures are incomplete'];
+  }
+  if (Math.abs(privateOnly.score - corroborated.score) > 1) {
+    failures.push('private-only/corroborated total scores differ by more than 1');
+  }
+  for (const dimension of Object.keys(privateOnly.dimensions)) {
+    if (Math.abs(privateOnly.dimensions[dimension] - corroborated.dimensions[dimension]) > 1) {
+      failures.push(`private-only/corroborated ${dimension} differs by more than 1 Likert`);
+    }
+  }
+  const confidenceRank = { low: 1, medium: 2, high: 3 };
+  const privateConfidence = Object.values(privateOnly.confidence)
+    .reduce((sum, value) => sum + (confidenceRank[value] || 0), 0);
+  const corroboratedConfidence = Object.values(corroborated.confidence)
+    .reduce((sum, value) => sum + (confidenceRank[value] || 0), 0);
+  if (corroboratedConfidence <= privateConfidence) failures.push('corroborated twin did not improve confidence');
+  if (privateOnly.publicSilencePenalty) failures.push('private-only output penalized public silence');
+  const affectedDimension = fixtures.find(item => item.id === 'contradicted-twin').affectedDimension;
+  if (contradicted.dimensions[affectedDimension] >= privateOnly.dimensions[affectedDimension]) {
+    failures.push(`contradicted twin did not lower ${affectedDimension}`);
+  }
+  const expectedCapId = fixtures.find(item => item.id === 'later-stage-missing-disclosure').expectedCapId;
+  if (!laterStage.caps.some(cap => cap.cap_id === expectedCapId)) {
+    failures.push(`later-stage fixture did not apply ${expectedCapId}`);
+  }
+  return failures;
+}
+
 const fixture = substantialRoomFixture();
 const authMode = resolveAuthMode(process.env);
 const outputDir = resolve(process.argv[2] || 'src/council/evals/results');
@@ -92,7 +131,11 @@ const resetModes = new Set(
 const checkpointResults = existsSync(reportPath)
   ? JSON.parse(readFileSync(reportPath, 'utf8')).results || []
   : [];
+const checkpointSemanticResults = existsSync(reportPath)
+  ? JSON.parse(readFileSync(reportPath, 'utf8')).semantic_results || []
+  : [];
 const results = checkpointResults.filter(result => !resetModes.has(result.mode));
+const semanticResults = checkpointSemanticResults;
 
 function writeReport({ failures = [], passed = null } = {}) {
   writeFileSync(reportPath, `${JSON.stringify({
@@ -101,6 +144,7 @@ function writeReport({ failures = [], passed = null } = {}) {
     fictional_fixture: 'Nimbus Forge',
     model_policy: results[0]?.modelPolicy || null,
     results,
+    semantic_results: semanticResults,
     failures,
     passed,
   }, null, 2)}\n`, 'utf8');
@@ -120,7 +164,7 @@ for (const [mode, directContextBudgetTokens] of Object.entries(MODES)) {
       executionId: `v0.3.0-${mode}-${run}`,
       directContextBudgetTokens,
       sourceManifest: fixture.manifest,
-      evidenceContractVersion: 1,
+      evidenceContractVersion: 2,
       reuse: false,
       stageTimeoutMs: Number(process.env.RADAR_COUNCIL_RELEASE_STAGE_TIMEOUT_MS || 20 * 60 * 1_000),
       onStage: stage => console.log(`[${mode}-${run}] ${stage}`),
@@ -172,7 +216,47 @@ for (const [mode, directContextBudgetTokens] of Object.entries(MODES)) {
   }
 }
 
-const failures = validate(results, fixture);
+const semanticFixtures = evidenceConfidenceSemanticFixtures();
+for (const semanticFixture of semanticFixtures) {
+  if (semanticResults.some(result => result.fixtureId === semanticFixture.id)) {
+    console.log(`[semantic-${semanticFixture.id}] resumed from checkpoint`);
+    continue;
+  }
+  const output = await councilEvaluate(semanticFixture.deal, {
+    provider,
+    env: process.env,
+    dealLogDir: outputDir,
+    policyId: 'balanced',
+    executionId: `v0.4.0-semantic-${semanticFixture.id}`,
+    researchSnapshot: semanticFixture.researchSnapshot,
+    evidenceContractVersion: 2,
+    reuse: false,
+    stageTimeoutMs: Number(process.env.RADAR_COUNCIL_RELEASE_STAGE_TIMEOUT_MS || 20 * 60 * 1_000),
+    onStage: stage => console.log(`[semantic-${semanticFixture.id}] ${stage}`),
+  });
+  const calibrator = output.result.structuredOutput.calibrator;
+  const serializedOutput = JSON.stringify(calibrator).toLowerCase();
+  semanticResults.push({
+    fixtureId: semanticFixture.id,
+    score: score(output),
+    verdict: output.result.text.split('·').at(-1)?.trim() || null,
+    dimensions: dimensionScores(output),
+    confidence: Object.fromEntries(
+      calibrator.evidence_assessments.map(item => [item.name, item.confidence]),
+    ),
+    caps: output.provenance.evidenceCapReceipt?.applied || [],
+    publicSilencePenalty: /public silence|not publicly corroborated|lack of public corroboration/.test(serializedOutput)
+      && /penalt|reduce|lower|contradict|structural flag/.test(serializedOutput),
+    researchSnapshotHash: output.provenance.researchSnapshotHash,
+    modelPolicy: output.modelPolicy,
+  });
+  writeReport();
+}
+
+const failures = [
+  ...validate(results, fixture),
+  ...validateSemantic(semanticResults, semanticFixtures),
+];
 const passed = failures.length === 0;
 writeReport({ failures, passed });
 console.log(`${passed ? 'PASS' : 'FAIL'} ${reportPath}`);

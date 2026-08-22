@@ -6,6 +6,7 @@ import {
   mergeRoomLedgers,
 } from '../room-evidence.js';
 import {
+  evidenceConfidenceSemanticFixtures,
   EXTRACTION_STATE_FIXTURE,
   substantialRoomFixture,
 } from './fixtures.js';
@@ -55,5 +56,28 @@ const serialized = JSON.stringify(fixture);
 assert.doesNotMatch(serialized, /Alpine Eagle|Mana Ventures|Chandler|Koglmeier/i);
 assert.match(serialized, /absence of the current private offer from public sources is not a contradiction/i);
 
-console.log('council-eval-contracts: fictional evidence corpus passed');
+const semanticFixtures = evidenceConfidenceSemanticFixtures();
+assert.deepEqual(
+  semanticFixtures.map(entry => entry.id),
+  [
+    'private-only-seed',
+    'corroborated-twin',
+    'contradicted-twin',
+    'later-stage-missing-disclosure',
+  ],
+);
+const privateFacts = semanticFixtures[0].researchSnapshot.evidence.join('\n');
+const corroboratedFacts = semanticFixtures[1].researchSnapshot.evidence.join('\n');
+assert.equal(
+  privateFacts.replaceAll(/supplied|verified/g, 'usable').replaceAll('private founder biography', 'source').replaceAll('private product appendix', 'source'),
+  corroboratedFacts.replaceAll(/supplied|verified/g, 'usable').replaceAll('fictional trade profile', 'source').replaceAll('fictional technical review', 'source'),
+  'semantic twins must differ only in corroboration status and source labels',
+);
+assert.match(
+  semanticFixtures[2].researchSnapshot.contradictions_to_resolve.join(' '),
+  /same-company, same-period ARR differs/i,
+);
+assert.equal(semanticFixtures[3].deal.round, 'Series B');
+assert.match(semanticFixtures[3].researchSnapshot.evidence.join(' '), /unit economics were not supplied or verified/i);
 
+console.log('council-eval-contracts: fictional evidence corpus passed');

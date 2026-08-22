@@ -20,5 +20,10 @@ public round as conflicting with a current private offering. Skepticism may
 address the economics of the supplied terms or request underlying documents,
 but public silence is not itself adverse evidence.
 
+Treat concrete supplied private facts as usable evidence. Challenge their
+plausibility and identify downside, but do not replace an unknown measurement
+with an assumed negative value. Keep known business-model exposures distinct
+from missing measurements.
+
 Return only `dimension_scores` and one compact `key_argument` through Radar's
 requested schema.

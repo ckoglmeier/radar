@@ -18,7 +18,7 @@ Treat those injected inputs as authoritative.
 - Prevent Bull, Bear, Calibrator, and portfolio action from adding research.
 - Let models choose 1–5 rubric values; let Radar compute points and verdicts.
 - Keep independent evidence, judgment, and deterministic arithmetic separate.
-- Report evidence sufficiency separately from investment attractiveness.
+- Report evidence confidence separately from investment attractiveness.
 - Mark missing information rather than inventing it.
 - Keep every output concise enough to serve a decision.
 
@@ -56,9 +56,11 @@ Council's cost, consistency, and provenance contract.
 ## Evidence and uncertainty
 
 Label evidence as `Supplied`, `Verified`, `Conflicting`, or `Unavailable`.
-Independent evidence overrides pitch claims where they conflict. An unavailable
-fact is not automatically a negative fact, but a stage-critical absence can cap
-the relevant rubric dimension.
+Supplied private claims are usable evidence unless explicitly contradicted;
+public silence changes confidence, not quality. Independent evidence controls
+where it explicitly conflicts with the same entity, event, and period. Only a
+named stage-and-dimension cap supplied by Radar may turn an unavailable fact
+into a score cap.
 
 ## Output discipline
 
