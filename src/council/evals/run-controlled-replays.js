@@ -7,6 +7,7 @@ import { AgentSdkProvider } from '../../providers/agent-sdk-provider.js';
 import { resolveAuthMode } from '../../providers/auth-mode.js';
 import {
   compactReplayComparison,
+  controlledReplayReviewGates,
   renderReplayComparisonMarkdown,
   replayHash,
   validateReplayBundle,
@@ -65,39 +66,6 @@ function writeCheckpoint({ passed = null, failures = [] } = {}) {
   });
 }
 
-function normalizedText(value) {
-  return JSON.stringify(value || '').toLowerCase();
-}
-
-function reviewGates(company, calibrator) {
-  const dimensionText = Object.fromEntries(
-    calibrator.dimension_scores.map(item => [item.name, normalizedText(item.rationale)]),
-  );
-  const questions = normalizedText(calibrator.key_questions);
-  if (company === 'Sourcerer') {
-    const mechanismText = [
-      dimensionText['Domain match'],
-      dimensionText['Compounding structure'],
-      dimensionText.Differentiation,
-    ].join(' ');
-    return {
-      'no public-silence-only founder structural flag': !/founders? without domain|lack domain experience/.test(normalizedText(calibrator.kill_criteria)),
-      'supplied product/data/flywheel mechanisms considered': /product|data|flywheel|workflow|network/.test(mechanismText),
-      'working-capital or contribution-margin questions remain prominent': /working capital|contribution margin/.test(questions),
-    };
-  }
-  if (company === 'Standard Bots') {
-    const outsideSourceQuality = Object.entries(dimensionText)
-      .filter(([name]) => name !== 'Source quality')
-      .map(([, rationale]) => rationale)
-      .join(' ');
-    return {
-      'source-quality concerns do not leak into unrelated dimensions': !/builders capital|source quality|deal source/.test(outsideSourceQuality),
-    };
-  }
-  return {};
-}
-
 for (const entry of cases) {
   if (comparisons.some(comparison => comparison.company === entry.company)) {
     console.log(`[${entry.company}] resumed from checkpoint`);
@@ -136,10 +104,24 @@ for (const entry of cases) {
     confidence: Object.fromEntries(calibrator.evidence_assessments.map(item => [item.name, item.confidence])),
     evidence_assessments: calibrator.evidence_assessments,
     caps: output.provenance.evidenceCapReceipt?.applied || [],
-    review_gates: reviewGates(entry.company, calibrator),
+    review_gates: controlledReplayReviewGates(entry.company, calibrator),
   };
   comparisons.push(compactReplayComparison(entry, v9));
   writeCheckpoint();
+}
+
+for (const comparison of comparisons) {
+  if (comparison.company !== 'Standard Bots') continue;
+  comparison.review_gates = {
+    ...comparison.review_gates,
+    ...controlledReplayReviewGates('Standard Bots', {
+      dimension_scores: comparison.dimensions.map(item => ({
+        name: item.name,
+        rationale: item.v9_rationale,
+      })),
+      key_questions: [],
+    }),
+  };
 }
 
 if (incompleteCompanies().length > 0) {

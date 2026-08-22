@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   compactReplayComparison,
+  controlledReplayReviewGates,
   renderReplayComparisonMarkdown,
   replayHash,
   validateReplayBundle,
@@ -51,6 +52,27 @@ assert.equal(comparison.total_delta, 2);
 assert.equal(comparison.dimensions[0].delta, 1);
 assert.equal(comparison.dimensions[0].attribution, 'evidence_policy');
 assert.match(renderReplayComparisonMarkdown([comparison]), /Evidence hashes match: \*\*yes\*\*/);
+const standardBotsCalibrator = {
+  dimension_scores: [
+    { name: 'Portfolio construction fit', rationale: 'Builders Capital is not in any GP tier.' },
+    { name: 'Domain match', rationale: 'The company directly matches industrial robotics.' },
+    { name: 'Source quality', rationale: 'The deal source is an unknown syndicate.' },
+  ],
+  key_questions: [],
+};
+assert.equal(
+  controlledReplayReviewGates('Standard Bots', standardBotsCalibrator)
+    ['source-quality concerns do not leak into unrelated dimensions'],
+  true,
+  'GP breadth belongs in portfolio construction and is not source-quality leakage',
+);
+standardBotsCalibrator.dimension_scores[1].rationale = 'Domain match is lower because Builders Capital is unknown.';
+assert.equal(
+  controlledReplayReviewGates('Standard Bots', standardBotsCalibrator)
+    ['source-quality concerns do not leak into unrelated dimensions'],
+  false,
+  'source-quality leakage into domain match still fails closed',
+);
 const changed = structuredClone(bundle);
 changed.cases[0].research_snapshot.evidence.push('changed');
 assert.throws(() => validateReplayBundle(changed), /frozen research hash does not match/);

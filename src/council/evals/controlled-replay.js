@@ -10,6 +10,39 @@ export function replayHash(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
+function normalizedText(value) {
+  return JSON.stringify(value || '').toLowerCase();
+}
+
+export function controlledReplayReviewGates(company, calibrator) {
+  const dimensionText = Object.fromEntries(
+    calibrator.dimension_scores.map(item => [item.name, normalizedText(item.rationale)]),
+  );
+  const questions = normalizedText(calibrator.key_questions);
+  if (company === 'Sourcerer') {
+    const mechanismText = [
+      dimensionText['Domain match'],
+      dimensionText['Compounding structure'],
+      dimensionText.Differentiation,
+    ].join(' ');
+    return {
+      'no public-silence-only founder structural flag': !/founders? without domain|lack domain experience/.test(normalizedText(calibrator.kill_criteria)),
+      'supplied product/data/flywheel mechanisms considered': /product|data|flywheel|workflow|network/.test(mechanismText),
+      'working-capital or contribution-margin questions remain prominent': /working capital|contribution margin/.test(questions),
+    };
+  }
+  if (company === 'Standard Bots') {
+    const outsideSourceAndPortfolioQuality = Object.entries(dimensionText)
+      .filter(([name]) => name !== 'Source quality' && name !== 'Portfolio construction fit')
+      .map(([, rationale]) => rationale)
+      .join(' ');
+    return {
+      'source-quality concerns do not leak into unrelated dimensions': !/builders capital|source quality|deal source/.test(outsideSourceAndPortfolioQuality),
+    };
+  }
+  return {};
+}
+
 export function validateReplayBundle(bundle) {
   if (!Array.isArray(bundle?.cases)) throw new Error('Controlled replay bundle requires cases');
   const byCompany = new Map(bundle.cases.map(entry => [entry.company, entry]));
