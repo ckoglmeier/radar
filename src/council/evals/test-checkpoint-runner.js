@@ -21,7 +21,11 @@ assert.deepEqual(classifyEvalFailure({
 });
 assert.equal(classifyEvalFailure(new Error('schema mismatch')).retryable, false);
 
-const attempts = [];
+const attempts = [{
+  selector: { suite: 'release', case_id: 'chunk_all-3' },
+  attempt: 1,
+  outcome: 'transport_failed',
+}];
 let calls = 0;
 let checkpoints = 0;
 const result = await runCheckpointedCase({
@@ -42,7 +46,8 @@ const result = await runCheckpointedCase({
 assert.equal(result.value, 25);
 assert.equal(calls, 3);
 assert.equal(checkpoints, 3);
-assert.deepEqual(attempts.map(item => item.outcome), ['timed_out', 'timed_out', 'passed']);
+assert.deepEqual(attempts.slice(1).map(item => item.attempt), [2, 3, 4]);
+assert.deepEqual(attempts.slice(1).map(item => item.outcome), ['timed_out', 'timed_out', 'passed']);
 
 let validationCalls = 0;
 await assert.rejects(() => runCheckpointedCase({

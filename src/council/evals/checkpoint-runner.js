@@ -42,7 +42,12 @@ export async function runCheckpointedCase({
   backoffMs = [1_000, 3_000],
   wait = ms => new Promise(resolve => setTimeout(resolve, ms)),
 }) {
-  for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
+  const selectorKey = JSON.stringify(selector);
+  const priorAttemptCount = attempts.filter(
+    item => JSON.stringify(item.selector) === selectorKey,
+  ).length;
+  for (let localAttempt = 1; localAttempt <= maxRetries + 1; localAttempt += 1) {
+    const attempt = priorAttemptCount + localAttempt;
     const startedAt = new Date();
     try {
       const value = await operation(attempt);
@@ -75,8 +80,8 @@ export async function runCheckpointedCase({
         error_detail: error?.detail || error?.message || String(error),
       });
       onCheckpoint?.();
-      if (!failure.retryable || attempt > maxRetries) throw error;
-      await wait(backoffMs[Math.min(attempt - 1, backoffMs.length - 1)] || 0);
+      if (!failure.retryable || localAttempt > maxRetries) throw error;
+      await wait(backoffMs[Math.min(localAttempt - 1, backoffMs.length - 1)] || 0);
     }
   }
   throw new Error('evaluation retry loop exhausted unexpectedly');
