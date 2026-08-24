@@ -26,6 +26,7 @@ import { thesisCommandDefinitions } from './theses.js';
 import { portfolioCommandDefinitions } from './portfolio.js';
 import { fundLifecycleCommandDefinitions } from './funds.js';
 import { employmentLifecycleCommandDefinitions } from './employment.js';
+import { workspaceCommandDefinitions } from './workspace.js';
 
 export const commandRegistry = createCommandRegistry([
   ...tierACommandDefinitions,
@@ -34,6 +35,7 @@ export const commandRegistry = createCommandRegistry([
   ...portfolioCommandDefinitions,
   ...fundLifecycleCommandDefinitions,
   ...employmentLifecycleCommandDefinitions,
+  ...workspaceCommandDefinitions,
 ]);
 
 function jsonValue(value) {
