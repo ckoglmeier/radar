@@ -1,5 +1,12 @@
+import { createHash } from 'node:crypto';
 import { query, withAtomicWrite } from '../db/index.js';
-import { createDocument } from './documents.js';
+import {
+  createDocument,
+  createPendingIntake,
+  getPendingIntake,
+  markPendingCommitted,
+  MAX_SIZE_BYTES,
+} from './documents.js';
 
 export const FILE_VAULT_CATEGORIES = new Set([
   'life_insurance',
@@ -85,6 +92,52 @@ export async function createVaultFile({
       executionMode,
     });
     return { ...entry, document };
+  });
+}
+
+export async function stageVaultFile({ filename, mime, content }) {
+  const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content);
+  if (bytes.length === 0) throw new Error('Choose a document to upload');
+  if (bytes.length > MAX_SIZE_BYTES) throw new Error(`Vault files must be ${MAX_SIZE_BYTES} bytes or smaller`);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  return createPendingIntake({
+    filename: filename || 'vault-document',
+    mime: mime || null,
+    sha256,
+    content: bytes,
+    preview: { type: 'file_vault_upload', filename: filename || 'vault-document', mime: mime || null, sha256 },
+  });
+}
+
+export async function createVaultFileFromPendingIntake({ previewId, ...metadata }) {
+  const pending = await getPendingIntake(previewId);
+  if (!pending || pending.preview?.type !== 'file_vault_upload') {
+    throw new Error('The staged File Vault upload is missing or expired');
+  }
+  if (pending.status === 'committed') {
+    const [entry] = await query('SELECT * FROM file_vault_entries WHERE id = $1', [pending.created_refs?.entry_id]);
+    const [document] = await query(`
+      SELECT id, entity_type, entity_id, filename, mime, sha256, source, size_bytes,
+             confidentiality, processing_policy, sync_policy, created_at
+        FROM documents WHERE id = $1
+    `, [pending.created_refs?.document_id]);
+    if (!entry || !document) throw new Error('The committed File Vault upload is incomplete');
+    return { ...entry, document, idempotent_replay: true };
+  }
+
+  return withAtomicWrite(async () => {
+    const created = await createVaultFile({
+      ...metadata,
+      filename: pending.filename,
+      mime: pending.mime,
+      content: pending.content,
+      executionMode: 'desktop',
+    });
+    await markPendingCommitted(previewId, {
+      entry_id: created.id,
+      document_id: created.document.id,
+    });
+    return { ...created, idempotent_replay: false };
   });
 }
 

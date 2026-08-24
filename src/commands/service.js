@@ -28,6 +28,7 @@ import { fundLifecycleCommandDefinitions } from './funds.js';
 import { employmentLifecycleCommandDefinitions } from './employment.js';
 import { workspaceCommandDefinitions } from './workspace.js';
 import { pipelineCommandDefinitions } from './pipeline.js';
+import { intakeCouncilCommandDefinitions } from './intake-council.js';
 
 export const commandRegistry = createCommandRegistry([
   ...tierACommandDefinitions,
@@ -38,6 +39,7 @@ export const commandRegistry = createCommandRegistry([
   ...employmentLifecycleCommandDefinitions,
   ...workspaceCommandDefinitions,
   ...pipelineCommandDefinitions,
+  ...intakeCouncilCommandDefinitions,
 ]);
 
 function jsonValue(value) {

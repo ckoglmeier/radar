@@ -6,7 +6,7 @@
 // is reused from where.
 
 import { createHash } from 'crypto';
-import { query, isPgliteActive } from '../db/index.js';
+import { query, isPgliteActive, withAtomicWrite } from '../db/index.js';
 import {
   createPendingIntake,
   getPendingIntake,
@@ -42,13 +42,10 @@ const DOMAIN_ENTITY_TYPE = {
  * Runs fn() as a unit, using a real transaction when the active driver
  * supports one.
  *
- * PGlite (local/CLI): a single embedded instance holds session state across
- * separate query() calls, so BEGIN/COMMIT/ROLLBACK behave like a normal
- * Postgres connection — verified empirically (see src/intake/test-intake.js,
- * "withTx: PGlite rolls back on failure"). On any error inside fn(), the
- * ROLLBACK discards every statement fn() issued, including intermediate
- * created_refs bookkeeping — the pending row lands back exactly where it
- * started, no resumption bookkeeping needed.
+ * PGlite (local/CLI): participates in the driver's serialized, re-entrant
+ * atomic-write boundary. On any error inside fn(), the transaction discards
+ * every statement fn() issued, including intermediate created_refs
+ * bookkeeping — the pending row lands back exactly where it started.
  *
  * Neon (hosted, until the S1 pg-driver swap): the @neondatabase/serverless
  * HTTP driver issues one HTTP request per query() call with no shared
@@ -69,19 +66,7 @@ export async function withTx(fn) {
   if (!pglite) {
     return fn();
   }
-  await query('BEGIN');
-  try {
-    const result = await fn();
-    await query('COMMIT');
-    return result;
-  } catch (err) {
-    try {
-      await query('ROLLBACK');
-    } catch {
-      // Connection may already be unusable; the original error is what matters.
-    }
-    throw err;
-  }
+  return withAtomicWrite(fn);
 }
 
 // ---------------------------------------------------------------------------

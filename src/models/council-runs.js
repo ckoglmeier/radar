@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { query as defaultQuery } from '../db/index.js';
+import { query as defaultQuery, withAtomicWrite } from '../db/index.js';
 
 export const COUNCIL_RUN_TYPES = Object.freeze([
   'initial',
@@ -50,6 +50,7 @@ export function councilRequestKey({
 }
 
 async function transaction(query, fn) {
+  if (query === defaultQuery) return withAtomicWrite(fn);
   await query('BEGIN');
   try {
     const result = await fn();
