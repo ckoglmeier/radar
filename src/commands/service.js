@@ -394,8 +394,14 @@ export async function applyCommandProposal(proposalId, expectedHash, fields = {}
         });
       }
       const receiptId = randomUUID();
+      const undoSupport = await Promise.all(undoCommands.map(async state => {
+        const definition = commandRegistry.get(state.name, state.version);
+        if (definition.undoPolicy === 'unavailable') return false;
+        if (typeof definition.undoAvailable !== 'function') return true;
+        return Boolean(await definition.undoAvailable(state, context));
+      }));
       const undoPolicies = commands.map(command => commandRegistry.get(command.name, command.version).undoPolicy);
-      const undoAvailable = undoPolicies.every(policy => policy !== 'unavailable');
+      const undoAvailable = undoSupport.every(Boolean);
       const undoPolicy = undoAvailable && new Set(undoPolicies).size === 1 ? undoPolicies[0] : 'unavailable';
       const receipt = {
         id: receiptId,

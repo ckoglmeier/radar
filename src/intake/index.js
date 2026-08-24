@@ -478,7 +478,7 @@ async function insertCompanyUpdate(parsed, content, preview_id, overrides) {
         existing[0].id,
       ]
     );
-    return { table: 'company_updates', id: existing[0].id };
+    return { table: 'company_updates', id: existing[0].id, is_new: false };
   }
 
   const rows = await query(
@@ -497,7 +497,7 @@ async function insertCompanyUpdate(parsed, content, preview_id, overrides) {
       raw_content,
     ]
   );
-  return { table: 'company_updates', id: rows[0].id };
+  return { table: 'company_updates', id: rows[0].id, is_new: true };
 }
 
 async function writeDomainRow(effectiveType, parsed, content, preview_id, overrides) {
@@ -605,4 +605,63 @@ export async function intakeCommit({ preview_id, overrides = {} }) {
   });
 
   return { ...result, idempotent_replay: false };
+}
+
+/**
+ * Compensates only intake writes that can be removed without reconstructing
+ * pre-existing state: document-only commits and newly-created company
+ * updates. The command receipt remains the durable audit record.
+ */
+export async function undoIntakeCommit({ preview_id, expected }) {
+  const pending = await getPendingIntake(preview_id);
+  if (!pending || pending.status !== 'committed') {
+    throw new Error('intake undo: committed staging receipt is missing or expired');
+  }
+
+  const refs = pending.created_refs || {};
+  const expectedDocumentId = Number(expected?.document_id);
+  if (!Number.isInteger(expectedDocumentId) || Number(refs.document_id) !== expectedDocumentId) {
+    throw new Error('intake undo: document reference changed');
+  }
+
+  const created = expected?.created || null;
+  if (created) {
+    const matchesNewUpdate = created.table === 'company_updates'
+      && created.is_new === true
+      && refs.created?.table === created.table
+      && Number(refs.created?.id) === Number(created.id);
+    if (!matchesNewUpdate) {
+      throw new Error('intake undo: domain record cannot be safely removed');
+    }
+  } else if (refs.created) {
+    throw new Error('intake undo: domain reference changed');
+  }
+
+  const documents = await query(`
+    DELETE FROM documents
+     WHERE id = $1 AND source = 'intake'
+     RETURNING id
+  `, [expectedDocumentId]);
+  if (documents.length !== 1) throw new Error('intake undo: source document changed');
+
+  if (created) {
+    const updates = await query(`
+      DELETE FROM company_updates
+       WHERE id = $1 AND source = 'intake' AND file_path = $2
+       RETURNING id
+    `, [created.id, `intake:${preview_id}`]);
+    if (updates.length !== 1) throw new Error('intake undo: company update changed');
+  }
+
+  const receipts = await query(`
+    DELETE FROM pending_intake
+     WHERE id = $1 AND status = 'committed'
+     RETURNING id
+  `, [preview_id]);
+  if (receipts.length !== 1) throw new Error('intake undo: staging receipt changed');
+
+  return {
+    removed_document_id: expectedDocumentId,
+    removed_created: created ? { table: created.table, id: created.id } : null,
+  };
 }

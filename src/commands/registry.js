@@ -111,6 +111,9 @@ export class CommandRegistry {
     if (undoPolicy !== 'unavailable' && typeof definition.undo !== 'function') {
       throw new TypeError(`command ${definition.name} with ${undoPolicy} undo requires undo()`);
     }
+    if (definition.undoAvailable != null && typeof definition.undoAvailable !== 'function') {
+      throw new TypeError(`command ${definition.name} undoAvailable must be a function`);
+    }
     for (const inputKey of definition.editableInputKeys || []) {
       if (!Object.hasOwn(definition.inputSchema?.properties || {}, inputKey)) {
         throw new TypeError(`command ${definition.name} editable input is missing from its schema: ${inputKey}`);

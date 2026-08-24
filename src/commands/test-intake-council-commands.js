@@ -7,7 +7,7 @@ import { runMigrations } from '../db/migrate.js';
 import { intakePreview } from '../intake/index.js';
 import { stageVaultFile } from '../models/file-vault.js';
 import { discardPendingIntake } from '../models/documents.js';
-import { authorizeCommandProposal, planCommandProposal } from './service.js';
+import { authorizeCommandProposal, planCommandProposal, undoCommandReceipt } from './service.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-intake-council-commands-'));
 const databaseUrl = `file:${join(scratch, 'db')}`;
@@ -57,6 +57,11 @@ try {
     }, 'commit-intake', 'inline_confirmation');
     assert.equal(committed.status, 'applied');
     assert.equal((await query('SELECT status FROM pending_intake WHERE id = $1', [preview.preview_id]))[0].status, 'committed');
+    assert.equal(committed.receipt.undo.available, true);
+    await undoCommandReceipt(committed.receipt.id, { actorId: 'test', actorCapabilities });
+    assert.equal(Number((await query('SELECT COUNT(*)::int AS count FROM company_updates'))[0].count), 0);
+    assert.equal(Number((await query('SELECT COUNT(*)::int AS count FROM documents'))[0].count), 0);
+    assert.equal(Number((await query('SELECT COUNT(*)::int AS count FROM pending_intake WHERE id = $1', [preview.preview_id]))[0].count), 0);
 
     const dealPreview = await intakePreview({
       content: Buffer.from('Command New Deal pitch materials'),

@@ -1,5 +1,5 @@
 import { query, writeCapabilities } from '../db/index.js';
-import { intakeCommit } from '../intake/index.js';
+import { intakeCommit, undoIntakeCommit } from '../intake/index.js';
 import { answerFounderFollowup } from '../models/council-followups.js';
 import {
   cancelQueuedCouncilRun,
@@ -93,6 +93,7 @@ export const intakeCouncilCommandDefinitions = [
     title: 'Add staged intake item',
     description: 'Commit an already-reviewed staged artifact to its selected Radar record.',
     interactionPolicy: 'confirm_inline',
+    undoPolicy: 'compensating_event',
     editableInputKeys: ['overrides', 'startCouncil'],
     inputSchema: schema({
       previewId: uuid,
@@ -122,6 +123,12 @@ export const intakeCouncilCommandDefinitions = [
     affectedResources: ({ result }) => result.created
       ? [{ type: result.created.table || 'intake_record', id: result.created.id }]
       : [{ type: 'document', id: result.document_id }],
+    undoAvailable: ({ result }) => result.created == null
+      || (result.created.table === 'company_updates' && result.created.is_new === true),
+    undo: ({ input, result }) => undoIntakeCommit({
+      preview_id: input.previewId,
+      expected: result,
+    }),
   }),
   definition({
     name: 'intake.exclude_document',
