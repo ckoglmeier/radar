@@ -36,9 +36,26 @@ try {
     const committed = await run('intake.commit', {
       previewId: preview.preview_id,
       overrides: { entity_type: 'investment', entity_id: Number(investment.id) },
+      startCouncil: false,
     }, 'commit-intake');
     assert.equal(committed.status, 'applied');
     assert.equal((await query('SELECT status FROM pending_intake WHERE id = $1', [preview.preview_id]))[0].status, 'committed');
+
+    const dealPreview = await intakePreview({
+      content: Buffer.from('Command New Deal pitch materials'),
+      filename: 'new-deal.txt', mime: 'text/plain',
+    });
+    assert.equal((await run('intake.commit', {
+      previewId: dealPreview.preview_id,
+      overrides: { type: 'pipeline_invite', company_name: 'Command New Deal' },
+      startCouncil: true,
+    }, 'commit-and-score-intake')).status, 'applied');
+    const [intakeRun] = await query(`
+      SELECT cr.status FROM council_runs cr
+      JOIN pipeline_invites pi ON pi.id = cr.pipeline_invite_id
+      WHERE pi.company_name = 'Command New Deal'
+    `);
+    assert.equal(intakeRun.status, 'queued');
 
     const stagedVault = await stageVaultFile({
       filename: 'policy.pdf', mime: 'application/pdf', content: Buffer.from('private policy bytes'),

@@ -92,10 +92,11 @@ export const intakeCouncilCommandDefinitions = [
     name: 'intake.commit',
     title: 'Add staged intake item',
     description: 'Commit an already-reviewed staged artifact to its selected Radar record.',
-    editableInputKeys: ['overrides'],
+    editableInputKeys: ['overrides', 'startCouncil'],
     inputSchema: schema({
       previewId: uuid,
       overrides: { type: 'object', additionalProperties: true },
+      startCouncil: { type: 'boolean' },
     }, ['previewId', 'overrides']),
     resolve: input => pendingTarget(input.previewId),
     inspect: inspectPending,
@@ -103,10 +104,20 @@ export const intakeCouncilCommandDefinitions = [
       summary: `Add ${target.label} to Radar.`, target,
       before: [{ field: 'status', value: current.status }],
       after: [{ field: 'type', value: input.overrides.type || current.preview?.type || null }],
-      derivedEffects: [], warnings: [], requiredReason: false,
+      derivedEffects: input.startCouncil ? ['A Council run will be queued if this creates a new pipeline deal.'] : [],
+      warnings: [], requiredReason: false,
     }),
     preconditions: ({ current }) => ({ status: current.status, sha256: current.sha256, expires_at: current.expires_at }),
-    apply: ({ input }) => intakeCommit({ preview_id: input.previewId, overrides: input.overrides }),
+    apply: async ({ input, idempotencyKey }) => {
+      const result = await intakeCommit({ preview_id: input.previewId, overrides: input.overrides });
+      if (input.startCouncil && result.created?.table === 'pipeline_invites' && result.created?.is_new === true) {
+        result.scoring = await queueCouncilRun({
+          inviteId: Number(result.created.id), runType: 'initial', fresh: false,
+          executionId: idempotencyKey,
+        });
+      }
+      return result;
+    },
     affectedResources: ({ result }) => result.created
       ? [{ type: result.created.table || 'intake_record', id: result.created.id }]
       : [{ type: 'document', id: result.document_id }],
@@ -267,7 +278,7 @@ export const intakeCouncilCommandDefinitions = [
       documentDate: { anyOf: [{ type: 'string', format: 'date' }, { type: 'null' }] },
       notes: nullableText,
     }, ['previewId', 'title', 'category']),
-    resolve: input => pendingTarget(input.previewId, 'file_vault_upload'),
+    resolve: input => pendingTarget(input.previewId),
     inspect: inspectPending,
     preview: ({ target, input, current }) => ({
       summary: `Store ${input.title} in File Vault.`, target,

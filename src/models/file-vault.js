@@ -111,10 +111,13 @@ export async function stageVaultFile({ filename, mime, content }) {
 
 export async function createVaultFileFromPendingIntake({ previewId, ...metadata }) {
   const pending = await getPendingIntake(previewId);
-  if (!pending || pending.preview?.type !== 'file_vault_upload') {
+  if (!pending) {
     throw new Error('The staged File Vault upload is missing or expired');
   }
   if (pending.status === 'committed') {
+    if (!pending.created_refs?.entry_id || !pending.created_refs?.document_id) {
+      throw new Error('This staged upload was already committed to another Radar record');
+    }
     const [entry] = await query('SELECT * FROM file_vault_entries WHERE id = $1', [pending.created_refs?.entry_id]);
     const [document] = await query(`
       SELECT id, entity_type, entity_id, filename, mime, sha256, source, size_bytes,
