@@ -24,6 +24,12 @@ function fixture(overrides = {}) {
     previews: [{ summary: 'Record NAV' }],
     commandSetHash: 'set-hash-1',
     idempotencyKey: 'ask:test:1',
+    intent: 'correct',
+    executionPreference: 'review_required',
+    plannerConfidence: 'low',
+    plannerWarnings: ['LOW_PARSER_CONFIDENCE'],
+    conversationContext: { thread_id: 'thread-1', prior_message_ids: ['message-1'] },
+    provenanceContext: { attachment_preview_id: 'preview-1' },
     ...overrides,
   };
 }
@@ -34,6 +40,14 @@ try {
     const created = await createCommandProposal(fixture());
     assert.equal(created.idempotent_replay, false);
     assert.equal(created.proposal.status, 'proposed');
+    assert.equal(created.proposal.intent, 'correct');
+    assert.equal(created.proposal.execution_preference, 'review_required');
+    assert.equal(created.proposal.planner_confidence, 'low');
+    assert.deepEqual(created.proposal.planner_warnings, ['LOW_PARSER_CONFIDENCE']);
+    assert.deepEqual(created.proposal.conversation_context, {
+      thread_id: 'thread-1', prior_message_ids: ['message-1'],
+    });
+    assert.deepEqual(created.proposal.provenance_context, { attachment_preview_id: 'preview-1' });
     const replay = await createCommandProposal(fixture());
     assert.equal(replay.idempotent_replay, true);
     assert.equal(replay.proposal.id, created.proposal.id);
@@ -44,6 +58,10 @@ try {
     await assert.rejects(
       () => query(`UPDATE command_proposals SET commands = '[]'::jsonb WHERE id = $1`, [created.proposal.id]),
       /payload is immutable/,
+    );
+    await assert.rejects(
+      () => query(`UPDATE command_proposals SET execution_preference = 'apply_requested' WHERE id = $1`, [created.proposal.id]),
+      /planning context is immutable/,
     );
 
     const rejected = await rejectCommandProposal(created.proposal.id, 'set-hash-1', {

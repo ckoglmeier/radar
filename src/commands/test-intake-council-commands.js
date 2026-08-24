@@ -33,11 +33,21 @@ try {
       content: Buffer.from('Command Intake Co founder update\nRevenue grew this month.'),
       filename: 'founder-update.txt', mime: 'text/plain',
     });
-    const committed = await run('intake.commit', {
+    const reviewed = await run('intake.commit', {
       previewId: preview.preview_id,
       overrides: { entity_type: 'investment', entity_id: Number(investment.id) },
       startCouncil: false,
     }, 'commit-intake');
+    assert.equal(reviewed.status, 'confirmation_required');
+    assert.equal((await query('SELECT status FROM pending_intake WHERE id = $1', [preview.preview_id]))[0].status, 'pending');
+    assert.equal(Number((await query('SELECT COUNT(*)::int AS count FROM documents'))[0].count), 0);
+    assert.equal(Number((await query('SELECT COUNT(*)::int AS count FROM investment_updates'))[0].count), 0);
+    assert.deepEqual(reviewed.proposal.previews[0].warnings, preview.warnings);
+    const committed = await run('intake.commit', {
+      previewId: preview.preview_id,
+      overrides: { entity_type: 'investment', entity_id: Number(investment.id) },
+      startCouncil: false,
+    }, 'commit-intake', 'inline_confirmation');
     assert.equal(committed.status, 'applied');
     assert.equal((await query('SELECT status FROM pending_intake WHERE id = $1', [preview.preview_id]))[0].status, 'committed');
 
@@ -49,7 +59,12 @@ try {
       previewId: dealPreview.preview_id,
       overrides: { type: 'pipeline_invite', company_name: 'Command New Deal' },
       startCouncil: true,
-    }, 'commit-and-score-intake')).status, 'applied');
+    }, 'commit-and-score-intake')).status, 'confirmation_required');
+    assert.equal((await run('intake.commit', {
+      previewId: dealPreview.preview_id,
+      overrides: { type: 'pipeline_invite', company_name: 'Command New Deal' },
+      startCouncil: true,
+    }, 'commit-and-score-intake', 'inline_confirmation')).status, 'applied');
     const [intakeRun] = await query(`
       SELECT cr.status FROM council_runs cr
       JOIN pipeline_invites pi ON pi.id = cr.pipeline_invite_id

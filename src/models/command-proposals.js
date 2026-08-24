@@ -47,8 +47,11 @@ export async function createCommandProposal(fields = {}) {
       (schema_version, normalizer_version, registry_version, origin_surface,
        actor_type, actor_id, intent_text, source_document_id, source_update_id,
        commands, previews, command_set_hash, idempotency_key,
-       supersedes_proposal_id, planner_provider, planner_model, planner_run_key)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16,$17)
+       supersedes_proposal_id, planner_provider, planner_model, planner_run_key,
+       intent, execution_preference, planner_confidence, planner_warnings,
+       conversation_context, provenance_context)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16,$17,
+            $18,$19,$20,$21::jsonb,$22::jsonb,$23::jsonb)
     ON CONFLICT (idempotency_key) DO NOTHING
     RETURNING *
   `, [
@@ -69,6 +72,12 @@ export async function createCommandProposal(fields = {}) {
     optionalText(fields.plannerProvider),
     optionalText(fields.plannerModel),
     optionalText(fields.plannerRunKey),
+    fields.intent || 'write',
+    fields.executionPreference || 'unspecified',
+    fields.plannerConfidence || 'high',
+    json(fields.plannerWarnings || []),
+    json(fields.conversationContext || {}),
+    json(fields.provenanceContext || {}),
   ]);
   if (inserted[0]) return { proposal: inserted[0], idempotent_replay: false };
 

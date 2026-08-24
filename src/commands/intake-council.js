@@ -92,6 +92,7 @@ export const intakeCouncilCommandDefinitions = [
     name: 'intake.commit',
     title: 'Add staged intake item',
     description: 'Commit an already-reviewed staged artifact to its selected Radar record.',
+    interactionPolicy: 'confirm_inline',
     editableInputKeys: ['overrides', 'startCouncil'],
     inputSchema: schema({
       previewId: uuid,
@@ -105,7 +106,7 @@ export const intakeCouncilCommandDefinitions = [
       before: [{ field: 'status', value: current.status }],
       after: [{ field: 'type', value: input.overrides.type || current.preview?.type || null }],
       derivedEffects: input.startCouncil ? ['A Council run will be queued if this creates a new pipeline deal.'] : [],
-      warnings: [], requiredReason: false,
+      warnings: current.preview?.warnings || [], requiredReason: false,
     }),
     preconditions: ({ current }) => ({ status: current.status, sha256: current.sha256, expires_at: current.expires_at }),
     apply: async ({ input, idempotencyKey }) => {
