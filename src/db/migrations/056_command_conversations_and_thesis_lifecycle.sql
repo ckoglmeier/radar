@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS command_messages (
   role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
   content TEXT NOT NULL,
   result_kind TEXT CHECK (result_kind IN ('question', 'clarification', 'confirmation', 'receipt', 'refusal')),
+  result JSONB,
   proposal_id UUID REFERENCES command_proposals(id),
   receipt_id UUID,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

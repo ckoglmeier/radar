@@ -52,8 +52,14 @@ try {
     assert.ok(thesisMetadata.every(command => command.undoPolicy === 'inverse'));
 
     const thread = await createCommandThread({ title: 'Legacy cleanup' });
-    await appendCommandMessage(thread.id, { role: 'user', content: 'Move every position without a thesis to Legacy.' });
-    assert.equal((await getCommandThread(thread.id)).messages.length, 1);
+    await appendCommandMessage(thread.id, {
+      role: 'user',
+      content: 'Move every position without a thesis to Legacy.',
+      result: { source: 'typed' },
+    });
+    const persistedThread = await getCommandThread(thread.id);
+    assert.equal(persistedThread.messages.length, 1);
+    assert.deepEqual(persistedThread.messages[0].result, { source: 'typed' });
 
     const legacyCreate = await plan('thesis.create', { name: 'Legacy / No recorded thesis' }, 'create-legacy');
     const legacyApplied = await authorize(legacyCreate);

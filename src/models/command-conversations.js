@@ -39,14 +39,15 @@ export async function appendCommandMessage(threadId, fields = {}) {
   if (!['user', 'assistant', 'system'].includes(role)) throw new TypeError(`invalid message role: ${role}`);
   const [message] = await query(`
     INSERT INTO command_messages
-      (thread_id, role, content, result_kind, proposal_id, receipt_id)
-    VALUES ($1,$2,$3,$4,$5,$6)
+      (thread_id, role, content, result_kind, result, proposal_id, receipt_id)
+    VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)
     RETURNING *
   `, [
     threadId,
     role,
     requiredText(fields.content, 'Message content'),
     fields.resultKind || null,
+    fields.result == null ? null : JSON.stringify(fields.result),
     fields.proposalId || null,
     fields.receiptId || null,
   ]);
