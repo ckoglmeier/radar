@@ -103,7 +103,7 @@ export async function thesisList() {
 
 export async function untaggedInvestments() {
   const rows = await query(`
-    SELECT i.company_name, i.invest_date, i.invested, i.market, i.round, i.status
+    SELECT i.id, i.company_name, i.invest_date, i.invested, i.market, i.round, i.status
     FROM investments i
     LEFT JOIN investment_theses it ON it.investment_id = i.id
     WHERE it.investment_id IS NULL AND i.asset_class = 'direct'
