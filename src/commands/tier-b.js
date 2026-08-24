@@ -23,7 +23,7 @@ function definition(base) {
   return {
     tier: 'B', version: 1, risk: 'reconciliation', domainAtomicity: 'multi_statement',
     proposeCapabilities: ['portfolio:propose'], applyCapabilities: ['portfolio:apply:reconciliation'],
-    resultSchema, availability,
+    resultSchema, availability, interactionPolicy: 'execute_inline', plannerExposure: true,
     affectedResources: ({ target }) => target.affected,
     ...base,
   };

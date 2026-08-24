@@ -131,6 +131,8 @@ function definition(base) {
     proposeCapabilities: ['portfolio:propose'],
     applyCapabilities: [applyCapability],
     resultSchema: objectResult,
+    interactionPolicy: base.risk === 'explicit_override' ? 'confirm_inline' : 'execute_inline',
+    plannerExposure: true,
     availability: available,
     affectedResources: ({ target, result }) => result?.affected_resources || [target],
     ...base,
