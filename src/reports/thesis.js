@@ -5,7 +5,7 @@ import { STAGE_ORDER, BARBELL_GROUPS, stageLabel, stageToBarbellGroup } from '..
 
 export async function thesisPerformance(opts = {}) {
   const { since, until } = opts;
-  const conditions = ['t.active = TRUE'];
+  const conditions = ['TRUE'];
   const params = [];
   if (since) { params.push(since); conditions.push(`i.invest_date >= $${params.length}`); }
   if (until) { params.push(until); conditions.push(`i.invest_date <= $${params.length}`); }
@@ -14,6 +14,8 @@ export async function thesisPerformance(opts = {}) {
   const rows = await query(`
     SELECT
       t.name AS thesis,
+      t.active,
+      t.inactive_at,
       COUNT(DISTINCT i.id) AS deal_count,
       SUM(i.invested * it.weight / 100.0) AS total_invested,
       SUM(i.net_value * it.weight / 100.0) AS total_net_value,
@@ -29,7 +31,7 @@ export async function thesisPerformance(opts = {}) {
     LEFT JOIN investment_theses it ON it.thesis_id = t.id
     LEFT JOIN investments i ON i.id = it.investment_id AND i.asset_class = 'direct'
     ${whereClause}
-    GROUP BY t.id, t.name
+    GROUP BY t.id, t.name, t.active, t.inactive_at
     ORDER BY total_invested DESC NULLS LAST
   `, params);
 
@@ -48,7 +50,7 @@ export async function thesisPerformance(opts = {}) {
     JOIN investments i ON i.id = cf.investment_id
     JOIN investment_theses it ON it.investment_id = cf.investment_id
     JOIN theses t ON t.id = it.thesis_id
-    WHERE t.active = TRUE AND i.asset_class = 'direct' ${irrWhere}
+    WHERE i.asset_class = 'direct' ${irrWhere}
     ORDER BY cf.flow_date
   `, irrParams);
   const cfByThesis = {};
@@ -65,14 +67,14 @@ export async function thesisPerformance(opts = {}) {
     FROM investment_theses it
     JOIN investments i ON i.id = it.investment_id
     JOIN theses t ON t.id = it.thesis_id
-    WHERE t.active = TRUE AND i.asset_class = 'direct' ${irrWhere}
+    WHERE i.asset_class = 'direct' ${irrWhere}
     GROUP BY it.thesis_id
   `, irrParams);
   const unrByThesis = {};
   for (const r of unrRows) unrByThesis[r.thesis_id] = Number(r.unrealized || 0);
 
   const today = new Date().toISOString().slice(0, 10);
-  const thesisIdRows = await query(`SELECT id, name FROM theses WHERE active = TRUE`);
+  const thesisIdRows = await query(`SELECT id, name FROM theses`);
   const idByName = {};
   for (const t of thesisIdRows) idByName[t.name] = t.id;
 

@@ -94,5 +94,16 @@ assert.equal(commandSetHash({
 }));
 assert.equal(NORMALIZER_VERSION, 1);
 assert.equal(registry.metadata()[0].name, 'fund.record_nav');
+assert.equal(stored.interactionPolicy, 'confirm_inline');
+assert.equal(stored.undoPolicy, 'unavailable');
+assert.equal(stored.plannerExposure, false);
+assert.throws(
+  () => new CommandRegistry().register(definition({ interactionPolicy: 'silent' })),
+  /invalid command interaction policy/,
+);
+assert.throws(
+  () => new CommandRegistry().register(definition({ undoPolicy: 'inverse' })),
+  /requires undo/,
+);
 
 console.log('command registry: schemas, immutability, metadata, and canonical hashes passed');

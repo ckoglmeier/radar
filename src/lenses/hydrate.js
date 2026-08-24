@@ -72,6 +72,7 @@ export async function loadCloudLens(files) {
             open_question, conviction_now, conviction_entry, qualifications,
             exclusions, conviction_signal
        FROM theses
+      WHERE active = TRUE
       ORDER BY id`
   );
 

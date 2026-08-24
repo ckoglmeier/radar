@@ -8,13 +8,27 @@ import {
   markCommandProposalStale,
   supersedeCommandProposal,
 } from '../models/command-proposals.js';
+import {
+  createCommandReceipt,
+  getCommandReceipt,
+  markCommandReceiptUndone,
+} from '../models/command-receipts.js';
+import {
+  createCommandConfirmation,
+  resolveCommandConfirmation,
+} from '../models/command-conversations.js';
 import { canonicalHash, commandHash, commandSetHash, NORMALIZER_VERSION } from './canonical.js';
 import { CommandError } from './errors.js';
 import { createCommandRegistry } from './registry.js';
 import { tierACommandDefinitions } from './tier-a.js';
 import { tierBCommandDefinitions } from './tier-b.js';
+import { thesisCommandDefinitions } from './theses.js';
 
-export const commandRegistry = createCommandRegistry([...tierACommandDefinitions, ...tierBCommandDefinitions]);
+export const commandRegistry = createCommandRegistry([
+  ...tierACommandDefinitions,
+  ...tierBCommandDefinitions,
+  ...thesisCommandDefinitions,
+]);
 
 function jsonValue(value) {
   return typeof value === 'string' ? JSON.parse(value) : value;
@@ -257,6 +271,7 @@ export async function applyCommandProposal(proposalId, expectedHash, fields = {}
 
       const overrideAuthorizations = validateOverrideAuthorizations(commands, fields);
 
+      const commandStates = new Map();
       for (const command of commands) {
         const definition = commandRegistry.get(command.name, command.version);
         if (!hasCapabilities(definition.applyCapabilities, fields.actorCapabilities)) {
@@ -289,9 +304,12 @@ export async function applyCommandProposal(proposalId, expectedHash, fields = {}
           });
           return { proposal: stale, receipt: null, stale: true };
         }
+        commandStates.set(command.id, { current });
       }
 
       const results = [];
+      const undoCommands = [];
+      const resources = [];
       await assertCorrectionGucsOff();
       for (const command of commands) {
         const definition = commandRegistry.get(command.name, command.version);
@@ -303,15 +321,57 @@ export async function applyCommandProposal(proposalId, expectedHash, fields = {}
         }, context);
         await assertCorrectionGucsOff();
         const normalizedResult = commandRegistry.validateResult(command.name, command.version, result);
+        const before = commandStates.get(command.id).current;
+        const after = definition.inspectAfter
+          ? await definition.inspectAfter({ target: command.target, input: command.input, result: normalizedResult }, context)
+          : await definition.inspect(command.target, command.input, context);
+        const affected = await definition.affectedResources({ target: command.target, result: normalizedResult });
+        const beforeFingerprint = canonicalHash(before);
+        const afterFingerprint = canonicalHash(after);
+        for (const resource of affected) {
+          resources.push({
+            ...resource,
+            beforeFingerprint,
+            afterFingerprint,
+          });
+        }
         results.push({
           command_id: command.id,
           name: command.name,
           version: command.version,
           result: normalizedResult,
-          affected_resources: await definition.affectedResources({ target: command.target, result: normalizedResult }),
+          affected_resources: affected,
+        });
+        undoCommands.push({
+          command_id: command.id,
+          name: command.name,
+          version: command.version,
+          target: command.target,
+          input: command.input,
+          before,
+          after,
+          before_fingerprint: beforeFingerprint,
+          after_fingerprint: afterFingerprint,
+          result: normalizedResult,
+          affected_resources: affected,
         });
       }
+      const receiptId = randomUUID();
+      const undoPolicies = commands.map(command => commandRegistry.get(command.name, command.version).undoPolicy);
+      const undoAvailable = undoPolicies.every(policy => policy !== 'unavailable');
+      const undoPolicy = undoAvailable && new Set(undoPolicies).size === 1 ? undoPolicies[0] : 'unavailable';
       const receipt = {
+        id: receiptId,
+        proposalId: proposal.id,
+        commandSetHash: proposal.command_set_hash,
+        appliedAt: new Date().toISOString(),
+        summary: `${commands.length} change${commands.length === 1 ? '' : 's'} applied.`,
+        affectedResources: resources,
+        undo: {
+          available: undoAvailable,
+          policy: undoPolicy,
+          ...(!undoAvailable ? { reason: 'One or more changes cannot be safely undone.' } : {}),
+        },
         proposal_id: proposal.id,
         command_set_hash: proposal.command_set_hash,
         registry_version: proposal.registry_version,
@@ -319,6 +379,12 @@ export async function applyCommandProposal(proposalId, expectedHash, fields = {}
         commands: results,
         override_authorizations: overrideAuthorizations,
       };
+      await createCommandReceipt({
+        id: receiptId,
+        proposalId: proposal.id,
+        receipt,
+        undoState: { commands: undoCommands },
+      });
       const applied = await markCommandProposalApplied(proposal.id, expectedHash, {
         result: receipt,
         reviewedBy: fields.reviewedBy || 'local_user',
@@ -362,6 +428,126 @@ export async function applyCommandProposal(proposalId, expectedHash, fields = {}
     }
     throw error;
   }
+}
+
+function proposalInteractionPolicy(commands) {
+  const policies = commands.map(command => {
+    const definition = commandRegistry.get(command.name, command.version);
+    return definition.interactionPolicyForInput
+      ? definition.interactionPolicyForInput(command.input)
+      : definition.interactionPolicy;
+  });
+  if (policies.includes('secure_input')) return 'secure_input';
+  if (policies.includes('confirm_inline')) return 'confirm_inline';
+  return 'execute_inline';
+}
+
+export async function authorizeCommandProposal(proposalId, expectedHash, fields = {}, context = {}) {
+  const proposal = await getCommandProposal(proposalId);
+  if (!proposal) throw new CommandError('PROPOSAL_NOT_FOUND', `Proposal not found: ${proposalId}`);
+  if (proposal.command_set_hash !== expectedHash) {
+    throw new CommandError('PROPOSAL_HASH_MISMATCH', 'The reviewed proposal hash does not match.');
+  }
+  const authorizationKind = fields.authorizationKind;
+  if (!['explicit_imperative', 'inline_confirmation', 'manual_ui'].includes(authorizationKind)) {
+    throw new CommandError('COMMAND_AUTHORIZATION_INVALID', 'A recognized command authorization is required.');
+  }
+  const policy = proposalInteractionPolicy(jsonValue(proposal.commands));
+  if (policy === 'secure_input') {
+    await createCommandConfirmation({
+      threadId: fields.threadId,
+      proposalId,
+      commandSetHash: expectedHash,
+      requiredPolicy: policy,
+      expiresAt: fields.expiresAt,
+    });
+    return { status: 'confirmation_required', requiredPolicy: policy, proposal };
+  }
+  if (authorizationKind === 'explicit_imperative' && policy === 'confirm_inline') {
+    await createCommandConfirmation({
+      threadId: fields.threadId,
+      proposalId,
+      commandSetHash: expectedHash,
+      requiredPolicy: policy,
+      expiresAt: fields.expiresAt,
+    });
+    return { status: 'confirmation_required', requiredPolicy: policy, proposal };
+  }
+  if (authorizationKind === 'inline_confirmation') {
+    await resolveCommandConfirmation(proposalId, expectedHash, 'confirmed');
+  }
+  const applied = await applyCommandProposal(proposalId, expectedHash, {
+    reviewedBy: fields.actorId || 'local_user',
+    actorCapabilities: fields.actorCapabilities,
+    overrideAuthorizations: fields.overrideAuthorizations,
+  }, context);
+  return { status: 'applied', ...applied };
+}
+
+export async function undoCommandReceipt(receiptId, actor = {}, context = {}) {
+  return withAtomicWrite(async () => {
+    const stored = await getCommandReceipt(receiptId, { lock: true });
+    if (!stored) throw new CommandError('RECEIPT_NOT_FOUND', `Receipt not found: ${receiptId}`);
+    if (stored.undone_at) {
+      const replay = await getCommandReceipt(stored.undo_receipt_id);
+      return { receipt: jsonValue(replay.receipt), idempotent_replay: true };
+    }
+    const publicReceipt = jsonValue(stored.receipt);
+    if (!publicReceipt.undo?.available) {
+      throw new CommandError('COMMAND_UNDO_UNAVAILABLE', publicReceipt.undo?.reason || 'This change cannot be undone.');
+    }
+    const undoState = jsonValue(stored.undo_state);
+    const commands = [...undoState.commands].reverse();
+    for (const state of commands) {
+      const definition = commandRegistry.get(state.name, state.version);
+      if (definition.undoPolicy === 'unavailable' || typeof definition.undo !== 'function') {
+        throw new CommandError('COMMAND_UNDO_UNAVAILABLE', `${state.name} cannot be undone.`);
+      }
+      if (!hasCapabilities(definition.applyCapabilities, actor.actorCapabilities)) {
+        throw new CommandError('COMMAND_CAPABILITY_DENIED', `Undo needs ${definition.applyCapabilities.join(', ')} permission.`);
+      }
+      const current = definition.inspectUndo
+        ? await definition.inspectUndo(state, context)
+        : await definition.inspect(state.target, state.input, context);
+      if (canonicalHash(current) !== state.after_fingerprint) {
+        throw new CommandError('COMMAND_UNDO_STALE', `${state.name} changed after it was applied. Undo made no changes.`);
+      }
+    }
+    const results = [];
+    for (const state of commands) {
+      const definition = commandRegistry.get(state.name, state.version);
+      results.push(await definition.undo({
+        ...state,
+        provenance: { receipt_id: receiptId, actor_id: actor.actorId || 'local_user' },
+      }, context));
+    }
+    const undoId = randomUUID();
+    const now = new Date().toISOString();
+    const receipt = {
+      id: undoId,
+      proposalId: publicReceipt.proposalId,
+      commandSetHash: publicReceipt.commandSetHash,
+      appliedAt: now,
+      summary: `Undid ${commands.length} change${commands.length === 1 ? '' : 's'}.`,
+      affectedResources: publicReceipt.affectedResources.map(resource => ({
+        ...resource,
+        beforeFingerprint: resource.afterFingerprint,
+        afterFingerprint: resource.beforeFingerprint,
+      })),
+      undo: { available: false, policy: 'unavailable', reason: 'This receipt records an Undo.' },
+      parentReceiptId: receiptId,
+      results,
+    };
+    await createCommandReceipt({
+      id: undoId,
+      parentReceiptId: receiptId,
+      receipt,
+      undoState: { commands: [] },
+    });
+    const marked = await markCommandReceiptUndone(receiptId, undoId);
+    if (!marked) throw new CommandError('COMMAND_UNDO_CONCURRENT', 'This receipt was undone concurrently.');
+    return { receipt, idempotent_replay: false };
+  });
 }
 
 export async function proposalHistory(options) {

@@ -13,6 +13,8 @@ const RISKS = new Set([
   'explicit_override',
 ]);
 const DOMAIN_ATOMICITY = new Set(['single_statement', 'multi_statement']);
+const INTERACTION_POLICIES = new Set(['execute_inline', 'confirm_inline', 'secure_input']);
+const UNDO_POLICIES = new Set(['inverse', 'compensating_event', 'unavailable']);
 const NAME_PATTERN = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
 
 function clone(value) {
@@ -41,6 +43,9 @@ function semanticMetadata(definition) {
     proposeCapabilities: definition.proposeCapabilities,
     applyCapabilities: definition.applyCapabilities,
     editableInputKeys: definition.editableInputKeys || [],
+    interactionPolicy: definition.interactionPolicy,
+    undoPolicy: definition.undoPolicy,
+    plannerExposure: definition.plannerExposure,
     inputSchema: definition.inputSchema,
     resultSchema: definition.resultSchema,
   };
@@ -91,6 +96,21 @@ export class CommandRegistry {
     if (!Array.isArray(definition.editableInputKeys || [])) {
       throw new TypeError(`command ${definition.name} editableInputKeys must be an array`);
     }
+    const interactionPolicy = definition.interactionPolicy || 'confirm_inline';
+    const undoPolicy = definition.undoPolicy || 'unavailable';
+    const plannerExposure = definition.plannerExposure ?? false;
+    if (!INTERACTION_POLICIES.has(interactionPolicy)) {
+      throw new TypeError(`invalid command interaction policy: ${interactionPolicy}`);
+    }
+    if (!UNDO_POLICIES.has(undoPolicy)) {
+      throw new TypeError(`invalid command undo policy: ${undoPolicy}`);
+    }
+    if (typeof plannerExposure !== 'boolean') {
+      throw new TypeError(`command ${definition.name} plannerExposure must be a boolean`);
+    }
+    if (undoPolicy !== 'unavailable' && typeof definition.undo !== 'function') {
+      throw new TypeError(`command ${definition.name} with ${undoPolicy} undo requires undo()`);
+    }
     for (const inputKey of definition.editableInputKeys || []) {
       if (!Object.hasOwn(definition.inputSchema?.properties || {}, inputKey)) {
         throw new TypeError(`command ${definition.name} editable input is missing from its schema: ${inputKey}`);
@@ -111,7 +131,12 @@ export class CommandRegistry {
       throw new TypeError(`invalid schema for ${key}: ${error.message}`);
     }
 
-    const stored = deepFreeze({ ...definition });
+    const stored = deepFreeze({
+      ...definition,
+      interactionPolicy,
+      undoPolicy,
+      plannerExposure,
+    });
     this.#definitions.set(key, stored);
     this.#validators.set(key, inputValidator);
     this.#resultValidators.set(key, resultValidator);
