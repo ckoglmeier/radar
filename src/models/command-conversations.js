@@ -17,9 +17,12 @@ export async function getCommandThread(threadId) {
   const [thread] = await query('SELECT * FROM command_threads WHERE id = $1', [threadId]);
   if (!thread) return null;
   const messages = await query(`
-    SELECT * FROM command_messages
-     WHERE thread_id = $1
-     ORDER BY created_at, id
+    SELECT m.*, cp.status AS proposal_status,
+           cp.command_set_hash AS current_command_set_hash
+      FROM command_messages m
+      LEFT JOIN command_proposals cp ON cp.id = m.proposal_id
+     WHERE m.thread_id = $1
+     ORDER BY m.created_at, m.id
   `, [threadId]);
   return { ...thread, messages };
 }
@@ -27,11 +30,32 @@ export async function getCommandThread(threadId) {
 export async function listCommandThreads({ limit = 50 } = {}) {
   return query(`
     SELECT t.*,
-           (SELECT content FROM command_messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS latest_message
+           latest.content AS latest_message,
+           latest.result_kind AS latest_result_kind,
+           latest.proposal_id AS latest_proposal_id,
+           cp.status AS latest_proposal_status
       FROM command_threads t
+      LEFT JOIN LATERAL (
+        SELECT m.content, m.result_kind, m.proposal_id
+          FROM command_messages m
+         WHERE m.thread_id = t.id
+         ORDER BY m.created_at DESC, m.id DESC
+         LIMIT 1
+      ) latest ON TRUE
+      LEFT JOIN command_proposals cp ON cp.id = latest.proposal_id
      ORDER BY updated_at DESC, id DESC
      LIMIT $1
   `, [Math.max(1, Math.min(200, Number(limit) || 50))]);
+}
+
+export async function updateCommandThreadTitle(threadId, title) {
+  const [row] = await query(`
+    UPDATE command_threads
+       SET title = $2, updated_at = NOW()
+     WHERE id = $1
+     RETURNING *
+  `, [threadId, requiredText(title, 'Thread title').slice(0, 120)]);
+  return row || null;
 }
 
 export async function appendCommandMessage(threadId, fields = {}) {

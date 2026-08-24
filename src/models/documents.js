@@ -253,6 +253,17 @@ export async function updatePendingRefs(id, created_refs) {
   return rows[0] || null;
 }
 
+export async function discardPendingIntake(id) {
+  const rows = await query(`
+    DELETE FROM pending_intake
+     WHERE id = $1
+       AND status = 'pending'
+       AND COALESCE(created_refs, '{}'::jsonb) = '{}'::jsonb
+    RETURNING id
+  `, [id]);
+  return rows[0] || null;
+}
+
 // Deletes expired preview receipts in either lifecycle state. Committed rows
 // retain no staging bytes, but their replay metadata expires with the receipt.
 export async function sweepExpiredPending() {

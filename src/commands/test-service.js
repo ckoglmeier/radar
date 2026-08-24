@@ -76,6 +76,30 @@ try {
     assert.deepEqual(vintageRevision.replacement.previews[0].after, [
       { field: 'vintage_year', value: 2023 },
     ]);
+
+    const firstConviction = await planCommandProposal([{
+      name: 'direct.set_conviction',
+      input: { investmentId: direct.id, now: 3, entry: 3 },
+    }], {
+      originSurface: 'ask_radar', actorType: 'user', actorId: 'fixture',
+      intentText: 'Set conviction to 3', idempotencyKey: 'command:test:conversation-first',
+    });
+    const correctedConviction = await planCommandProposal([{
+      name: 'direct.set_conviction',
+      input: { investmentId: direct.id, now: 4, entry: 3 },
+    }], {
+      originSurface: 'ask_radar', actorType: 'user', actorId: 'fixture', intent: 'correct',
+      intentText: 'Change that to 4', idempotencyKey: 'command:test:conversation-correction',
+      supersedesProposalId: firstConviction.proposal.id,
+      supersedesCommandSetHash: firstConviction.proposal.command_set_hash,
+      conversationContext: { thread_id: 'thread-fixture', prior_message_ids: ['message-1'] },
+    });
+    assert.equal(correctedConviction.superseded_proposal.status, 'superseded');
+    assert.equal(correctedConviction.proposal.status, 'proposed');
+    assert.equal(correctedConviction.proposal.supersedes_proposal_id, firstConviction.proposal.id);
+    assert.deepEqual(correctedConviction.proposal.conversation_context, {
+      thread_id: 'thread-fixture', prior_message_ids: ['message-1'],
+    });
     await applyCommandProposal(
       vintageRevision.replacement.id,
       vintageRevision.replacement.command_set_hash,

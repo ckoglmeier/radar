@@ -103,7 +103,7 @@ export async function planCommandProposal(candidates, fields = {}, context = {})
   const commands = planned.map(item => item.command);
   const registryVersion = commandRegistry.registryVersion();
   const setHash = commandSetHash({ registryVersion, commands });
-  return createCommandProposal({
+  const proposalFields = {
     ...fields,
     registryVersion,
     normalizerVersion: NORMALIZER_VERSION,
@@ -111,7 +111,26 @@ export async function planCommandProposal(candidates, fields = {}, context = {})
     previews: planned.map(item => item.preview),
     commandSetHash: setHash,
     idempotencyKey: fields.idempotencyKey || `proposal:${setHash}`,
-  });
+  };
+  if (fields.supersedesProposalId) {
+    if (!fields.supersedesCommandSetHash) {
+      throw new CommandError('SUPERSEDED_PROPOSAL_HASH_REQUIRED', 'A correction must bind to the exact prior proposal.');
+    }
+    const superseded = await supersedeCommandProposal(
+      fields.supersedesProposalId,
+      fields.supersedesCommandSetHash,
+      proposalFields,
+    );
+    if (!superseded.replacement) {
+      throw new CommandError('PROPOSAL_NOT_EDITABLE', 'The prior proposal changed. Review the current thread before correcting it.');
+    }
+    return {
+      proposal: superseded.replacement,
+      idempotent_replay: false,
+      superseded_proposal: superseded.proposal,
+    };
+  }
+  return createCommandProposal(proposalFields);
 }
 
 export async function reviseCommandProposal(proposalId, expectedHash, edits, fields = {}, context = {}) {

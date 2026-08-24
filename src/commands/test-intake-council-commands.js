@@ -6,6 +6,7 @@ import { closeDb, query, withTenant } from '../db/index.js';
 import { runMigrations } from '../db/migrate.js';
 import { intakePreview } from '../intake/index.js';
 import { stageVaultFile } from '../models/file-vault.js';
+import { discardPendingIntake } from '../models/documents.js';
 import { authorizeCommandProposal, planCommandProposal } from './service.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-intake-council-commands-'));
@@ -43,6 +44,12 @@ try {
     assert.equal(Number((await query('SELECT COUNT(*)::int AS count FROM documents'))[0].count), 0);
     assert.equal(Number((await query('SELECT COUNT(*)::int AS count FROM investment_updates'))[0].count), 0);
     assert.deepEqual(reviewed.proposal.previews[0].warnings, preview.warnings);
+    const discardedPreview = await intakePreview({
+      content: Buffer.from('Disposable staged update'),
+      filename: 'discard.txt', mime: 'text/plain',
+    });
+    assert.equal((await discardPendingIntake(discardedPreview.preview_id)).id, discardedPreview.preview_id);
+    assert.equal(Number((await query('SELECT COUNT(*)::int AS count FROM pending_intake WHERE id = $1', [discardedPreview.preview_id]))[0].count), 0);
     const committed = await run('intake.commit', {
       previewId: preview.preview_id,
       overrides: { entity_type: 'investment', entity_id: Number(investment.id) },

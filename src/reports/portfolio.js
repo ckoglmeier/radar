@@ -219,6 +219,138 @@ export async function directReturnRegister(options = {}) {
   };
 }
 
+function percentOrNull(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(String(value).replace(/[^0-9.+-]/g, ''));
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
+}
+
+/**
+ * Deterministic position-level return metrics for Command and portfolio UI.
+ * Recorded position value is treated as net. Gross value is only reconstructed
+ * when recorded carry is parseable, and that reconstruction is labeled estimated.
+ */
+export async function positionReturnMetrics(options = {}) {
+  const asOf = reportDate(options.asOf);
+  const filters = options.filters || {};
+  const params = [asOf];
+  const conditions = ['(i.invest_date IS NULL OR i.invest_date <= $1)'];
+  if (filters.assetType) {
+    params.push(String(filters.assetType));
+    conditions.push(`i.asset_class = $${params.length}`);
+  }
+  if (filters.company) {
+    params.push(`%${String(filters.company).trim()}%`);
+    conditions.push(`i.company_name ILIKE $${params.length}`);
+  }
+  if (filters.stage) {
+    params.push(String(filters.stage));
+    conditions.push(`i.stage_bucket = $${params.length}`);
+  }
+  if (filters.status) {
+    params.push(String(filters.status));
+    conditions.push(`i.status = $${params.length}`);
+  }
+  if (filters.thesis) {
+    params.push(String(filters.thesis));
+    conditions.push(`EXISTS (
+      SELECT 1 FROM investment_theses it_filter
+      JOIN theses t_filter ON t_filter.id = it_filter.thesis_id
+      WHERE it_filter.investment_id = i.id AND LOWER(t_filter.name) = LOWER($${params.length})
+    )`);
+  }
+  const rows = await query(`
+    SELECT i.id, i.company_name, i.asset_class, i.status, i.invest_date,
+           i.stage_bucket, i.market, i.carry, i.invested, i.computed_net_invested,
+           i.computed_total_value, i.realized_value, i.unrealized_value, i.net_value,
+           latest.snapshot_date AS mark_date, latest.source AS mark_source,
+           latest.realized_value AS latest_realized_value,
+           latest.unrealized_value AS latest_unrealized_value,
+           latest.net_value AS latest_net_value,
+           ARRAY(
+             SELECT t.name FROM investment_theses it
+             JOIN theses t ON t.id = it.thesis_id
+             WHERE it.investment_id = i.id
+             ORDER BY it.is_primary DESC, t.name
+           ) AS theses
+      FROM investments i
+      LEFT JOIN LATERAL (
+        SELECT v.snapshot_date, v.source, v.realized_value, v.unrealized_value, v.net_value
+          FROM valuations v
+         WHERE v.investment_id = i.id AND v.snapshot_date <= $1
+         ORDER BY v.snapshot_date DESC, v.id DESC
+         LIMIT 1
+      ) latest ON TRUE
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY i.id
+  `, params);
+
+  const positions = rows.map(row => {
+    const invested = numberOrNull(row.computed_net_invested) ?? numberOrNull(row.invested);
+    const netValue = numberOrNull(row.computed_total_value)
+      ?? numberOrNull(row.latest_net_value)
+      ?? numberOrNull(row.net_value)
+      ?? (row.latest_unrealized_value != null || row.latest_realized_value != null
+        ? Number(row.latest_unrealized_value || 0) + Number(row.latest_realized_value || 0)
+        : row.unrealized_value != null || row.realized_value != null
+          ? Number(row.unrealized_value || 0) + Number(row.realized_value || 0)
+          : invested);
+    const carryPercent = percentOrNull(row.carry);
+    const carryRate = carryPercent == null ? null : carryPercent / 100;
+    const hasPositiveProfit = invested > 0 && netValue > invested;
+    const grossValue = hasPositiveProfit && carryRate > 0 && carryRate < 1
+      ? invested + ((netValue - invested) / (1 - carryRate))
+      : netValue;
+    const warnings = [];
+    if (!(invested > 0)) warnings.push('MISSING_INVESTED_BASIS');
+    if (row.mark_date == null && row.computed_total_value == null && row.net_value == null
+        && row.unrealized_value == null && row.realized_value == null) warnings.push('MARK_AT_COST');
+    if (row.carry && carryPercent == null) warnings.push('UNPARSEABLE_CARRY');
+    const estimatedGross = grossValue !== netValue;
+    return {
+      position_id: Number(row.id),
+      company_name: row.company_name,
+      asset_type: row.asset_class,
+      status: row.status,
+      investment_date: row.invest_date ? String(row.invest_date).slice(0, 10) : null,
+      stage: row.stage_bucket,
+      market: row.market,
+      theses: Array.isArray(row.theses) ? row.theses : [],
+      invested_capital: invested,
+      current_gross_value: grossValue,
+      current_net_value: netValue,
+      gross_moic: invested > 0 ? grossValue / invested : null,
+      net_moic: invested > 0 ? netValue / invested : null,
+      mark_date: row.mark_date ? String(row.mark_date).slice(0, 10) : null,
+      mark_source: row.mark_source || (warnings.includes('MARK_AT_COST') ? 'cost_basis' : 'position_record'),
+      economics: {
+        carry_percent: carryPercent,
+        carry_application: carryPercent == null ? 'not_recorded' : 'profit_only',
+      },
+      assumptions: [
+        {
+          field: 'current_net_value',
+          state: warnings.includes('MARK_AT_COST') ? 'estimated' : 'confirmed',
+          source: row.mark_source || (warnings.includes('MARK_AT_COST') ? 'cost_basis' : 'position_record'),
+        },
+        ...(estimatedGross ? [{
+          field: 'current_gross_value', state: 'estimated', source: 'net_value_and_recorded_carry',
+        }] : []),
+      ],
+      warnings,
+    };
+  });
+  positions.sort((left, right) => (right.net_moic ?? -Infinity) - (left.net_moic ?? -Infinity)
+    || left.company_name.localeCompare(right.company_name)
+    || left.position_id - right.position_id);
+  const limit = Number(options.limit);
+  return {
+    as_of: asOf,
+    sort: 'net_moic_desc',
+    positions: Number.isInteger(limit) && limit > 0 ? positions.slice(0, limit) : positions,
+  };
+}
+
 export async function portfolioSummary(opts = {}) {
   const { since, until } = opts;
 
