@@ -23,11 +23,13 @@ import { createCommandRegistry } from './registry.js';
 import { tierACommandDefinitions } from './tier-a.js';
 import { tierBCommandDefinitions } from './tier-b.js';
 import { thesisCommandDefinitions } from './theses.js';
+import { portfolioCommandDefinitions } from './portfolio.js';
 
 export const commandRegistry = createCommandRegistry([
   ...tierACommandDefinitions,
   ...tierBCommandDefinitions,
   ...thesisCommandDefinitions,
+  ...portfolioCommandDefinitions,
 ]);
 
 function jsonValue(value) {
