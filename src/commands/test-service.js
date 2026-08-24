@@ -16,7 +16,7 @@ const actorCapabilities = ['portfolio:apply:additive', 'portfolio:apply:metadata
 try {
   await withTenant(databaseUrl, async () => {
     await runMigrations();
-    assert.equal(commandMetadata().commands.length, 27);
+    assert.equal(commandMetadata().commands.length, 32);
 
     const [direct] = await query(`
       INSERT INTO investments

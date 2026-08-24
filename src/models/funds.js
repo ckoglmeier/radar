@@ -381,7 +381,7 @@ export async function cancelFundNotice(noticeId, reason = null) {
     if (notice.status === 'cancelled') return notice;
     const [cancelled] = await query(`
       UPDATE fund_notices
-         SET status = 'cancelled', description = CONCAT_WS(E'\n', description, $2), updated_at = NOW()
+         SET status = 'cancelled', description = CONCAT_WS(E'\n', description, $2::text), updated_at = NOW()
        WHERE id = $1 RETURNING *
     `, [noticeId, optionalText(reason)]);
     await query(`

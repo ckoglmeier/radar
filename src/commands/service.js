@@ -24,12 +24,14 @@ import { tierACommandDefinitions } from './tier-a.js';
 import { tierBCommandDefinitions } from './tier-b.js';
 import { thesisCommandDefinitions } from './theses.js';
 import { portfolioCommandDefinitions } from './portfolio.js';
+import { fundLifecycleCommandDefinitions } from './funds.js';
 
 export const commandRegistry = createCommandRegistry([
   ...tierACommandDefinitions,
   ...tierBCommandDefinitions,
   ...thesisCommandDefinitions,
   ...portfolioCommandDefinitions,
+  ...fundLifecycleCommandDefinitions,
 ]);
 
 function jsonValue(value) {
