@@ -1,0 +1,129 @@
+{
+  "contract": "v0.7.4-two-pass-before-after",
+  "generated_at": "2026-08-25T20:36:00Z",
+  "fixture": "Nimbus Forge (fictional)",
+  "selector": "direct-1",
+  "status": "failed_stop_condition",
+  "before": {
+    "engine_commit": "b86661b9e986477834c02e66acdf321b08d3c4f9",
+    "research_architecture": "single_session",
+    "report_sha256": "6b62fcd654da89e2acf0c660bcf4df158b62ab3d327b5fefbb1917965a9d5e9f",
+    "duration_ms": 473761,
+    "score": 25,
+    "dimensions": {
+      "Domain match": 3,
+      "Compounding structure": 3,
+      "Structural tailwind": 4,
+      "Portfolio construction fit": 3,
+      "Team-market fit": 1,
+      "Capital efficiency": 3,
+      "Business model clarity": 3,
+      "Differentiation": 1,
+      "Source quality": 1
+    },
+    "critical_fact_recall": 1,
+    "important_fact_recall": 1,
+    "source_locator_validator": true,
+    "same_event_conflict": true,
+    "public_silence_false_conflict": false,
+    "total_cost_usd": 0.91322075,
+    "output_tokens": 26548,
+    "research_turns": 8,
+    "calibrator_turns": 2
+  },
+  "after_initial": {
+    "engine_commit": "417e3ce846af8dd05c7f0ea8fe132681778d0b0e",
+    "research_architecture": "two_pass",
+    "report_sha256": "f79444b43573e80c3bac670a7815a3378747aac36ba13de70ba82d51835f1595",
+    "duration_ms": 1066818,
+    "score": 25,
+    "critical_fact_recall": 1,
+    "important_fact_recall": 1,
+    "source_locator_validator": true,
+    "same_event_conflict": true,
+    "public_silence_false_conflict": false,
+    "total_cost_usd": 2.00547525,
+    "output_tokens": 57637,
+    "research_turns": 16,
+    "calibrator_turns": 6,
+    "delta_from_before": {
+      "duration_percent": 125.18,
+      "cost_percent": 119.6,
+      "output_tokens_percent": 117.1,
+      "score": 0
+    },
+    "observed_regression": "The full audit packet was duplicated into judgment context, driving a six-turn Calibrator repair."
+  },
+  "after_compact": {
+    "engine_commit": "b9d0219f6143fb120bf720a4f3b77f327bcf0471",
+    "research_architecture": "two_pass",
+    "report_sha256": "dfdecbc2aec3952e57697c13809824b733cb61f8651b6dff21042d2174be08c7",
+    "duration_ms": 665087,
+    "score": 22,
+    "dimensions": {
+      "Domain match": 3,
+      "Compounding structure": 3,
+      "Structural tailwind": 1,
+      "Portfolio construction fit": 3,
+      "Team-market fit": 1,
+      "Capital efficiency": 3,
+      "Business model clarity": 3,
+      "Differentiation": 1,
+      "Source quality": 1
+    },
+    "critical_fact_recall": 1,
+    "important_fact_recall": 1,
+    "source_locator_validator": false,
+    "source_locator_review": "The rendered ledger retained named deal-room sources and fixture markers, but the exact validator pattern did not accept that wording.",
+    "same_event_conflict": true,
+    "public_silence_false_conflict": false,
+    "total_cost_usd": 1.4817445,
+    "output_tokens": 43004,
+    "research_turns": 17,
+    "calibrator_turns": 2,
+    "delta_from_before": {
+      "duration_percent": 40.38,
+      "cost_percent": 62.25,
+      "output_tokens_percent": 61.99,
+      "score": -3,
+      "Structural tailwind": -3
+    }
+  },
+  "failures_discovered": [
+    {
+      "kind": "invalid_directional_observation",
+      "behavior_before_fix": "A directional observation without a signed direction aborted the run.",
+      "fix_commit": "417e3ce846af8dd05c7f0ea8fe132681778d0b0e",
+      "behavior_after_fix": "The observation is excluded and recorded as an INVALID_OBSERVATION source receipt while synthesis continues."
+    },
+    {
+      "kind": "duplicated_audit_context",
+      "behavior_before_fix": "Research plan and derivable coverage metadata were repeated in Bull, Bear, and Calibrator context.",
+      "fix_commit": "b9d0219f6143fb120bf720a4f3b77f327bcf0471",
+      "behavior_after_fix": "The durable envelope remains complete while judgment receives only validated observations and decision-relevant fields."
+    }
+  ],
+  "acceptance": {
+    "critical_fact_recall_minimum": 1,
+    "important_fact_recall_minimum": 0.85,
+    "maximum_unexplained_dimension_variance": 1,
+    "maximum_canonical_score_variance": 2,
+    "result": "failed",
+    "reasons": [
+      "Canonical score variance was 3 points.",
+      "Structural Tailwind variance was 3 Likert points.",
+      "The compact two-pass run remained 40.38% slower and 62.25% more expensive than the paired single-session control.",
+      "The source-locator validator did not accept every critical locator in the compact run."
+    ]
+  },
+  "matrix": {
+    "completed_pairs": 1,
+    "planned_pairs": 10,
+    "remaining_cases_run": false,
+    "reason": "The first paired case triggered the fail-closed release stop condition; additional paid model runs cannot reverse that failed acceptance case."
+  },
+  "promotion": {
+    "v0.7.4_two_pass_default": "blocked",
+    "recommended_action": "Keep single_session as the Desktop default. Continue two_pass only behind an experimental flag until evidence acquisition and source-locator stability meet the release thresholds."
+  }
+}
