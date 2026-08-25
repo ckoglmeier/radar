@@ -71,6 +71,10 @@ const INSERT_ORDER = [
   'sync_runs',
   'investment_updates',
   'command_proposals',
+  'command_threads',
+  'command_receipts',
+  'command_messages',
+  'command_confirmations',
   'pending_intake', // ephemeral preview/confirm staging; no FK dependents, kept last
 ];
 
@@ -109,32 +113,50 @@ function quoteIdentifier(value) {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
-const SELF_REFERENCE_COLUMNS = {
-  deal_evaluations: 'council_parent_evaluation_id',
-  investment_updates: 'previous_update_id',
-  command_proposals: 'supersedes_proposal_id',
-};
+async function selfReferenceColumns(table) {
+  return (await query(`
+    SELECT DISTINCT kcu.column_name
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON kcu.constraint_schema = tc.constraint_schema
+       AND kcu.constraint_name = tc.constraint_name
+      JOIN information_schema.constraint_column_usage ccu
+        ON ccu.constraint_schema = tc.constraint_schema
+       AND ccu.constraint_name = tc.constraint_name
+     WHERE tc.table_schema = 'public'
+       AND tc.table_name = $1
+       AND tc.constraint_type = 'FOREIGN KEY'
+       AND ccu.table_schema = tc.table_schema
+       AND ccu.table_name = tc.table_name
+     ORDER BY kcu.column_name
+  `, [table])).map(row => row.column_name);
+}
 
-function rowsInRestoreOrder(table, rows) {
-  const parentColumn = SELF_REFERENCE_COLUMNS[table];
-  if (!parentColumn) return rows;
-  const remaining = [...rows];
-  const rowIds = new Set(rows.map(row => String(row.id)));
+function rowsWithDeferredSelfReferences(encodedRows, selfReferences) {
+  if (selfReferences.length === 0) {
+    return encodedRows.map(encodedRow => ({ row: decodeValue(encodedRow), references: [] }));
+  }
+  const remaining = encodedRows.map(encodedRow => decodeValue(encodedRow));
+  const rowIds = new Set(remaining.map(row => String(row.id)));
   const inserted = new Set();
   const ordered = [];
   while (remaining.length > 0) {
-    const index = remaining.findIndex(row => {
-      const parentId = row[parentColumn] == null
-        ? null
-        : String(row[parentColumn]);
+    let index = remaining.findIndex(row => selfReferences.every(column => {
+      const parentId = row[column] == null ? null : String(row[column]);
       return parentId == null || !rowIds.has(parentId) || inserted.has(parentId);
-    });
+    }));
+    let references = [];
     if (index === -1) {
-      // Preserve the database's FK error for a real cycle or missing parent.
-      return [...ordered, ...remaining];
+      // A true self-reference cycle cannot be inserted in dependency order.
+      // Break only the blocking edges, then restore them after all rows exist.
+      index = 0;
+      references = selfReferences
+        .filter(column => rowIds.has(String(remaining[index][column])) && !inserted.has(String(remaining[index][column])))
+        .map(column => ({ column, value: remaining[index][column] }));
     }
     const [row] = remaining.splice(index, 1);
-    ordered.push(row);
+    for (const { column } of references) row[column] = null;
+    ordered.push({ row, references });
     inserted.add(String(row.id));
   }
   return ordered;
@@ -223,9 +245,14 @@ export async function restoreDatabase({ file } = {}) {
     for (const table of restoreTables) {
       const rows = dump.tables[table];
       if (!Array.isArray(rows)) throw new Error(`backup table is not an array: ${table}`);
+      const selfReferences = await selfReferenceColumns(table);
+      const deferredSelfReferences = [];
 
-      for (const encodedRow of rowsInRestoreOrder(table, rows)) {
-        const row = decodeValue(encodedRow);
+      for (const { row, references } of rowsWithDeferredSelfReferences(rows, selfReferences)) {
+        if (references.length > 0) {
+          if (row.id == null) throw new Error(`self-referencing backup table has no id: ${table}`);
+          deferredSelfReferences.push({ id: row.id, references });
+        }
         const columns = Object.keys(row);
         if (columns.length === 0) continue;
         const placeholders = columns.map((_, index) => `$${index + 1}`);
@@ -233,6 +260,17 @@ export async function restoreDatabase({ file } = {}) {
           `INSERT INTO ${quoteIdentifier(table)} (${columns.map(quoteIdentifier).join(', ')}) ` +
           `VALUES (${placeholders.join(', ')})`,
           columns.map(column => row[column]),
+        );
+      }
+
+      for (const deferred of deferredSelfReferences) {
+        const assignments = deferred.references.map(
+          ({ column }, index) => `${quoteIdentifier(column)} = $${index + 1}`,
+        );
+        await query(
+          `UPDATE ${quoteIdentifier(table)} SET ${assignments.join(', ')} ` +
+          `WHERE id = $${deferred.references.length + 1}`,
+          [...deferred.references.map(reference => reference.value), deferred.id],
         );
       }
 

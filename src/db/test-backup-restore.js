@@ -9,6 +9,12 @@ import { runMigrations } from './migrate.js';
 import { accessDocumentBytes, createDocument } from '../models/documents.js';
 import { createInvestmentUpdate } from '../models/investment-updates.js';
 import { createCommandProposal } from '../models/command-proposals.js';
+import { createCommandReceipt, markCommandReceiptUndone } from '../models/command-receipts.js';
+import {
+  appendCommandMessage,
+  createCommandConfirmation,
+  createCommandThread,
+} from '../models/command-conversations.js';
 import { createFund, fundMetrics, recordFundDistribution } from '../models/funds.js';
 import {
   addIssuerDisclosure,
@@ -35,6 +41,9 @@ try {
   let employmentEquityId;
   let latestUpdateId;
   let latestProposalId;
+  let commandThreadId;
+  const firstReceiptId = '33333333-3333-4333-8333-333333333333';
+  const undoReceiptId = '44444444-4444-4444-8444-444444444444';
   await withTenant(sourceUrl, async () => {
     await runMigrations();
     const [entity] = await query(`
@@ -116,6 +125,34 @@ try {
       idempotencyKey: 'backup-proposal-2',
     });
     latestProposalId = secondProposal.proposal.id;
+    const commandThread = await createCommandThread({ title: 'Backup command thread' });
+    commandThreadId = commandThread.id;
+    await createCommandReceipt({
+      id: firstReceiptId,
+      proposalId: firstProposal.proposal.id,
+      receipt: { summary: 'Original command receipt' },
+      undoState: { commands: [] },
+    });
+    await createCommandReceipt({
+      id: undoReceiptId,
+      parentReceiptId: firstReceiptId,
+      receipt: { summary: 'Undo command receipt' },
+      undoState: { commands: [] },
+    });
+    await markCommandReceiptUndone(firstReceiptId, undoReceiptId);
+    await createCommandConfirmation({
+      threadId: commandThread.id,
+      proposalId: secondProposal.proposal.id,
+      commandSetHash: secondProposal.proposal.command_set_hash,
+      requiredPolicy: 'confirm_inline',
+    });
+    await appendCommandMessage(commandThread.id, {
+      role: 'assistant',
+      content: 'The reviewed change was applied.',
+      resultKind: 'receipt',
+      proposalId: secondProposal.proposal.id,
+      receiptId: undoReceiptId,
+    });
     const [invite] = await query(
       `INSERT INTO pipeline_invites (deal_slug, company_name, status)
        VALUES ('backup-fixture', 'Backup Fixture', 'invite') RETURNING id`,
@@ -303,6 +340,26 @@ try {
     `, [latestProposalId]);
     assert.ok(restoredProposal.supersedes_proposal_id, 'proposal self-reference restored');
     assert.equal(restoredProposal.source_update_id, latestUpdateId);
+    const [restoredCommandThread] = await query(`
+      SELECT t.title, m.proposal_id, m.receipt_id, c.required_policy
+        FROM command_threads t
+        JOIN command_messages m ON m.thread_id = t.id
+        JOIN command_confirmations c ON c.thread_id = t.id
+       WHERE t.id = $1
+    `, [commandThreadId]);
+    assert.equal(restoredCommandThread.title, 'Backup command thread');
+    assert.equal(restoredCommandThread.proposal_id, latestProposalId);
+    assert.equal(restoredCommandThread.receipt_id, undoReceiptId);
+    assert.equal(restoredCommandThread.required_policy, 'confirm_inline');
+    const [restoredReceipt] = await query(`
+      SELECT undone_at, undo_receipt_id FROM command_receipts WHERE id = $1
+    `, [firstReceiptId]);
+    const [restoredUndoReceipt] = await query(`
+      SELECT parent_receipt_id FROM command_receipts WHERE id = $1
+    `, [undoReceiptId]);
+    assert.ok(restoredReceipt.undone_at, 'receipt Undo timestamp restored');
+    assert.equal(restoredReceipt.undo_receipt_id, undoReceiptId);
+    assert.equal(restoredUndoReceipt.parent_receipt_id, firstReceiptId);
     const [docMeta] = await query(`SELECT id FROM documents WHERE filename = 'fixture.bin'`);
     const restoredDocument = await accessDocumentBytes({
       documentId: docMeta.id,
