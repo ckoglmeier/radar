@@ -814,6 +814,19 @@ function acquiredObservation(value) {
   });
 }
 
+function normalizeAcquiredObservations(values) {
+  const observations = [];
+  const rejectedTargetIds = new Set();
+  for (const value of values) {
+    try {
+      observations.push(acquiredObservation(value));
+    } catch {
+      if (value?.target_id) rejectedTargetIds.add(value.target_id);
+    }
+  }
+  return { observations, rejectedTargetIds };
+}
+
 function resolveResearchArchitecture(value) {
   const normalized = String(value || 'single_session').trim().toLowerCase();
   if (!['single_session', 'two_pass'].includes(normalized)) {
@@ -1645,7 +1658,8 @@ export async function councilEvaluate(deal, opts = {}) {
         critical_unknowns: acquisition.data.critical_unknowns,
         contradictions_to_resolve: acquisition.data.contradictions_to_resolve,
       });
-      const acquiredObservations = acquisition.data.observations.map(acquiredObservation);
+      const normalizedAcquisition = normalizeAcquiredObservations(acquisition.data.observations);
+      const acquiredObservations = normalizedAcquisition.observations;
       const observations = [
         ...acquiredObservations,
         ...(externalResearchEvidence?.observations || []).map(normalizeEvidenceObservation),
@@ -1655,7 +1669,12 @@ export async function councilEvaluate(deal, opts = {}) {
         ...sourceReceiptsForTasks(tasks, acquiredObservations, {
           durationMs: Date.now() - acquisitionStartedAt,
           actualCostUsd: acquisition.result.usage?.totalCostUsd ?? null,
-        }),
+        }).map((receipt, index) => (
+          receipt.status === 'unavailable'
+          && normalizedAcquisition.rejectedTargetIds.has(tasks[index].questionId)
+            ? { ...receipt, status: 'failed', errorCode: 'INVALID_OBSERVATION' }
+            : receipt
+        )),
         ...(externalResearchEvidence?.sourceReceipts || []),
       ];
       const acquiredFreeze = {

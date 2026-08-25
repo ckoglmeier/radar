@@ -14,6 +14,7 @@ const MODES = Object.freeze({
   direct: 120_000,
   chunk_all: 1_000,
 });
+const researchArchitecture = process.env.RADAR_COUNCIL_RESEARCH_ARCHITECTURE || 'single_session';
 
 function joinedEvidence(output) {
   const research = output.provenance?.researchSnapshot || {};
@@ -173,6 +174,7 @@ function incompleteSelectors() {
 function writeReport({ failures = [], passed = null } = {}) {
   atomicWriteJson(reportPath, {
     contract: 'v0.3.0-evaluation-integrity',
+    research_architecture: researchArchitecture,
     generated_at: new Date().toISOString(),
     fictional_fixture: 'Nimbus Forge',
     model_policy: results[0]?.modelPolicy || null,
@@ -209,6 +211,7 @@ for (const [mode, directContextBudgetTokens] of Object.entries(MODES)) {
         directContextBudgetTokens,
         sourceManifest: fixture.manifest,
         evidenceContractVersion: 2,
+        researchArchitecture,
         reuse: false,
         stageTimeoutMs: Number(process.env.RADAR_COUNCIL_RELEASE_STAGE_TIMEOUT_MS || 20 * 60 * 1_000),
         onStage: stage => console.log(`[${id} attempt ${attempt}] ${stage}`),

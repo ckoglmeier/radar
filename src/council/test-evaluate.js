@@ -121,7 +121,12 @@ function researchAdaptation() {
   };
 }
 
-function fakeProvider({ delay = 0, malformedOnceStage = null, inconsistentOnceStage = null } = {}) {
+function fakeProvider({
+  delay = 0,
+  malformedOnceStage = null,
+  inconsistentOnceStage = null,
+  invalidDirectionalObservation = false,
+} = {}) {
   const calls = [];
   const malformedStages = new Set();
   return {
@@ -155,7 +160,7 @@ function fakeProvider({ delay = 0, malformedOnceStage = null, inconsistentOnceSt
             target_id: 'baseline-product-moat',
             relation: 'supports',
             direction: 'neutral',
-            classification: 'verified',
+            classification: invalidDirectionalObservation ? 'directional' : 'verified',
             source_class: 'sdk_public_web',
             authority: 'primary',
             title: 'Example primary source',
@@ -490,6 +495,34 @@ test('councilEvaluate: two-pass Research freezes observations before no-tools sy
     eq(
       stages.join(','),
       'research_acquire,research_synthesis,bull_bear,calibrator,cfo,finalizing',
+    );
+  }));
+
+test('councilEvaluate: rejects malformed directional evidence without failing the run', async () =>
+  withTempDir(async dealLogDir => {
+    const fake = fakeProvider({ invalidDirectionalObservation: true });
+    const out = await councilEvaluate(
+      { company: 'Invalid Direction Fixture', stage: 'Seed' },
+      {
+        provider: fake,
+        env: {},
+        dealLogDir,
+        reuse: false,
+        researchArchitecture: 'two_pass',
+      },
+    );
+    const envelope = out.provenance.researchSnapshot.research_run_envelope;
+    ok(
+      !envelope.decisionPacket.observations.some(
+        observation => observation.targetId === 'baseline-product-moat',
+      ),
+      'unsigned directional evidence does not enter the decision packet',
+    );
+    ok(
+      envelope.sourceReceipts.some(
+        receipt => receipt.status === 'failed' && receipt.errorCode === 'INVALID_OBSERVATION',
+      ),
+      'the rejected observation remains visible as a failed source receipt',
     );
   }));
 
