@@ -188,6 +188,46 @@ const FOLLOWUP_QUESTION_ARRAY = {
   },
 };
 
+const TRANSACTION_ASSESSMENT_PART = {
+  type: 'object',
+  properties: {
+    label: { type: 'string', enum: ['positive', 'mixed', 'negative', 'insufficient'] },
+    rationale: { type: 'string', maxLength: 720 },
+    source_refs: {
+      type: 'array',
+      maxItems: 8,
+      items: { type: 'string', maxLength: 240 },
+    },
+    blocking_facts: {
+      type: 'array',
+      maxItems: 6,
+      items: { type: 'string', maxLength: 240 },
+    },
+  },
+  required: ['label', 'rationale', 'source_refs', 'blocking_facts'],
+  additionalProperties: false,
+};
+
+const TRANSACTION_ASSESSMENT_SCHEMA = {
+  type: 'object',
+  properties: {
+    version: { type: 'integer', enum: [1] },
+    company: TRANSACTION_ASSESSMENT_PART,
+    deal_economics: TRANSACTION_ASSESSMENT_PART,
+    access_vehicle: TRANSACTION_ASSESSMENT_PART,
+    recommendation: {
+      type: 'string',
+      enum: ['proceed', 'defer', 'pass', 'insufficient'],
+    },
+    gated_reason: { type: ['string', 'null'], maxLength: 360 },
+  },
+  required: [
+    'version', 'company', 'deal_economics', 'access_vehicle',
+    'recommendation', 'gated_reason',
+  ],
+  additionalProperties: false,
+};
+
 const CALIBRATOR_SCHEMA = {
   type: 'object',
   properties: {
@@ -199,13 +239,15 @@ const CALIBRATOR_SCHEMA = {
     moves_up: { type: 'array', items: { type: 'string' } },
     moves_down: { type: 'array', items: { type: 'string' } },
     net_assessment: { type: 'string' },
+    transaction_assessment: TRANSACTION_ASSESSMENT_SCHEMA,
     key_questions: FOLLOWUP_QUESTION_ARRAY,
     email: { type: 'string' },
     linkedin: { type: 'string' },
   },
   required: [
     'dimension_scores', 'evidence_assessments', 'key_argument', 'kill_criteria', 'primary_thesis',
-    'moves_up', 'moves_down', 'net_assessment', 'key_questions', 'email', 'linkedin',
+    'moves_up', 'moves_down', 'net_assessment', 'transaction_assessment',
+    'key_questions', 'email', 'linkedin',
   ],
   additionalProperties: false,
 };
@@ -796,6 +838,17 @@ function renderArtifact({ deal, planner, research, bull, bear, calibrator, cfo, 
     ].join(' / ');
     return `- **${question.question_id}** [${question.priority}; ${question.rubric_dimension}; ${impact}] ${question.question} — ${question.why_it_matters}`;
   }).join('\n');
+  const transaction = calibrator.transaction_assessment;
+  const transactionRows = [
+    ['Company', transaction.company],
+    ['Deal economics', transaction.deal_economics],
+    ['Access vehicle', transaction.access_vehicle],
+  ].map(([name, part]) => {
+    const blockers = part.blocking_facts.length > 0
+      ? ` Blocking facts: ${part.blocking_facts.join('; ')}.`
+      : '';
+    return `| ${name} | ${part.label} | ${part.rationale}${blockers} |`;
+  }).join('\n');
   const timestamp = new Date().toISOString();
   const date = timestamp.slice(0, 10);
   return {
@@ -839,6 +892,14 @@ ${capText}
 ## Gates
 Kill criteria: ${calibrator.kill_criteria}
 Primary thesis: ${calibrator.primary_thesis}
+
+## Transaction Assessment
+
+| Part | Label | Rationale |
+|---|---|---|
+${transactionRows}
+
+**Recommendation:** ${transaction.recommendation}${transaction.gated_reason ? ` — ${transaction.gated_reason}` : ''}
 
 ${sectionText}
 
@@ -1557,6 +1618,7 @@ export async function councilEvaluate(deal, opts = {}) {
         dimensionScores: calibrator.data.dimension_scores,
         evidenceAssessments: calibrator.data.evidence_assessments,
         evidenceCapReceipt: calibrator.data.cap_receipt,
+        transactionAssessment: calibrator.data.transaction_assessment,
         followupQuestions: calibrator.data.key_questions,
         rubricSnapshot: lens.rubric,
         artifactHashes: { [artifact.filename]: hash(artifact.content) },

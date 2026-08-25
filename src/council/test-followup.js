@@ -94,6 +94,7 @@ function validOutput() {
     answer_assessments: [{
       question_id: '7',
       assessment: 'supports',
+      resolution_state: 'resolved',
       rationale: 'The answer is directionally strong but not independently documented.',
     }],
   };
@@ -163,6 +164,7 @@ test('uses one retrieval-free Calibrator pass and preserves unrelated dimensions
     eq(result.provenance.runType, 'founder_followup');
     eq(result.effort, 'low');
     eq(result.provenance.parentEvaluationId, 41);
+    eq(result.provenance.questionResolutions[0].resolution_state, 'resolved');
     eq(result.provenance.dimensionScores.length, 9);
     eq(
       result.provenance.dimensionScores.find(item => item.name === 'Compounding structure').likert,

@@ -103,6 +103,7 @@ export async function answerFounderFollowup({ questionId, answer }) {
          answered_at = NOW(),
          applied_evaluation_id = NULL,
          applied_at = NULL,
+         resolution_state = 'open',
          updated_at = NOW()
      WHERE id = $2
      RETURNING *`,
@@ -125,18 +126,32 @@ export async function pendingFounderFollowups(inviteId) {
   );
 }
 
-export async function markFounderFollowupsApplied(questionIds, evaluationId) {
+export async function markFounderFollowupsApplied(resolutions, evaluationId) {
   const target = positiveId(evaluationId, 'Evaluation id');
-  const ids = [...new Set((questionIds || []).map(Number))]
-    .filter(id => Number.isInteger(id) && id > 0);
-  if (ids.length === 0) return [];
-  return query(
-    `UPDATE council_followup_questions
-     SET applied_evaluation_id = $1,
-         applied_at = NOW(),
-         updated_at = NOW()
-     WHERE id = ANY($2::int[])
-     RETURNING *`,
-    [target, ids],
-  );
+  const values = resolutions || [];
+  if (values.length === 0) return [];
+  const updated = [];
+  const seen = new Set();
+  for (const value of values) {
+    const id = positiveId(typeof value === 'object' ? value.question_id : value, 'Question id');
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const state = typeof value === 'object' ? value.resolution_state : 'resolved';
+    if (!['resolved', 'insufficient'].includes(state)) {
+      throw new Error(`Question ${id} has an invalid resolution state`);
+    }
+    const rows = await query(
+      `UPDATE council_followup_questions
+       SET applied_evaluation_id = $1,
+           applied_at = NOW(),
+           resolution_state = $2,
+           updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [target, state, id],
+    );
+    if (!rows[0]) throw new Error(`Founder follow-up question ${id} was not found`);
+    updated.push(rows[0]);
+  }
+  return updated;
 }

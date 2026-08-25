@@ -361,9 +361,9 @@ async function runDealLogImport(dir, opts = {}) {
             council_session_id, council_model_policy, council_research_plan_hash, council_research_plan,
             council_score_adjusted, council_run_key, council_run_type,
             council_dimension_scores, council_evidence_assessments, council_parent_evaluation_id,
-            council_rubric_snapshot)
+            council_rubric_snapshot, council_transaction_assessment)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-                 $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
+                 $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
          RETURNING id`,
         [
           investment_id,
@@ -403,6 +403,7 @@ async function runDealLogImport(dir, opts = {}) {
           provenance.evidenceAssessments ? JSON.stringify(provenance.evidenceAssessments) : null,
           provenance.parentEvaluationId || null,
           provenance.rubricSnapshot ? JSON.stringify(provenance.rubricSnapshot) : null,
+          provenance.transactionAssessment ? JSON.stringify(provenance.transactionAssessment) : null,
         ]
       );
       const evaluationId = inserted[0]?.id;

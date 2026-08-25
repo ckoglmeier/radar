@@ -57,6 +57,10 @@ Also return:
 
 - the strongest calibrated argument;
 - kill-criteria and primary-thesis conclusions;
+- one version-1 transaction assessment that separately labels the company,
+  offered deal economics, and access vehicle as positive, mixed, negative, or
+  insufficient. Cite only supplied source locators, list concrete blocking
+  facts, and give one proceed, defer, pass, or insufficient recommendation;
 - concrete moves up and down;
 - the single net question;
 - no more than five concrete founder follow-up questions. Each question must

@@ -53,6 +53,7 @@ test('backfills legacy questions, stores a founder answer, applies it, and reope
   const initial = await founderFollowupsForInvite(inviteId);
   eq(initial.length, 2);
   eq(initial[0].status, 'open');
+  eq(initial[0].resolution_state, 'open');
   eq(initial[0].priority, 'helpful');
 
   const answered = await answerFounderFollowup({
@@ -77,10 +78,14 @@ test('backfills legacy questions, stores a founder answer, applies it, and reope
   );
   const history = await evaluationHistoryForInvite(inviteId);
   eq(history[0].id, amendment[0].id, 'explicit founder amendment becomes current');
-  await markFounderFollowupsApplied([initial[0].id], amendment[0].id);
+  await markFounderFollowupsApplied([{
+    question_id: initial[0].id,
+    resolution_state: 'insufficient',
+  }], amendment[0].id);
   const applied = await founderFollowupsForInvite(inviteId);
   const appliedQuestion = applied.find(question => question.id === initial[0].id);
   eq(appliedQuestion.status, 'applied');
+  eq(appliedQuestion.resolution_state, 'insufficient');
   eq(Number(appliedQuestion.applied_total_score), 33);
 
   const edited = await answerFounderFollowup({
@@ -89,6 +94,7 @@ test('backfills legacy questions, stores a founder answer, applies it, and reope
   });
   eq(edited.status, 'answered');
   eq(edited.applied_evaluation_id, null);
+  eq(edited.resolution_state, 'open');
   eq((await pendingFounderFollowups(inviteId)).length, 1);
 
   await query('DELETE FROM deal_evaluations WHERE pipeline_invite_id = $1', [inviteId]);

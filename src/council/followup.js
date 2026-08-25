@@ -31,7 +31,8 @@ const FOLLOWUP_CONTRACT = readFileSync(
 
 const FOLLOWUP_PROMPT =
   'STAGE: founder_followup\nAssess only the supplied founder answers against the frozen base evaluation. ' +
-  'Do not search or reconsider unrelated dimensions. Return one assessment for every answer. Return a dimension ' +
+  'Do not search or reconsider unrelated dimensions. Return one assessment for every answer. ' +
+  'Mark each answer resolved only when it answers the question well enough for a decision; otherwise mark it insufficient. Return a dimension ' +
   'update only where an answer materially changes quality, confidence, or cap status; an update may preserve the ' +
   'same quality rating. Choose quality before missing-evidence treatment and use only Radar-provided stage caps. ' +
   'Use rubric dimension names exactly as written. Radar preserves untouched ratings and computes effective scores. ' +
@@ -85,9 +86,13 @@ const FOLLOWUP_SCHEMA = {
             type: 'string',
             enum: ['supports', 'weakens', 'mixed', 'insufficient'],
           },
+          resolution_state: {
+            type: 'string',
+            enum: ['resolved', 'insufficient'],
+          },
           rationale: { type: 'string', maxLength: 360 },
         },
-        required: ['question_id', 'assessment', 'rationale'],
+        required: ['question_id', 'assessment', 'resolution_state', 'rationale'],
         additionalProperties: false,
       },
     },
@@ -419,6 +424,14 @@ export async function councilFollowupEvaluate({
   provenance.dimensionScores = output.dimension_scores;
   provenance.evidenceAssessments = evidenceAssessments;
   provenance.evidenceCapReceipt = policyResult.capReceipt;
+  provenance.transactionAssessment = jsonValue(
+    baseEvaluation.council_transaction_assessment,
+    null,
+  );
+  provenance.questionResolutions = output.answer_assessments.map(assessment => ({
+    question_id: Number(assessment.question_id),
+    resolution_state: assessment.resolution_state,
+  }));
   provenance.followupQuestions = [];
   provenance.artifactHashes = { [artifact.filename]: hash(artifact.content) };
   provenance.sessionId = outcome.result.sessionId || null;

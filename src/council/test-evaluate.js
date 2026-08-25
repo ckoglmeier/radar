@@ -161,6 +161,29 @@ function fakeProvider({ delay = 0, malformedOnceStage = null, inconsistentOnceSt
           moves_up: ['More proof'],
           moves_down: ['Less proof'],
           net_assessment: 'Balanced',
+          transaction_assessment: {
+            version: 1,
+            company: {
+              label: 'positive',
+              rationale: 'The company case is directionally attractive.',
+              source_refs: ['doc-91-chunk-2:24000-48000'],
+              blocking_facts: [],
+            },
+            deal_economics: {
+              label: 'insufficient',
+              rationale: 'The offered economics are not fully recorded.',
+              source_refs: [],
+              blocking_facts: ['Confirm price and ownership.'],
+            },
+            access_vehicle: {
+              label: 'mixed',
+              rationale: 'Access exists but vehicle terms need confirmation.',
+              source_refs: ['doc-91-chunk-2:24000-48000'],
+              blocking_facts: ['Confirm fees and carry.'],
+            },
+            recommendation: 'defer',
+            gated_reason: 'Confirm transaction economics and vehicle terms.',
+          },
           key_questions: [{
             question_id: 'retention-proof',
             question: 'What is current net revenue retention?',
@@ -365,6 +388,8 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     eq(out.provenance.researchPlan.priority_question_ids[0], 'baseline-identity-status');
     eq(out.provenance.researchPlan.questions.at(-1).question_id, 'custom-safety-certification');
     eq(out.provenance.evidenceAssessments.length, 9, 'persists evidence sufficiency by dimension');
+    eq(out.provenance.transactionAssessment.version, 1);
+    eq(out.provenance.transactionAssessment.deal_economics.label, 'insufficient');
     eq(out.provenance.followupQuestions[0].current_likert, 3);
     eq(out.provenance.followupQuestions[0].upside_points, 3, 'Radar computes question upside');
     eq(out.provenance.followupQuestions[0].downside_points, -1.5, 'Radar computes question downside');
@@ -600,7 +625,8 @@ test('councilEvaluate: imported evaluation persists the structured research plan
     eq(imported.imported, 1);
     const rows = await query(
       `SELECT id, council_research_plan_hash, council_research_plan,
-              council_dimension_scores, council_evidence_assessments, council_rubric_snapshot
+              council_dimension_scores, council_evidence_assessments, council_rubric_snapshot,
+              council_transaction_assessment
        FROM deal_evaluations
        WHERE file_path = $1`,
       [join(dealLogDir, out.writtenFiles[0])],
@@ -615,6 +641,8 @@ test('councilEvaluate: imported evaluation persists the structured research plan
     eq(rows[0].council_dimension_scores.length, 9);
     eq(rows[0].council_evidence_assessments.length, 9);
     eq(rows[0].council_rubric_snapshot.total_points, 50);
+    eq(rows[0].council_transaction_assessment.version, 1);
+    eq(rows[0].council_transaction_assessment.company.label, 'positive');
   }));
 
 test('councilEvaluate: concurrent identical clicks share one in-flight run', async () =>

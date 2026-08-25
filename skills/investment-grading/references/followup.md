@@ -8,6 +8,8 @@ For each answer:
 
 - decide whether it supports, weakens, mixes, or does not resolve the original
   case;
+- mark it `resolved` only when it answers the original question well enough
+  for a decision; otherwise mark it `insufficient`;
 - explain the assessment briefly;
 - update only a rubric dimension the answer materially affects;
 - choose `quality_likert` independently from confidence and missing-evidence
@@ -24,6 +26,8 @@ usable evidence; lack of public corroboration is confidence-only. Radar applies
 the same deterministic evidence policy as the initial evaluation, preserves
 every untouched dimension, computes points and verdicts, appends an amendment,
 and links the answer to that amendment.
+The amendment preserves the frozen transaction assessment; it does not reopen
+company, economics, or vehicle analysis outside the answered question.
 
 Keep the amendment compact:
 
