@@ -150,6 +150,35 @@ function fakeProvider({ delay = 0, malformedOnceStage = null, inconsistentOnceSt
           critical_unknowns: researchAdaptation().critical_unknowns,
           contradictions_to_resolve: researchAdaptation().contradictions_to_resolve,
         },
+        research_acquire: {
+          observations: [{
+            target_id: 'baseline-product-moat',
+            relation: 'supports',
+            direction: 'neutral',
+            classification: 'verified',
+            source_class: 'sdk_public_web',
+            authority: 'primary',
+            title: 'Example primary source',
+            publisher: 'Example publisher',
+            url: 'https://example.com/source',
+            published_at: '2026-08-20',
+            event_date: '2026-08-19',
+            value: 'Example fact',
+            is_derived_estimate: false,
+          }],
+          custom_questions: researchAdaptation().custom_questions,
+          critical_unknowns: researchAdaptation().critical_unknowns,
+          contradictions_to_resolve: researchAdaptation().contradictions_to_resolve,
+          stop_reason: 'required_questions_accounted_for',
+        },
+        research_synthesis: {
+          evidence: ['[baseline-product-moat] verified | Example fact | 2026-08-19 | Example primary source | https://example.com/source'],
+          team_dossier: 'Team dossier',
+          company_context: 'Company context',
+          custom_questions: researchAdaptation().custom_questions,
+          critical_unknowns: researchAdaptation().critical_unknowns,
+          contradictions_to_resolve: researchAdaptation().contradictions_to_resolve,
+        },
         bull: { dimension_scores: dimensionScores(4), key_argument: 'Bull case' },
         bear: { dimension_scores: dimensionScores(2), key_argument: 'Bear case' },
         calibrator: {
@@ -402,6 +431,100 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     ok(artifact.includes('retention-proof'), 'artifact records actionable founder questions');
     ok(artifact.includes('## Council Evaluation'), 'Radar wrote Council table');
     ok(artifact.includes('| Calibrator | 30/50 |'), 'Radar computed the canonical total');
+  }));
+
+test('councilEvaluate: two-pass Research freezes observations before no-tools synthesis', async () =>
+  withTempDir(async dealLogDir => {
+    const fake = fakeProvider();
+    const stages = [];
+    const out = await councilEvaluate(
+      { company: 'Two Pass Fixture', stage: 'Seed' },
+      {
+        provider: fake,
+        env: {},
+        dealLogDir,
+        reuse: false,
+        researchArchitecture: 'two_pass',
+        onStage: stage => stages.push(stage),
+      },
+    );
+    const acquire = fake.calls.find(req => req.prompt.startsWith('STAGE: research_acquire'));
+    const synthesis = fake.calls.find(req => req.prompt.startsWith('STAGE: research_synthesis'));
+    const bull = fake.calls.find(req => req.prompt.startsWith('STAGE: bull'));
+    ok(acquire, 'runs acquisition pass');
+    ok(synthesis, 'runs synthesis pass');
+    eq(acquire.tools.join(','), 'WebSearch');
+    eq(synthesis.tools.length, 0, 'synthesis cannot retrieve');
+    ok(synthesis.context.includes('FROZEN ACQUIRED OBSERVATIONS'));
+    ok(synthesis.context.includes('baseline-product-moat'));
+    ok(bull.context.includes('"contractVersion":1'), 'Bull receives the typed decision packet');
+    ok(bull.context.includes('"targetId":"baseline-product-moat"'));
+    ok(!bull.context.includes('toolRegistryFingerprint'), 'judgment does not see edition metadata');
+    eq(out.provenance.researchArchitecture, 'two_pass');
+    eq(out.provenance.researchSnapshot.research_run_envelope.completedResearchPasses.length, 2);
+    eq(out.provenance.researchSnapshot.research_run_envelope.productEdition, 'desktop');
+    eq(out.provenance.researchSnapshot.research_run_envelope.decisionPacket.questionCoverage.length, 10);
+    ok(out.provenance.sourceReceipts.some(receipt => receipt.status === 'unavailable'));
+    eq(
+      stages.join(','),
+      'research_acquire,research_synthesis,bull_bear,calibrator,cfo,finalizing',
+    );
+  }));
+
+test('councilEvaluate: credentialed evidence remains additive and provider-neutral downstream', async () =>
+  withTempDir(async dealLogDir => {
+    const fake = fakeProvider();
+    const out = await councilEvaluate(
+      { company: 'Additive Source Fixture', stage: 'Seed' },
+      {
+        provider: fake,
+        env: {},
+        dealLogDir,
+        reuse: false,
+        researchArchitecture: 'two_pass',
+        productEdition: 'family_office',
+        researchCapabilities: ['supplied_documents', 'public_web', 'structured_company_data'],
+        externalResearchEvidence: {
+          observations: [{
+            targetId: 'baseline-financing',
+            relation: 'context',
+            direction: 'consistent',
+            classification: 'directional',
+            sourceClass: 'credentialed_database',
+            authority: 'authoritative_database',
+            value: '$8M-$12M modeled financing range',
+            isDerivedEstimate: true,
+          }],
+          sourceReceipts: [{
+            taskId: 'credentialed-financing',
+            sourceClass: 'credentialed_database',
+            sourceId: 'fixture-provider',
+            status: 'completed',
+            durationMs: 12,
+            recordIds: ['fixture-record'],
+            runIds: ['fixture-run'],
+            continuation: 'not_applicable',
+          }, {
+            taskId: 'credentialed-news',
+            sourceClass: 'credentialed_database',
+            sourceId: 'fixture-provider',
+            status: 'failed',
+            durationMs: 8,
+            continuation: 'synthesis_without_observation',
+            errorCode: 'SOURCE_FAILED',
+          }],
+        },
+      },
+    );
+    const envelope = out.provenance.researchSnapshot.research_run_envelope;
+    eq(envelope.productEdition, 'family_office');
+    ok(envelope.sourceReceipts.some(receipt => receipt.status === 'failed'));
+    ok(envelope.decisionPacket.observations.some(
+      observation => observation.sourceClass === 'credentialed_database',
+    ));
+    const bull = fake.calls.find(req => req.prompt.startsWith('STAGE: bull'));
+    ok(!bull.context.includes('fixture-provider'), 'provider identity stays out of judgment');
+    ok(!bull.context.includes('SOURCE_FAILED'), 'source operations stay out of judgment');
   }));
 
 test('councilEvaluate: model override flows to the explicit Calibrator stage', async () =>
