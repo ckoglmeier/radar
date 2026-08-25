@@ -17,6 +17,8 @@ import {
   createPendingIntake,
   getPendingIntake,
   markPendingCommitted,
+  discardPendingIntake,
+  expirePendingIntakeBytes,
   sweepExpiredPending,
 } from './documents.js';
 
@@ -435,6 +437,58 @@ async function run() {
       ? afterCommit.content
       : Buffer.from(afterCommit.content);
     eq(committedContent.length, 0, 'committed receipt clears staging bytes');
+  });
+
+  await test('discard clears staged bytes even when progressive refs require a receipt', async () => {
+    const content = Buffer.from('cancelled private staging bytes');
+    const sha256 = createHash('sha256').update(content).digest('hex');
+    const simple = await createPendingIntake({
+      filename: 'cancel-simple.txt', mime: 'text/plain', sha256, content,
+      preview: { type: 'unknown' },
+    });
+    eq((await discardPendingIntake(simple.id)).id, simple.id);
+    eq((await query('SELECT id FROM pending_intake WHERE id = $1', [simple.id])).length, 0,
+      'an unstarted preview is physically deleted');
+
+    const partial = await createPendingIntake({
+      filename: 'cancel-partial.txt', mime: 'text/plain', sha256, content,
+      preview: { type: 'company_update' },
+    });
+    await query(`UPDATE pending_intake SET created_refs = '{"created":{"id":9}}'::jsonb WHERE id = $1`, [partial.id]);
+    const result = await discardPendingIntake(partial.id);
+    eq(result.id, partial.id);
+    eq(result.deleted, false);
+    const [receipt] = await query(`
+      SELECT octet_length(content)::int AS bytes, created_refs, expires_at <= NOW() AS expired
+      FROM pending_intake WHERE id = $1
+    `, [partial.id]);
+    eq(receipt.bytes, 0, 'cancellation clears bytes before retaining recovery refs');
+    eq(receipt.expired, true, 'the cancelled receipt is eligible for cleanup');
+  });
+
+  await test('shutdown expires every uncommitted staging byte', async () => {
+    const content = Buffer.from('quit cleanup canary');
+    const sha256 = createHash('sha256').update(content).digest('hex');
+    const first = await createPendingIntake({
+      filename: 'quit-one.txt', mime: 'text/plain', sha256, content,
+      preview: { type: 'unknown' },
+    });
+    const second = await createPendingIntake({
+      filename: 'quit-two.txt', mime: 'text/plain', sha256, content,
+      preview: { type: 'unknown' },
+    });
+    const cleared = await expirePendingIntakeBytes();
+    ok(cleared >= 2, 'shutdown reports all live pending rows');
+    const rows = await query(`
+      SELECT id, octet_length(content)::int AS bytes, expires_at <= NOW() AS expired
+      FROM pending_intake WHERE id = ANY($1::uuid[]) ORDER BY id
+    `, [[first.id, second.id]]);
+    eq(rows.length, 2);
+    for (const row of rows) {
+      eq(row.bytes, 0);
+      eq(row.expired, true);
+    }
+    await sweepExpiredPending();
   });
 
   await test('getPendingIntake returns null for an expired row', async () => {

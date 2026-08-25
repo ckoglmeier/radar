@@ -255,13 +255,34 @@ export async function updatePendingRefs(id, created_refs) {
 
 export async function discardPendingIntake(id) {
   const rows = await query(`
-    DELETE FROM pending_intake
-     WHERE id = $1
-       AND status = 'pending'
-       AND COALESCE(created_refs, '{}'::jsonb) = '{}'::jsonb
+    UPDATE pending_intake
+       SET content = $2,
+           expires_at = LEAST(expires_at, NOW())
+     WHERE id = $1 AND status = 'pending'
+    RETURNING id, created_refs
+  `, [id, Buffer.alloc(0)]);
+  const row = rows[0];
+  if (!row) return null;
+
+  if (!row.created_refs || Object.keys(row.created_refs).length === 0) {
+    await query(`DELETE FROM pending_intake WHERE id = $1 AND status = 'pending'`, [id]);
+    return { id: row.id, deleted: true };
+  }
+  return { id: row.id, deleted: false };
+}
+
+// Desktop quit and crash-recovery cleanup must not leave preview bytes on
+// disk. Progressive refs remain just long enough to diagnose a partial
+// non-transactional write, but the source bytes are cleared immediately.
+export async function expirePendingIntakeBytes() {
+  const rows = await query(`
+    UPDATE pending_intake
+       SET content = $1,
+           expires_at = LEAST(expires_at, NOW())
+     WHERE status = 'pending'
     RETURNING id
-  `, [id]);
-  return rows[0] || null;
+  `, [Buffer.alloc(0)]);
+  return rows.length;
 }
 
 // Deletes expired preview receipts in either lifecycle state. Committed rows
