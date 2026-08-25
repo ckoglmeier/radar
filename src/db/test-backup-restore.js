@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { backupDatabase, restoreDatabase } from './backup.js';
+import { backupDatabase, createDatabaseBackupPayload, restoreDatabase } from './backup.js';
 import { closeDb, query, withTenant } from './index.js';
 import { runMigrations } from './migrate.js';
 import { accessDocumentBytes, createDocument } from '../models/documents.js';
@@ -35,6 +35,7 @@ const positionKey = '22222222-2222-4222-8222-222222222222';
 
 try {
   let backupFile;
+  let backupContent;
   let runId;
   let evaluationId;
   let fundId;
@@ -296,14 +297,18 @@ try {
     );
     await query(`DELETE FROM documents WHERE id = $1`, [restricted.id]);
     ({ file: backupFile } = await backupDatabase({ outDir: backupDir }));
+    const inMemoryBackup = await createDatabaseBackupPayload();
+    assert.ok(inMemoryBackup.totalRows > 0);
+    assert.equal(typeof inMemoryBackup.content, 'string');
+    backupContent = inMemoryBackup.content;
   });
 
-  const serialized = readFileSync(backupFile, 'utf8');
+  const serialized = backupContent;
   assert.match(serialized, /\$radar_bytes_base64/);
   const reversedSelfReferences = JSON.parse(serialized);
   reversedSelfReferences.tables.investment_updates.reverse();
   reversedSelfReferences.tables.command_proposals.reverse();
-  writeFileSync(backupFile, JSON.stringify(reversedSelfReferences));
+  backupContent = JSON.stringify(reversedSelfReferences);
 
   await withTenant(targetUrl, async () => {
     await runMigrations();
@@ -311,7 +316,7 @@ try {
       `INSERT INTO pipeline_invites (deal_slug, company_name)
        VALUES ('junk', 'Replace Me')`,
     );
-    const result = await restoreDatabase({ file: backupFile });
+    const result = await restoreDatabase({ content: backupContent });
     assert.ok(result.totalRows > 0);
 
     const invites = await query(

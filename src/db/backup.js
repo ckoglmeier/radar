@@ -162,7 +162,7 @@ function rowsWithDeferredSelfReferences(encodedRows, selfReferences) {
   return ordered;
 }
 
-export async function backupDatabase({ outDir = './backups' } = {}) {
+export async function createDatabaseBackupPayload() {
   const [restrictedDocuments] = await query(`
     SELECT COUNT(*)::int AS count FROM documents WHERE sync_policy = 'local_only'
   `);
@@ -196,15 +196,24 @@ export async function backupDatabase({ outDir = './backups' } = {}) {
     totalRows += rows.length;
   }
 
+  return {
+    content: JSON.stringify(dump, null, 1),
+    tables: ordered.map(t => ({ table: t, rows: dump.tables[t].length })),
+    totalRows,
+  };
+}
+
+export async function backupDatabase({ outDir = './backups' } = {}) {
+  const payload = await createDatabaseBackupPayload();
   mkdirSync(outDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
   const file = join(outDir, `radar-backup-${stamp}.json`);
-  writeFileSync(file, JSON.stringify(dump, null, 1));
+  writeFileSync(file, payload.content);
 
   return {
     file,
-    tables: ordered.map(t => ({ table: t, rows: dump.tables[t].length })),
-    totalRows,
+    tables: payload.tables,
+    totalRows: payload.totalRows,
   };
 }
 
@@ -213,13 +222,13 @@ export async function backupDatabase({ outDir = './backups' } = {}) {
  * Every application table is replaced inside one transaction so a failed
  * restore leaves the existing workspace unchanged.
  */
-export async function restoreDatabase({ file } = {}) {
-  if (!file) throw new Error('restore file is required');
+export async function restoreDatabase({ file, content } = {}) {
+  if (!file && content == null) throw new Error('restore file or content is required');
   if (!(await isPgliteActive())) {
     throw new Error('restoreDatabase currently supports local PGlite databases only');
   }
 
-  const dump = JSON.parse(readFileSync(file, 'utf8'));
+  const dump = JSON.parse(content == null ? readFileSync(file, 'utf8') : String(content));
   if (dump.format_version !== FORMAT_VERSION || !dump.tables || typeof dump.tables !== 'object') {
     throw new Error(`unsupported Radar backup format: ${dump.format_version ?? 'legacy'}`);
   }
