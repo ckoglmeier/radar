@@ -120,15 +120,15 @@ export function normalizeEvidenceObservation(observation) {
   const isDerivedEstimate = Boolean(observation?.isDerivedEstimate ?? observation?.is_derived_estimate);
   const direction = optionalString(observation?.direction) || 'neutral';
   if (!DIRECTIONS.has(direction)) throw new Error(`Invalid evidence direction: ${direction}`);
-  if (isDerivedEstimate && direction === 'neutral') {
-    throw new Error('Derived estimates require a consistent or inconsistent direction');
-  }
   const classification = requiredString(
     observation?.classification ?? (isDerivedEstimate ? 'directional' : relation === 'conflicts' ? 'conflicting' : 'verified'),
     'classification',
   );
   if (!CLASSIFICATIONS.has(classification)) {
     throw new Error(`Invalid evidence classification: ${classification}`);
+  }
+  if ((isDerivedEstimate || classification === 'directional') && direction === 'neutral') {
+    throw new Error('Directional evidence requires a consistent or inconsistent direction');
   }
   const normalized = {
     observationId: optionalString(observation?.observationId ?? observation?.observation_id),
