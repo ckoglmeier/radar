@@ -8,6 +8,7 @@ import {
 import {
   evidenceConfidenceSemanticFixtures,
   EXTRACTION_STATE_FIXTURE,
+  researchArchitectureFixtures,
   substantialRoomFixture,
 } from './fixtures.js';
 
@@ -79,5 +80,36 @@ assert.match(
 );
 assert.equal(semanticFixtures[3].deal.round, 'Series B');
 assert.match(semanticFixtures[3].researchSnapshot.evidence.join(' '), /unit economics were not supplied or verified/i);
+
+const architectureFixtures = researchArchitectureFixtures();
+assert.equal(architectureFixtures.length, 6);
+assert.deepEqual(
+  architectureFixtures.map(entry => entry.id),
+  [
+    'private-terms-public-silence',
+    'conflicting-financing-totals',
+    'ambiguous-entity',
+    'distressed-founder-outcome',
+    'oversized-room-chunk-all',
+    'provider-opinion-leakage',
+  ],
+);
+for (const entry of architectureFixtures) {
+  assert.ok(entry.checklist.criticalFacts.length > 0, `${entry.id} requires critical-fact denominators`);
+  assert.ok(entry.checklist.founderQuestions.length > 0, `${entry.id} requires founder-question gates`);
+  assert.doesNotMatch(JSON.stringify(entry), /Prism Data|Mercury|Chandler|Koglmeier/i);
+}
+assert.equal(
+  architectureFixtures.find(entry => entry.id === 'ambiguous-entity').expected.credentialedRetrievals,
+  0,
+);
+assert.equal(
+  architectureFixtures.find(entry => entry.id === 'private-terms-public-silence').expected.publicSilenceIsConflict,
+  false,
+);
+assert.equal(
+  architectureFixtures.find(entry => entry.id === 'provider-opinion-leakage').expected.providerOpinionExcluded,
+  true,
+);
 
 console.log('council-eval-contracts: fictional evidence corpus passed');

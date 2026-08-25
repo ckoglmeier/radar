@@ -1,0 +1,35 @@
+{
+  "baseline_version": "v0.7.3",
+  "engine_commit": "b86661b9e986477834c02e66acdf321b08d3c4f9",
+  "captured_at": "2026-08-25",
+  "research_architecture": "single_session_web_research",
+  "fixture_corpus": {
+    "count": 6,
+    "ids": [
+      "private-terms-public-silence",
+      "conflicting-financing-totals",
+      "ambiguous-entity",
+      "distressed-founder-outcome",
+      "oversized-room-chunk-all",
+      "provider-opinion-leakage"
+    ],
+    "checklist_denominators": {
+      "critical_facts": 11,
+      "important_facts": 8,
+      "citations": 14,
+      "contradictions": 2,
+      "founder_questions": 6
+    }
+  },
+  "deterministic_baseline": {
+    "baseline_questions": 9,
+    "custom_question_limit": 3,
+    "downstream_judgment_stages": ["bull", "bear", "calibrator", "score_policy", "cfo"],
+    "public_silence_is_conflict": false,
+    "partial_score_on_research_failure": false
+  },
+  "semantic_measurement": {
+    "status": "must_be_recorded_by_v0.7.4_release_eval",
+    "note": "No live deal or uncompleted model run is represented as baseline evidence. Release evaluation must populate measured corpus results before promotion."
+  }
+}

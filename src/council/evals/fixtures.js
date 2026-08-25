@@ -177,3 +177,180 @@ export function evidenceConfidenceSemanticFixtures() {
     },
   ];
 }
+
+function researchArchitectureFixture({
+  id,
+  company,
+  shape,
+  criticalFacts,
+  importantFacts = [],
+  citations = [],
+  contradictions = [],
+  founderQuestions = [],
+  expected,
+  sourceDocuments = [],
+  externalCandidates = [],
+  externalObservations = [],
+}) {
+  return Object.freeze({
+    id,
+    shape,
+    deal: Object.freeze({
+      company,
+      market: 'Synthetic research architecture fixture',
+      round: 'Seed',
+      source: 'sanitized fixture',
+      notes: 'Fictional company. No live portfolio or provider payload.',
+      source_documents: sourceDocuments,
+    }),
+    checklist: Object.freeze({
+      criticalFacts,
+      importantFacts,
+      citations,
+      contradictions,
+      founderQuestions,
+    }),
+    externalCandidates,
+    externalObservations,
+    expected: Object.freeze(expected),
+  });
+}
+
+/**
+ * Phase 0 release corpus for the two-pass Research architecture. Each fixture
+ * has an explicit checklist so semantic percentages have a real denominator.
+ * The corpus is sanitized and must never be replaced with a live deal dump.
+ */
+export function researchArchitectureFixtures() {
+  const oversized = substantialRoomFixture();
+  return [
+    researchArchitectureFixture({
+      id: 'private-terms-public-silence',
+      company: 'Fictional Juniper Harbor',
+      shape: 'private current terms with no public announcement',
+      criticalFacts: ['private-current-round', 'private-current-valuation'],
+      importantFacts: ['older-public-round'],
+      citations: ['private-room:terms', 'synthetic://older-round'],
+      founderQuestions: ['current-round-close-status'],
+      expected: {
+        privateTermsRemainSupplied: true,
+        publicSilenceIsConflict: false,
+      },
+      sourceDocuments: [{
+        document_id: 9201,
+        filename: 'juniper-private-terms.txt',
+        mime_type: 'text/plain',
+        sha256: 'juniper-private-terms-v1',
+        text: 'PRIVATE-CURRENT-ROUND: $3M Seed at a $15M post-money valuation. This current offer is private.',
+      }],
+      externalObservations: [{
+        targetId: 'baseline-financing',
+        relation: 'context',
+        value: 'An older $1.5M pre-seed was publicly announced.',
+        url: 'synthetic://older-round',
+      }],
+    }),
+    researchArchitectureFixture({
+      id: 'conflicting-financing-totals',
+      company: 'Fictional Copper Kite',
+      shape: 'authoritative sources disagree on historical cumulative funding',
+      criticalFacts: ['funding-total-source-a', 'funding-total-source-b'],
+      importantFacts: ['round-date'],
+      citations: ['synthetic://filing-a', 'synthetic://announcement-b'],
+      contradictions: ['historical-funding-total'],
+      founderQuestions: ['reconcile-historical-financing'],
+      expected: {
+        preserveBothValues: true,
+        contradictionCount: 1,
+      },
+      externalObservations: [{
+        targetId: 'baseline-financing',
+        relation: 'conflicts',
+        value: '$8M cumulative funding',
+        url: 'synthetic://filing-a',
+      }, {
+        targetId: 'baseline-financing',
+        relation: 'conflicts',
+        value: '$11M cumulative funding',
+        url: 'synthetic://announcement-b',
+      }],
+    }),
+    researchArchitectureFixture({
+      id: 'ambiguous-entity',
+      company: 'Fictional Atlas Works',
+      shape: 'two same-name external company candidates',
+      criticalFacts: ['entity-not-resolved'],
+      citations: [],
+      founderQuestions: ['confirm-company-domain'],
+      expected: {
+        entityStatus: 'ambiguous',
+        credentialedRetrievals: 0,
+      },
+      externalCandidates: [
+        { id: 'atlas-industrial', name: 'Atlas Works', domain: 'atlas-industrial.invalid' },
+        { id: 'atlas-software', name: 'Atlas Works', domain: 'atlas-software.invalid' },
+      ],
+    }),
+    researchArchitectureFixture({
+      id: 'distressed-founder-outcome',
+      company: 'Fictional Lantern Grid',
+      shape: 'material prior founder-company outcome with current relevance',
+      criticalFacts: ['founder-prior-company-closure'],
+      importantFacts: ['founder-role', 'closure-date'],
+      citations: ['synthetic://closure-filing', 'synthetic://founder-profile'],
+      founderQuestions: ['lessons-from-prior-closure'],
+      expected: {
+        adverseFactPreserved: true,
+        guiltByAssociation: false,
+      },
+      externalObservations: [{
+        targetId: 'baseline-team',
+        relation: 'context',
+        value: 'A prior company led by the founder ceased operations after losing its largest customer.',
+        url: 'synthetic://closure-filing',
+      }],
+    }),
+    researchArchitectureFixture({
+      id: 'oversized-room-chunk-all',
+      company: oversized.deal.company,
+      shape: 'oversized room requiring complete chunk coverage',
+      criticalFacts: oversized.facts.filter(fact => fact.priority === 'critical').map(fact => fact.id),
+      importantFacts: oversized.facts.filter(fact => fact.priority === 'important').map(fact => fact.id),
+      citations: oversized.facts.map(fact => `fixture:${fact.id}`),
+      contradictions: ['same-event-conflict'],
+      founderQuestions: ['reconcile-june-arr'],
+      expected: {
+        evidenceStrategy: 'chunk_all',
+        allChunksAccountedFor: true,
+      },
+      sourceDocuments: oversized.deal.source_documents,
+    }),
+    researchArchitectureFixture({
+      id: 'provider-opinion-leakage',
+      company: 'Fictional Signal Orchard',
+      shape: 'structured estimates mixed with provider-authored investment opinion',
+      criticalFacts: ['revenue-estimate-is-derived'],
+      importantFacts: ['headcount-observation'],
+      citations: ['synthetic://structured-record'],
+      founderQuestions: ['verify-revenue-with-primary-evidence'],
+      expected: {
+        estimateClassification: 'directional',
+        providerOpinionExcluded: true,
+      },
+      externalObservations: [{
+        targetId: 'baseline-traction-economics',
+        relation: 'context',
+        direction: 'consistent',
+        value: '$5M-$10M modeled revenue range',
+        isDerivedEstimate: true,
+        url: 'synthetic://structured-record',
+      }, {
+        targetId: 'baseline-traction-economics',
+        relation: 'context',
+        value: 'Provider rates the company an exceptional investment.',
+        providerOpinion: true,
+        url: 'synthetic://structured-record',
+      }],
+    }),
+  ];
+}
