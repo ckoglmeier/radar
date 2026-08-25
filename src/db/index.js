@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { AsyncLocalStorage } from 'async_hooks';
+import { createRequire } from 'node:module';
 import { assertWorkspaceLease } from './workspace-lease.js';
+
+const require = createRequire(String(import.meta.url));
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
@@ -34,7 +37,10 @@ const _pgliteInstances = new Map(); // dataDir → PGlite instance
 async function getPgliteInstance(dataDir) {
   if (_pgliteInstances.has(dataDir)) return _pgliteInstances.get(dataDir);
   assertWorkspaceLease(dataDir);
-  const { PGlite } = await import('@electric-sql/pglite');
+  // Load the Node build at runtime. A static dynamic import lets Next bundle
+  // PGlite's WASM URLs into server chunks, where they are not native Node URL
+  // instances and fs.readFile rejects them in packaged Desktop builds.
+  const { PGlite } = require('@electric-sql/pglite');
   const db = new PGlite(dataDir);
   await db.waitReady;
   _pgliteInstances.set(dataDir, db);
