@@ -84,6 +84,70 @@ try {
     `);
     assert.equal(intakeRun.status, 'queued');
 
+    const batchA = await intakePreview({
+      content: Buffer.from('Batch company overview'), filename: 'overview.txt', mime: 'text/plain',
+    });
+    const batchB = await intakePreview({
+      content: Buffer.from('Batch financing details'), filename: 'financing.txt', mime: 'text/plain',
+    });
+    const batchInput = {
+      previewIds: [batchA.preview_id, batchB.preview_id],
+      destination: { kind: 'new_pipeline_invite', companyName: 'Atomic Batch Co' },
+      startCouncil: true,
+    };
+    assert.equal((await run('intake.commit_batch', batchInput, 'atomic-batch')).status, 'confirmation_required');
+    assert.equal(Number((await query(`SELECT COUNT(*)::int AS count FROM pipeline_invites WHERE company_name = 'Atomic Batch Co'`))[0].count), 0);
+    const batchApplied = await run('intake.commit_batch', batchInput, 'atomic-batch', 'inline_confirmation');
+    assert.equal(batchApplied.status, 'applied');
+    const [batchInvite] = await query(`SELECT id FROM pipeline_invites WHERE company_name = 'Atomic Batch Co'`);
+    assert.equal(Number((await query(`
+      SELECT COUNT(*)::int AS count FROM documents
+       WHERE entity_type = 'pipeline_invite' AND entity_id = $1::text
+    `, [batchInvite.id]))[0].count), 2);
+    assert.equal(Number((await query(`SELECT COUNT(*)::int AS count FROM council_runs WHERE pipeline_invite_id = $1`, [batchInvite.id]))[0].count), 1);
+    assert.deepEqual(
+      (await query(`SELECT status FROM pending_intake WHERE id = ANY($1::uuid[]) ORDER BY id`, [batchInput.previewIds])).map(row => row.status),
+      ['committed', 'committed'],
+    );
+
+    const duplicateA = await intakePreview({
+      content: Buffer.from('same batch bytes'), filename: 'same-a.txt', mime: 'text/plain',
+    });
+    const duplicateB = await intakePreview({
+      content: Buffer.from('same batch bytes'), filename: 'same-b.txt', mime: 'text/plain',
+    });
+    await assert.rejects(() => run('intake.commit_batch', {
+      previewIds: [duplicateA.preview_id, duplicateB.preview_id],
+      destination: { kind: 'existing_pipeline_invite', inviteId: Number(batchInvite.id) },
+      startCouncil: false,
+    }, 'duplicate-batch'), /duplicate/i);
+
+    const rollbackA = await intakePreview({
+      content: Buffer.from('rollback first file'), filename: 'rollback-a.txt', mime: 'text/plain',
+    });
+    const rollbackB = await intakePreview({
+      content: Buffer.from('rollback second file'), filename: 'rollback-b.txt', mime: 'text/plain',
+    });
+    const rollbackPlan = await planCommandProposal([{
+      name: 'intake.commit_batch',
+      input: {
+        previewIds: [rollbackA.preview_id, rollbackB.preview_id],
+        destination: { kind: 'new_pipeline_invite', companyName: 'Rollback Batch Co' },
+        startCouncil: false,
+      },
+    }], {
+      originSurface: 'ask_radar', actorType: 'user', actorId: 'test',
+      intentText: 'rollback-batch', idempotencyKey: 'intake-council-command:rollback-batch',
+    });
+    await query(`UPDATE pending_intake SET content = $2 WHERE id = $1`, [rollbackB.preview_id, Buffer.from('corrupted second file')]);
+    await assert.rejects(() => authorizeCommandProposal(
+      rollbackPlan.proposal.id,
+      rollbackPlan.proposal.command_set_hash,
+      { authorizationKind: 'inline_confirmation', actorId: 'test', actorCapabilities },
+    ), /sha256 mismatch/);
+    assert.equal(Number((await query(`SELECT COUNT(*)::int AS count FROM pipeline_invites WHERE company_name = 'Rollback Batch Co'`))[0].count), 0);
+    assert.equal(Number((await query(`SELECT COUNT(*)::int AS count FROM documents WHERE filename LIKE 'rollback-%'`))[0].count), 0);
+
     const stagedVault = await stageVaultFile({
       filename: 'policy.pdf', mime: 'application/pdf', content: Buffer.from('private policy bytes'),
     });
@@ -150,7 +214,7 @@ try {
     assert.equal(followupRun.run_type, 'founder_followup');
     assert.equal(followupRun.status, 'queued');
   });
-  console.log('Intake/Council commands: intake, vault, start, cancel, evidence waiver, and follow-ups passed');
+  console.log('Intake/Council commands: atomic batch, intake, vault, start, cancel, evidence waiver, and follow-ups passed');
 } finally {
   await closeDb();
   rmSync(scratch, { recursive: true, force: true });

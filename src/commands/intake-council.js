@@ -1,5 +1,10 @@
 import { query, writeCapabilities } from '../db/index.js';
-import { intakeCommit, undoIntakeCommit } from '../intake/index.js';
+import {
+  intakeCommit,
+  intakeCommitBatch,
+  MAX_BATCH_SIZE_BYTES,
+  undoIntakeCommit,
+} from '../intake/index.js';
 import { answerFounderFollowup } from '../models/council-followups.js';
 import {
   cancelQueuedCouncilRun,
@@ -87,7 +92,103 @@ async function inspectPending(target) {
   return row;
 }
 
+async function pendingBatchTarget(input) {
+  const first = await pendingTarget(input.previewIds[0]);
+  if (input.destination.kind === 'existing_pipeline_invite') {
+    await inviteTarget(input.destination.inviteId);
+  }
+  return {
+    type: 'pending_intake_batch',
+    id: first.id,
+    label: `${input.previewIds.length} staged document${input.previewIds.length === 1 ? '' : 's'}`,
+  };
+}
+
+async function inspectPendingBatch(_target, input) {
+  const rows = [];
+  for (const previewId of input.previewIds) rows.push(await inspectPending({ id: previewId }));
+  if (new Set(rows.map(row => row.sha256)).size !== rows.length) {
+    throw new CommandError('PRECONDITION_FAILED', 'Remove duplicate files from this intake batch.');
+  }
+  if (rows.reduce((sum, row) => sum + Number(row.size_bytes || 0), 0) > MAX_BATCH_SIZE_BYTES) {
+    throw new CommandError('PRECONDITION_FAILED', 'The selected documents exceed the 50 MB batch limit.');
+  }
+  if (input.destination.kind === 'existing_pipeline_invite') {
+    const duplicates = await query(`
+      SELECT sha256 FROM documents
+       WHERE entity_type = 'pipeline_invite'
+         AND entity_id = $1::text
+         AND sha256 = ANY($2::text[])
+    `, [input.destination.inviteId, rows.map(row => row.sha256)]);
+    if (duplicates.length > 0) {
+      throw new CommandError('PRECONDITION_FAILED', 'A selected file is already attached to this deal.');
+    }
+  }
+  return rows;
+}
+
 export const intakeCouncilCommandDefinitions = [
+  definition({
+    name: 'intake.commit_batch',
+    title: 'Add documents to one pipeline deal',
+    description: 'Atomically commit reviewed staged documents to one existing or new pipeline deal.',
+    interactionPolicy: 'confirm_inline',
+    editableInputKeys: ['destination', 'startCouncil'],
+    inputSchema: schema({
+      previewIds: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: uuid },
+      destination: {
+        oneOf: [
+          schema({
+            kind: { const: 'existing_pipeline_invite' },
+            inviteId: { type: 'integer', minimum: 1 },
+          }, ['kind', 'inviteId']),
+          schema({
+            kind: { const: 'new_pipeline_invite' },
+            companyName: { type: 'string', minLength: 1, maxLength: 200 },
+          }, ['kind', 'companyName']),
+        ],
+      },
+      startCouncil: { type: 'boolean' },
+    }, ['previewIds', 'destination', 'startCouncil']),
+    resolve: pendingBatchTarget,
+    inspect: inspectPendingBatch,
+    preview: ({ target, input, current }) => ({
+      summary: `Add ${target.label} to ${input.destination.kind === 'new_pipeline_invite' ? input.destination.companyName : 'the selected pipeline deal'}.`,
+      target,
+      before: current.map(row => ({ field: row.filename || 'document', value: row.status })),
+      after: current.map(row => ({ field: row.filename || 'document', value: 'attached' })),
+      derivedEffects: input.startCouncil ? ['Council analysis will be queued after every document is attached.'] : [],
+      warnings: current.flatMap(row => row.preview?.warnings || []),
+      requiredReason: false,
+    }),
+    preconditions: ({ current }) => current.map(row => ({
+      id: row.id,
+      status: row.status,
+      sha256: row.sha256,
+      size_bytes: row.size_bytes,
+      expires_at: row.expires_at,
+    })),
+    apply: async ({ input, idempotencyKey }) => {
+      const destination = input.destination.kind === 'new_pipeline_invite'
+        ? { kind: input.destination.kind, company_name: input.destination.companyName.trim() }
+        : { kind: input.destination.kind, invite_id: input.destination.inviteId };
+      const result = await intakeCommitBatch({ preview_ids: input.previewIds, destination });
+      if (input.startCouncil) {
+        result.scoring = await queueCouncilRun({
+          inviteId: Number(result.created.id),
+          runType: 'initial',
+          fresh: false,
+          executionId: idempotencyKey,
+        });
+      }
+      return result;
+    },
+    affectedResources: ({ result }) => [
+      { type: 'pipeline_invite', id: Number(result.created.id) },
+      ...result.documents.map(document => ({ type: 'document', id: Number(document.id), label: document.filename })),
+      ...(result.scoring?.run ? [{ type: 'council_run', id: Number(result.scoring.run.id) }] : []),
+    ],
+  }),
   definition({
     name: 'intake.commit',
     title: 'Add staged intake item',

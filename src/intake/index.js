@@ -25,6 +25,8 @@ import { parseEml, looksLikeRFC822 } from './parse-eml.js';
 import { extractHtmlText, extractPdfText } from './extract-text.js';
 import { extractDealFields, isAngelListDealText } from './extract-fields.js';
 
+export const MAX_BATCH_SIZE_BYTES = 50 * 1024 * 1024;
+
 // entity_type (documents table enum) a domain type's created row attaches
 // as, per the provenance attachment matrix. 'document' has no domain row —
 // it attaches to whatever entity the user picks in overrides.
@@ -355,7 +357,9 @@ async function insertPipelineInvite(parsed, overrides = {}) {
   if (overrides.company_name && typeof overrides.company_name === 'string') {
     const name = overrides.company_name.trim();
     const slugBase = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    const stamp = new Date().toISOString().slice(0, 10);
+    const stamp = overrides.intake_key
+      ? String(overrides.intake_key).replaceAll('-', '').slice(0, 12)
+      : new Date().toISOString().slice(0, 10);
     invite = {
       ...(parsed && parsed.company_name ? parsed : {}),
       company_name: name,
@@ -605,6 +609,85 @@ export async function intakeCommit({ preview_id, overrides = {} }) {
   });
 
   return { ...result, idempotent_replay: false };
+}
+
+/**
+ * Commit several reviewed artifacts to one pipeline deal in one local PGlite
+ * transaction. pending_intake remains the staging record; the surrounding
+ * Command proposal and receipt are the durable batch identity.
+ */
+export async function intakeCommitBatch({ preview_ids, destination }) {
+  if (!Array.isArray(preview_ids) || preview_ids.length === 0) {
+    throw new Error('intakeCommitBatch: at least one preview_id is required');
+  }
+  if (new Set(preview_ids).size !== preview_ids.length) {
+    throw new Error('intakeCommitBatch: preview_ids must be unique');
+  }
+
+  const pendingRows = [];
+  for (const previewId of preview_ids) {
+    const pending = await getPendingIntake(previewId);
+    if (!pending || pending.status !== 'pending') {
+      throw new Error(`intakeCommitBatch: staged upload is missing, expired, or already committed: ${previewId}`);
+    }
+    pendingRows.push(pending);
+  }
+
+  const hashes = pendingRows.map(row => row.sha256);
+  if (new Set(hashes).size !== hashes.length) {
+    throw new Error('intakeCommitBatch: the selected uploads contain duplicate files');
+  }
+  const totalBytes = pendingRows.reduce((sum, row) => sum + Number(row.size_bytes || 0), 0);
+  if (totalBytes > MAX_BATCH_SIZE_BYTES) {
+    throw new Error(`intakeCommitBatch: selected uploads exceed the ${MAX_BATCH_SIZE_BYTES} byte batch cap`);
+  }
+
+  let existingInvite = null;
+  if (destination.kind === 'existing_pipeline_invite') {
+    [existingInvite] = await query(
+      'SELECT id, company_name FROM pipeline_invites WHERE id = $1',
+      [destination.invite_id],
+    );
+    if (!existingInvite) throw new Error(`intakeCommitBatch: pipeline invite not found: ${destination.invite_id}`);
+    const duplicates = await query(`
+      SELECT sha256 FROM documents
+       WHERE entity_type = 'pipeline_invite'
+         AND entity_id = $1::text
+         AND sha256 = ANY($2::text[])
+    `, [existingInvite.id, hashes]);
+    if (duplicates.length > 0) {
+      throw new Error('intakeCommitBatch: a selected file is already attached to this deal');
+    }
+  } else if (destination.kind !== 'new_pipeline_invite') {
+    throw new Error(`intakeCommitBatch: unsupported destination: ${destination.kind}`);
+  }
+
+  return withAtomicWrite(async () => {
+    const created = existingInvite
+      ? { table: 'pipeline_invites', id: existingInvite.id, is_new: false }
+      : await insertPipelineInvite(null, {
+        company_name: destination.company_name,
+        intake_key: pendingRows[0].id,
+      });
+
+    const documents = [];
+    for (const pending of pendingRows) {
+      const content = Buffer.isBuffer(pending.content) ? pending.content : Buffer.from(pending.content);
+      const document = await DocumentStore.put({
+        entity_type: 'pipeline_invite',
+        entity_id: created.id,
+        filename: pending.filename,
+        mime: pending.mime,
+        sha256: pending.sha256,
+        content,
+        source: 'intake',
+      });
+      await markPendingCommitted(pending.id, { created, document_id: document.id });
+      documents.push({ id: document.id, filename: document.filename, sha256: document.sha256 });
+    }
+
+    return { created, documents, idempotent_replay: false };
+  });
 }
 
 /**
