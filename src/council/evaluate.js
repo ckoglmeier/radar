@@ -787,7 +787,16 @@ function frozenResearchStage(snapshot) {
 
 function decisionResearchPacket(research) {
   if (research?.research_run_envelope?.decisionPacket) {
-    return research.research_run_envelope.decisionPacket;
+    const packet = research.research_run_envelope.decisionPacket;
+    return {
+      contractVersion: packet.contractVersion,
+      observations: packet.observations,
+      contradictions: packet.contradictions,
+      criticalUnknowns: packet.criticalUnknowns,
+      teamDossier: packet.teamDossier,
+      companyContext: packet.companyContext,
+      stopReason: packet.stopReason,
+    };
   }
   return {
     evidence: research.evidence,

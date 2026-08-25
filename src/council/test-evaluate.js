@@ -480,6 +480,8 @@ test('councilEvaluate: two-pass Research freezes observations before no-tools sy
     ok(synthesis.context.includes('baseline-product-moat'));
     ok(bull.context.includes('"contractVersion":1'), 'Bull receives the typed decision packet');
     ok(bull.context.includes('"targetId":"baseline-product-moat"'));
+    ok(!bull.context.includes('"researchPlan"'), 'judgment omits the duplicated acquisition plan');
+    ok(!bull.context.includes('"questionCoverage"'), 'judgment omits derivable coverage metadata');
     ok(!bull.context.includes('toolRegistryFingerprint'), 'judgment does not see edition metadata');
     eq(out.provenance.researchArchitecture, 'two_pass');
     eq(out.provenance.researchSnapshot.research_run_envelope.completedResearchPasses.length, 2);
