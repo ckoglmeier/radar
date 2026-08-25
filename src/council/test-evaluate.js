@@ -165,6 +165,22 @@ function fakeProvider({ delay = 0, malformedOnceStage = null, inconsistentOnceSt
             event_date: '2026-08-19',
             value: 'Example fact',
             is_derived_estimate: false,
+            retrieval_mode: 'page',
+          }, {
+            target_id: 'baseline-team',
+            relation: 'context',
+            direction: 'neutral',
+            classification: 'verified',
+            source_class: 'sdk_public_web',
+            authority: 'primary',
+            title: 'Search result only',
+            publisher: 'Example publisher',
+            url: 'https://example.com/search-only',
+            published_at: '2026-08-20',
+            event_date: '2026-08-19',
+            value: 'Search result observation',
+            is_derived_estimate: false,
+            retrieval_mode: 'search_result',
           }],
           custom_questions: researchAdaptation().custom_questions,
           critical_unknowns: researchAdaptation().critical_unknowns,
@@ -453,7 +469,7 @@ test('councilEvaluate: two-pass Research freezes observations before no-tools sy
     const bull = fake.calls.find(req => req.prompt.startsWith('STAGE: bull'));
     ok(acquire, 'runs acquisition pass');
     ok(synthesis, 'runs synthesis pass');
-    eq(acquire.tools.join(','), 'WebSearch');
+    eq(acquire.tools.join(','), 'WebSearch,WebFetch');
     eq(synthesis.tools.length, 0, 'synthesis cannot retrieve');
     ok(synthesis.context.includes('FROZEN ACQUIRED OBSERVATIONS'));
     ok(synthesis.context.includes('baseline-product-moat'));
@@ -464,6 +480,12 @@ test('councilEvaluate: two-pass Research freezes observations before no-tools sy
     eq(out.provenance.researchSnapshot.research_run_envelope.completedResearchPasses.length, 2);
     eq(out.provenance.researchSnapshot.research_run_envelope.productEdition, 'desktop');
     eq(out.provenance.researchSnapshot.research_run_envelope.decisionPacket.questionCoverage.length, 10);
+    eq(
+      out.provenance.researchSnapshot.research_run_envelope.decisionPacket.observations
+        .find(observation => observation.title === 'Search result only').authority,
+      'other',
+      'search-result-only evidence cannot retain primary authority',
+    );
     ok(out.provenance.sourceReceipts.some(receipt => receipt.status === 'unavailable'));
     eq(
       stages.join(','),

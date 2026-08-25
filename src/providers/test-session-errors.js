@@ -84,6 +84,11 @@ test('classify: credit/quota/usage limit -> credit', () => {
 test('classify: unknown -> other (not retryable)', () => {
   eq(classifySessionError(new Error('some weird failure')).kind, 'other');
 });
+test('classify: closed network session -> connection (retryable)', () => {
+  const classified = classifySessionError(new Error('socket hang up: ECONNRESET'));
+  eq(classified.kind, 'connection');
+  eq(classified.retryable, true);
+});
 
 // ---- shouldFallback (policy) ----
 test('policy: credit + enabled + subscription -> fall back', () =>
@@ -117,6 +122,23 @@ test('run: primary succeeds -> usedFallback false', async () => {
     primary: okProvider(), currentMode: 'subscription', fallbackEnabled: false,
   });
   eq(usedFallback, false); eq(result.text, 'OK');
+});
+test('run: connection closure retries the same credential once', async () => {
+  let calls = 0;
+  const primary = {
+    async runSession() {
+      calls += 1;
+      if (calls === 1) throw new Error('connection closed before result');
+      return { text: 'OK after retry' };
+    },
+  };
+  const { result, usedFallback, retriedPrimary } = await runWithFallback({ prompt: 'x' }, {
+    primary, currentMode: 'subscription', fallbackEnabled: false,
+  });
+  eq(calls, 2);
+  eq(result.text, 'OK after retry');
+  eq(usedFallback, false);
+  eq(retriedPrimary, true);
 });
 test('run: credit error + flag + subscription -> retries on api_key fallback', async () => {
   let built = false;

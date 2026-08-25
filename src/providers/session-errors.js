@@ -47,7 +47,7 @@ export function redactSecrets(text, env = process.env) {
  * Classify an error thrown by AgentSdkProvider.runSession / collectResult.
  * Reads the message + any `subtype` the provider attached.
  * @param {Error & { subtype?: string }} err
- * @returns {{ kind: 'credit'|'rate_limit'|'auth'|'other', retryable: boolean }}
+ * @returns {{ kind: 'credit'|'rate_limit'|'auth'|'connection'|'other', retryable: boolean }}
  */
 export function classifySessionError(err) {
   const msg = (err?.message || '').toLowerCase();
@@ -64,6 +64,9 @@ export function classifySessionError(err) {
   }
   if (has('credit', 'quota', 'exhaust', 'usage limit', 'insufficient', 'billing', 'payment')) {
     return { kind: 'credit', retryable: true };
+  }
+  if (has('connection closed', 'socket hang up', 'econnreset', 'econnrefused', 'fetch failed', 'network error')) {
+    return { kind: 'connection', retryable: true };
   }
   return { kind: 'other', retryable: false };
 }
@@ -114,6 +117,8 @@ export function describeSessionError(errorClass, currentMode, fallbackEnabled) {
         `check it is present and valid (run \`claude setup-token\` for subscription mode, ` +
         `or set ANTHROPIC_API_KEY for api_key mode).`
       );
+    case 'connection':
+      return `Agent SDK connection closed before the ${currentMode} session completed — retry the Council run.`;
     default:
       return 'Agent SDK session failed.';
   }
@@ -140,7 +145,16 @@ export async function runWithFallback(req, { primary, currentMode, buildFallback
     const result = await primary.runSession(req);
     return { result, usedFallback: false };
   } catch (err) {
-    const cls = classifySessionError(err);
+    let cls = classifySessionError(err);
+    if (cls.kind === 'connection') {
+      try {
+        const result = await primary.runSession(req);
+        return { result, usedFallback: false, retriedPrimary: true };
+      } catch (retryError) {
+        err = retryError;
+        cls = classifySessionError(retryError);
+      }
+    }
     if (shouldFallback(cls, { fallbackEnabled, currentMode }) && buildFallback) {
       const result = await buildFallback().runSession(req);
       return { result, usedFallback: true, primaryErrorKind: cls.kind };
