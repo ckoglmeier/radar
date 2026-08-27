@@ -15,6 +15,8 @@ const UPDATE_KINDS = new Set([
 ]);
 const PROCESSING_MODES = new Set(['store_only', 'interpret']);
 const REVIEW_OUTCOMES = new Set(['reviewed_no_changes', 'interpretation_rejected']);
+const OPERATIONAL_STAGES = new Set(['queued', 'extraction', 'research', 'validation', 'review_ready', 'complete', 'failed', 'cancelled']);
+const FAILURE_CODES = new Set(['credential_required', 'provider_unavailable', 'provider_disconnected', 'turn_limit', 'deadline', 'source_unavailable', 'validation_failed', 'cancelled', 'unexpected']);
 
 function requiredText(value, label) {
   const text = String(value || '').trim();
@@ -87,8 +89,8 @@ export async function createInvestmentUpdate(fields = {}) {
   const [update] = await query(`
     INSERT INTO investment_updates
       (investment_id, source_document_id, previous_update_id, update_kind,
-       title, received_date, processing_mode, status, tax_year)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       title, received_date, processing_mode, status, tax_year, operational_stage)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
     RETURNING *
   `, [
     investmentId,
@@ -100,6 +102,7 @@ export async function createInvestmentUpdate(fields = {}) {
     processingMode,
     processingMode === 'store_only' ? 'stored' : 'pending',
     taxYear,
+    processingMode === 'store_only' ? 'complete' : 'queued',
   ]);
   return { update, idempotent_replay: false };
 }
@@ -122,7 +125,9 @@ export async function completeInvestmentUpdate(updateId, fields = {}) {
        SET status = 'complete', review_status = 'pending_review', summary = $2,
            observed_changes = $3::jsonb, proposed_facts = $4::jsonb,
            evaluation_signals = $5::jsonb, actions = $6::jsonb,
-           model = $7, error_message = NULL, interpreted_at = NOW(), updated_at = NOW()
+           model = $7, error_message = NULL, interpreted_at = NOW(), updated_at = NOW(),
+           operational_stage = 'review_ready', analysis_terminal_at = NOW(),
+           cancellation_requested = FALSE, failure_code = NULL
      WHERE id = $1
      RETURNING *
   `, [
@@ -189,7 +194,9 @@ export async function reviewInvestmentUpdate(updateId, fields = {}) {
 export async function failInvestmentUpdate(updateId, errorMessage) {
   const [update] = await query(`
     UPDATE investment_updates
-       SET status = 'failed', error_message = $2, interpreted_at = NOW(), updated_at = NOW()
+       SET status = 'failed', error_message = $2, interpreted_at = NOW(), updated_at = NOW(),
+           operational_stage = 'failed', analysis_terminal_at = NOW(),
+           failure_code = 'unexpected'
      WHERE id = $1
      RETURNING *
   `, [updateId, requiredText(errorMessage, 'Interpretation error')]);
@@ -200,12 +207,56 @@ export async function failInvestmentUpdate(updateId, errorMessage) {
 export async function retryInvestmentUpdate(updateId) {
   const [update] = await query(`
     UPDATE investment_updates
-       SET status = 'pending', error_message = NULL, updated_at = NOW()
+       SET status = 'pending', error_message = NULL, updated_at = NOW(),
+           operational_stage = 'queued', analysis_started_at = NULL,
+           analysis_stage_started_at = NULL, analysis_terminal_at = NULL,
+           cancellation_requested = FALSE, failure_code = NULL
      WHERE id = $1 AND status = 'failed'
      RETURNING *
   `, [updateId]);
   if (!update) throw new Error(`Failed investment update not found: ${updateId}`);
   return update;
+}
+
+export async function updateInvestmentAnalysisLifecycle(updateId, { stage, failureCode = null } = {}) {
+  if (!OPERATIONAL_STAGES.has(stage) || (failureCode != null && !FAILURE_CODES.has(failureCode))) {
+    throw new Error('Invalid investment-update lifecycle');
+  }
+  const terminal = ['review_ready', 'complete', 'failed', 'cancelled'].includes(stage);
+  const [update] = await query(`
+    UPDATE investment_updates
+       SET operational_stage = $2,
+           analysis_started_at = COALESCE(analysis_started_at, NOW()),
+           analysis_stage_started_at = CASE WHEN operational_stage IS DISTINCT FROM $2 THEN NOW() ELSE analysis_stage_started_at END,
+           analysis_terminal_at = CASE WHEN $3 THEN NOW() ELSE NULL END,
+           cancellation_requested = CASE WHEN $2 IN ('failed','cancelled','review_ready','complete') THEN FALSE ELSE cancellation_requested END,
+           failure_code = $4, updated_at = NOW()
+     WHERE id = $1
+     RETURNING *
+  `, [updateId, stage, terminal, failureCode]);
+  if (!update) throw new Error(`Investment update not found: ${updateId}`);
+  return update;
+}
+
+export async function requestInvestmentUpdateCancellation(updateId) {
+  const [update] = await query(`
+    UPDATE investment_updates SET cancellation_requested = TRUE, updated_at = NOW()
+     WHERE id = $1 AND status = 'pending'
+       AND operational_stage NOT IN ('review_ready','complete','failed','cancelled')
+     RETURNING *
+  `, [updateId]);
+  return update || null;
+}
+
+export async function reconcileInterruptedInvestmentUpdates() {
+  return query(`
+    UPDATE investment_updates
+       SET status = 'failed', operational_stage = 'failed',
+           analysis_stage_started_at = NOW(), analysis_terminal_at = NOW(),
+           failure_code = 'provider_disconnected', updated_at = NOW()
+     WHERE status = 'pending' AND operational_stage NOT IN ('queued','review_ready','complete','failed','cancelled')
+     RETURNING id
+  `);
 }
 
 export async function getInvestmentUpdate(updateId) {
