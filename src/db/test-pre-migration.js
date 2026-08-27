@@ -73,6 +73,27 @@ try {
   });
   await closeDb();
 
+  const interruptedUrl = `file:${join(scratch, 'interrupted')}`;
+  await withTenant(interruptedUrl, async () => {
+    let injected = false;
+    await assert.rejects(
+      () => runMigrations({
+        beforeStatement({ version, statement }) {
+          if (version === 1 && statement === 1) {
+            injected = true;
+            throw new Error('named synthetic migration interruption');
+          }
+        },
+      }),
+      /Migration 001_initial_schema failed at statement 1: named synthetic migration interruption/,
+    );
+    assert.equal(injected, true);
+    const inspection = await inspectPendingMigrations();
+    assert.equal(inspection.applied.length, 0, 'failed migration records zero newly applied versions');
+    assert.equal(inspection.pending[0].version, 1);
+  });
+  await closeDb();
+
   const localOnlyUrl = `file:${join(scratch, 'local-only-old-schema')}`;
   await withTenant(localOnlyUrl, async () => {
     await query(`CREATE TABLE documents (

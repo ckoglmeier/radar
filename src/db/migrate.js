@@ -115,7 +115,7 @@ function splitStatements(sql) {
   return statements;
 }
 
-export async function runMigrations() {
+export async function runMigrations({ beforeStatement = null } = {}) {
   await ensureMigrationsTable();
   const applied = await getAppliedVersions();
   const pending = getPendingMigrations(applied);
@@ -131,6 +131,13 @@ export async function runMigrations() {
 
     for (let i = 0; i < statements.length; i++) {
       try {
+        if (beforeStatement) {
+          await beforeStatement({
+            version: migration.version,
+            name: migration.name,
+            statement: i + 1,
+          });
+        }
         await query(statements[i]);
       } catch (err) {
         throw new Error(
