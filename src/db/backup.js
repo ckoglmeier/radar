@@ -164,7 +164,7 @@ function rowsWithDeferredSelfReferences(encodedRows, selfReferences) {
   return ordered;
 }
 
-export async function createDatabaseBackupPayload() {
+export async function createDatabaseBackupPayload({ includeLocalOnly = false } = {}) {
   const tables = (await query(
     `SELECT table_name FROM information_schema.tables
      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
@@ -179,7 +179,7 @@ export async function createDatabaseBackupPayload() {
            AND column_name = 'sync_policy'
       ) AS present
     `);
-    if (syncPolicyColumn?.present) {
+    if (syncPolicyColumn?.present && !includeLocalOnly) {
       const [restrictedDocuments] = await query(`
         SELECT COUNT(*)::int AS count FROM documents WHERE sync_policy = 'local_only'
       `);
@@ -260,7 +260,10 @@ export async function createPreMigrationSnapshot({
 } = {}) {
   const config = jsonClone(safeConfig, 'pre-migration safe config');
   const safeLenses = validateSnapshotLenses(lenses);
-  const database = await createDatabaseBackupPayload();
+  // This snapshot remains inside the Desktop migration-safety path and is
+  // encrypted before it is written. It must preserve local-only bytes too;
+  // ordinary user-initiated backup/export policy remains fail-closed.
+  const database = await createDatabaseBackupPayload({ includeLocalOnly: true });
   const parsedDatabase = JSON.parse(database.content);
   const inventory = {
     tables: database.tables.map(table => ({ table: table.table, rows: Number(table.rows) })),
