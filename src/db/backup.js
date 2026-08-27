@@ -33,6 +33,7 @@ const INSERT_ORDER = [
   // Polymorphic attachment integrity is model-enforced, so documents can be
   // restored before typed records whose explicit source-document FKs need it.
   'documents',
+  'direct_acquisition_profiles',
   'employment_equity_issuer_profiles',
   'employment_equity_positions',
   'employment_equity_grants',

@@ -15,7 +15,11 @@ import {
   recordEmploymentEquityValuation,
   updateEmploymentEquityPosition,
 } from '../models/employment-equity.js';
-import { recordDirectValuation, setConviction } from '../models/investments.js';
+import {
+  recordDirectValuation,
+  setConviction,
+  setDirectAcquisitionProfile,
+} from '../models/investments.js';
 import { CommandError } from './errors.js';
 
 const objectResult = { type: 'object', additionalProperties: true };
@@ -84,6 +88,7 @@ async function inspectInvestment(target, input = {}) {
            ,(SELECT net_value FROM valuations WHERE investment_id = i.id AND snapshot_date = $2::date LIMIT 1) AS same_date_net_value
            ,(SELECT COALESCE(SUM(amount), 0) FROM cash_flows WHERE investment_id = i.id AND type = 'distribution' AND reconciliation_status = 'matched') AS matched_distributions
            ,(SELECT COUNT(*) FROM cash_flows WHERE investment_id = i.id AND type = 'distribution' AND reconciliation_status = 'matched') AS matched_distribution_count
+           ,(SELECT to_jsonb(dap) FROM direct_acquisition_profiles dap WHERE dap.investment_id = i.id) AS direct_acquisition_profile
       FROM investments i
       LEFT JOIN fund_profiles fp ON fp.investment_id = i.id
       LEFT JOIN employment_equity_positions eep ON eep.investment_id = i.id
@@ -221,6 +226,76 @@ function investmentCommand({ name, title, description, risk, assetClass, inputSc
 }
 
 export const tierACommandDefinitions = [
+  investmentCommand({
+    name: 'direct.set_acquisition_profile',
+    title: 'Set Direct acquisition profile',
+    description: 'Record the security held and the transaction facts that priced a Direct acquisition.',
+    risk: 'metadata_change',
+    assetClass: 'direct',
+    editableInputKeys: [
+      'acquisitionDate', 'acquisitionType', 'securityClass', 'pricingReferenceRound',
+      'entryPostMoneyValuation', 'entryPricePerShare', 'sharesAcquired',
+      'sharesRemaining', 'economicParityStatus', 'sourceDocumentId', 'notes',
+    ],
+    inputSchema: schema({
+      investmentId: { type: 'integer', minimum: 1 },
+      acquisitionDate: date,
+      acquisitionType: { type: 'string', enum: ['primary', 'secondary', 'mixed', 'unknown'] },
+      securityClass: nullableText,
+      pricingReferenceRound: nullableText,
+      entryPostMoneyValuation: { anyOf: [money, { type: 'null' }] },
+      entryPricePerShare: { anyOf: [money, { type: 'null' }] },
+      sharesAcquired: { anyOf: [money, { type: 'null' }] },
+      sharesRemaining: { anyOf: [money, { type: 'null' }] },
+      economicParityStatus: { type: 'string', enum: ['confirmed', 'assumed', 'unknown', 'not_applicable'] },
+      sourceDocumentId: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+      notes: nullableText,
+      correctionReason: { type: 'string', minLength: 1 },
+    }, ['investmentId', 'acquisitionDate', 'acquisitionType', 'economicParityStatus']),
+    preview: ({ target, input, current }) => {
+      if (current.direct_acquisition_profile && !input.correctionReason) {
+        const before = current.direct_acquisition_profile;
+        const unchanged = dateOnly(before.acquisition_date) === input.acquisitionDate
+          && before.acquisition_type === input.acquisitionType
+          && (before.security_class || null) === (input.securityClass || null)
+          && (before.pricing_reference_round || null) === (input.pricingReferenceRound || null)
+          && num(before.entry_post_money_valuation) === num(input.entryPostMoneyValuation)
+          && num(before.entry_price_per_share) === num(input.entryPricePerShare)
+          && num(before.shares_acquired) === num(input.sharesAcquired)
+          && num(before.shares_remaining) === num(input.sharesRemaining)
+          && before.economic_parity_status === input.economicParityStatus
+          && num(before.source_document_id) === num(input.sourceDocumentId)
+          && (before.notes || null) === (input.notes || null);
+        if (!unchanged) {
+          throw new CommandError(
+            'CORRECTION_REASON_REQUIRED',
+            'A different Direct acquisition profile exists; provide a correction reason.',
+          );
+        }
+      }
+      return basicPreview(target, current,
+        [{ field: 'acquisition_profile', value: current.direct_acquisition_profile || null }],
+        [{ field: 'acquisition_profile', value: {
+          acquisition_date: input.acquisitionDate,
+          acquisition_type: input.acquisitionType,
+          security_class: input.securityClass ?? null,
+          pricing_reference_round: input.pricingReferenceRound ?? null,
+          entry_post_money_valuation: input.entryPostMoneyValuation ?? null,
+          entry_price_per_share: input.entryPricePerShare ?? null,
+          shares_acquired: input.sharesAcquired ?? null,
+          shares_remaining: input.sharesRemaining ?? null,
+          economic_parity_status: input.economicParityStatus,
+          source_document_id: input.sourceDocumentId ?? null,
+          notes: input.notes ?? null,
+        } }]);
+    },
+    preconditions: ({ current }) => ({
+      direct_acquisition_profile: current.direct_acquisition_profile || null,
+    }),
+    apply: ({ target, input, provenance }) => setDirectAcquisitionProfile(target.id, {
+      ...input, proposalId: provenance.proposal_id,
+    }),
+  }),
   investmentCommand({
     name: 'direct.record_valuation', title: 'Record Direct valuation',
     description: 'Record the dated unrealized value of a Direct position.',

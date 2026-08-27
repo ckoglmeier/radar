@@ -16,6 +16,7 @@ import {
   createCommandThread,
 } from '../models/command-conversations.js';
 import { createFund, fundMetrics, recordFundDistribution } from '../models/funds.js';
+import { setDirectAcquisitionProfile } from '../models/investments.js';
 import {
   addIssuerDisclosure,
   createEmploymentEquityIssuer,
@@ -85,6 +86,19 @@ try {
       updateKind: 'founder_update',
       processingMode: 'store_only',
       receivedDate: '2025-01-01',
+    });
+    await setDirectAcquisitionProfile(position.id, {
+      acquisitionDate: '2024-01-01',
+      acquisitionType: 'secondary',
+      securityClass: 'Series B preferred',
+      pricingReferenceRound: 'Series D',
+      entryPostMoneyValuation: 18_000_000_000,
+      entryPricePerShare: 31.5,
+      sharesAcquired: 10,
+      sharesRemaining: 10,
+      economicParityStatus: 'assumed',
+      sourceDocumentId: updateDocumentOne.id,
+      notes: 'Backup acquisition profile fixture.',
     });
     const updateDocumentTwo = await createDocument({
       entity_type: 'investment',
@@ -335,6 +349,17 @@ try {
     assert.equal(restoredIdentity.position_key, positionKey);
     assert.equal(restoredIdentity.alias_linked, true);
     assert.equal(restoredIdentity.source_key, 'backup-source-key');
+    const [restoredAcquisition] = await query(`
+      SELECT dap.*, d.filename AS source_filename
+        FROM direct_acquisition_profiles dap
+        JOIN investments i ON i.id = dap.investment_id
+        LEFT JOIN documents d ON d.id = dap.source_document_id
+       WHERE i.position_key = $1
+    `, [positionKey]);
+    assert.equal(restoredAcquisition.security_class, 'Series B preferred');
+    assert.equal(restoredAcquisition.pricing_reference_round, 'Series D');
+    assert.equal(Number(restoredAcquisition.entry_post_money_valuation), 18_000_000_000);
+    assert.equal(restoredAcquisition.source_filename, 'backup-update-one.txt');
     const [restoredUpdate] = await query(`
       SELECT previous_update_id FROM investment_updates WHERE id = $1
     `, [latestUpdateId]);

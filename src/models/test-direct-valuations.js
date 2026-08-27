@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeDb, query, withTenant } from '../db/index.js';
 import { runMigrations } from '../db/migrate.js';
-import { recordDirectValuation } from './investments.js';
+import {
+  getDirectAcquisitionProfile,
+  recordDirectValuation,
+  setDirectAcquisitionProfile,
+} from './investments.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-direct-valuations-'));
 const databaseUrl = `file:${join(scratch, 'db')}`;
@@ -27,6 +31,47 @@ try {
       VALUES ($1, '2025-01-01', 'distribution', 200, 'test',
               'direct-mark-distribution', 'matched', NOW())
     `, [investment.id]);
+
+    assert.equal(await getDirectAcquisitionProfile(investment.id), null,
+      'legacy position fields are not inferred as typed acquisition facts');
+    const acquisition = {
+      acquisitionDate: '2024-06-13',
+      acquisitionType: 'secondary',
+      securityClass: 'Series B preferred',
+      pricingReferenceRound: 'Series D',
+      entryPostMoneyValuation: 18_000_000_000,
+      entryPricePerShare: 31.50,
+      sharesAcquired: 290.612,
+      sharesRemaining: 290.612,
+      economicParityStatus: 'assumed',
+      notes: 'Series B shares acquired in a secondary at Series D-equivalent pricing.',
+      proposalId: 'proposal-acquisition',
+    };
+    const recordedAcquisition = await setDirectAcquisitionProfile(investment.id, acquisition);
+    assert.equal(recordedAcquisition.corrected, false);
+    assert.equal((await setDirectAcquisitionProfile(investment.id, acquisition)).idempotent_replay, true);
+    const savedAcquisition = await getDirectAcquisitionProfile(investment.id);
+    assert.equal(savedAcquisition.security_class, 'Series B preferred');
+    assert.equal(savedAcquisition.pricing_reference_round, 'Series D');
+    assert.equal(Number(savedAcquisition.entry_post_money_valuation), 18_000_000_000);
+    await assert.rejects(
+      () => setDirectAcquisitionProfile(investment.id, {
+        ...acquisition, economicParityStatus: 'confirmed',
+      }),
+      /Correction reason/,
+    );
+    const correctedAcquisition = await setDirectAcquisitionProfile(investment.id, {
+      ...acquisition,
+      economicParityStatus: 'confirmed',
+      correctionReason: 'Confirmed from transaction documents.',
+      proposalId: 'proposal-acquisition-correction',
+    });
+    assert.equal(correctedAcquisition.corrected, true);
+    const [profileEvent] = await query(`
+      SELECT notes FROM investment_events
+       WHERE investment_id = $1 AND event_type = 'direct_acquisition_profile_corrected'
+    `, [investment.id]);
+    assert.match(profileEvent.notes, /proposal-acquisition-correction/);
 
     const first = await recordDirectValuation(investment.id, {
       date: '2025-06-30', unrealizedValue: 1_600, proposalId: 'proposal-fixture',
@@ -81,6 +126,10 @@ try {
       () => recordDirectValuation(fund.id, {
         date: '2025-01-01', unrealizedValue: 1,
       }),
+      /Direct investment/,
+    );
+    await assert.rejects(
+      () => setDirectAcquisitionProfile(fund.id, acquisition),
       /Direct investment/,
     );
 

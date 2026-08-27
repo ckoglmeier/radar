@@ -16,7 +16,7 @@ const actorCapabilities = ['portfolio:apply:additive', 'portfolio:apply:metadata
 try {
   await withTenant(databaseUrl, async () => {
     await runMigrations();
-    assert.equal(commandMetadata().commands.length, 67);
+    assert.equal(commandMetadata().commands.length, 68);
 
     const [direct] = await query(`
       INSERT INTO investments
@@ -100,6 +100,56 @@ try {
     assert.deepEqual(correctedConviction.proposal.conversation_context, {
       thread_id: 'thread-fixture', prior_message_ids: ['message-1'],
     });
+
+    const acquisitionProposal = await planCommandProposal([{
+      name: 'direct.set_acquisition_profile',
+      input: {
+        investmentId: direct.id,
+        acquisitionDate: '2024-06-13',
+        acquisitionType: 'secondary',
+        securityClass: 'Series B preferred',
+        pricingReferenceRound: 'Series D',
+        entryPostMoneyValuation: 18_000_000_000,
+        entryPricePerShare: 31.5,
+        sharesAcquired: 31.746,
+        sharesRemaining: 31.746,
+        economicParityStatus: 'assumed',
+        sourceDocumentId: null,
+        notes: 'Secondary purchase at Series D-equivalent pricing.',
+      },
+      provenance: { kind: 'user_attested', evidence: 'Reviewed transaction facts.' },
+    }], {
+      originSurface: 'manual_ui', actorType: 'user', actorId: 'fixture',
+      intentText: 'Record the Direct acquisition facts',
+      idempotencyKey: 'command:test:direct-acquisition-profile',
+    });
+    assert.equal(acquisitionProposal.proposal.previews[0].after[0].value.security_class, 'Series B preferred');
+    assert.equal(acquisitionProposal.proposal.previews[0].after[0].value.pricing_reference_round, 'Series D');
+    await applyCommandProposal(
+      acquisitionProposal.proposal.id,
+      acquisitionProposal.proposal.command_set_hash,
+      { reviewedBy: 'fixture', actorCapabilities },
+    );
+    const [savedAcquisition] = await query(`
+      SELECT * FROM direct_acquisition_profiles WHERE investment_id = $1
+    `, [direct.id]);
+    assert.equal(savedAcquisition.security_class, 'Series B preferred');
+    assert.equal(savedAcquisition.pricing_reference_round, 'Series D');
+    await assert.rejects(
+      () => previewCommand({
+        name: 'direct.set_acquisition_profile',
+        input: {
+          investmentId: direct.id,
+          acquisitionDate: '2024-06-13', acquisitionType: 'secondary',
+          securityClass: 'Series B preferred', pricingReferenceRound: 'Series D',
+          entryPostMoneyValuation: 18_000_000_000, entryPricePerShare: 31.5,
+          sharesAcquired: 31.746, sharesRemaining: 31.746,
+          economicParityStatus: 'confirmed', sourceDocumentId: null,
+          notes: 'Secondary purchase at Series D-equivalent pricing.',
+        },
+      }),
+      error => error.code === 'CORRECTION_REASON_REQUIRED',
+    );
     await applyCommandProposal(
       vintageRevision.replacement.id,
       vintageRevision.replacement.command_set_hash,

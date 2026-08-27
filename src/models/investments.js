@@ -305,6 +305,148 @@ function nonNegativeNumber(value, label) {
   return amount;
 }
 
+const DIRECT_ACQUISITION_TYPES = new Set(['primary', 'secondary', 'mixed', 'unknown']);
+const ECONOMIC_PARITY_STATUSES = new Set(['confirmed', 'assumed', 'unknown', 'not_applicable']);
+
+function optionalText(value) {
+  const normalized = String(value ?? '').trim();
+  return normalized || null;
+}
+
+function optionalNonNegativeNumber(value, label) {
+  if (value == null || value === '') return null;
+  return nonNegativeNumber(value, label);
+}
+
+function directAcquisitionFields(fields) {
+  const acquisitionType = String(fields.acquisitionType || '').trim();
+  if (!DIRECT_ACQUISITION_TYPES.has(acquisitionType)) {
+    throw new TypeError(`Unsupported acquisition type: ${acquisitionType || 'blank'}`);
+  }
+  const economicParityStatus = String(fields.economicParityStatus || '').trim();
+  if (!ECONOMIC_PARITY_STATUSES.has(economicParityStatus)) {
+    throw new TypeError(`Unsupported economic parity status: ${economicParityStatus || 'blank'}`);
+  }
+  const sharesAcquired = optionalNonNegativeNumber(fields.sharesAcquired, 'Shares acquired');
+  const sharesRemaining = optionalNonNegativeNumber(fields.sharesRemaining, 'Shares remaining');
+  if (sharesAcquired != null && sharesRemaining != null && sharesRemaining > sharesAcquired) {
+    throw new TypeError('Shares remaining cannot exceed shares acquired');
+  }
+  return {
+    acquisition_date: explicitIsoDate(fields.acquisitionDate, 'Acquisition date'),
+    acquisition_type: acquisitionType,
+    security_class: optionalText(fields.securityClass),
+    pricing_reference_round: optionalText(fields.pricingReferenceRound),
+    entry_post_money_valuation: optionalNonNegativeNumber(
+      fields.entryPostMoneyValuation,
+      'Entry post-money valuation',
+    ),
+    entry_price_per_share: optionalNonNegativeNumber(fields.entryPricePerShare, 'Entry price per share'),
+    shares_acquired: sharesAcquired,
+    shares_remaining: sharesRemaining,
+    economic_parity_status: economicParityStatus,
+    source_document_id: fields.sourceDocumentId == null ? null : Number(fields.sourceDocumentId),
+    notes: optionalText(fields.notes),
+  };
+}
+
+function comparableDirectAcquisitionProfile(row) {
+  if (!row) return null;
+  return {
+    acquisition_date: row.acquisition_date instanceof Date
+      ? row.acquisition_date.toISOString().slice(0, 10)
+      : String(row.acquisition_date).slice(0, 10),
+    acquisition_type: row.acquisition_type,
+    security_class: row.security_class,
+    pricing_reference_round: row.pricing_reference_round,
+    entry_post_money_valuation: row.entry_post_money_valuation == null
+      ? null : Number(row.entry_post_money_valuation),
+    entry_price_per_share: row.entry_price_per_share == null ? null : Number(row.entry_price_per_share),
+    shares_acquired: row.shares_acquired == null ? null : Number(row.shares_acquired),
+    shares_remaining: row.shares_remaining == null ? null : Number(row.shares_remaining),
+    economic_parity_status: row.economic_parity_status,
+    source_document_id: row.source_document_id == null ? null : Number(row.source_document_id),
+    notes: row.notes,
+  };
+}
+
+export async function getDirectAcquisitionProfile(investmentId) {
+  const [row] = await query(`
+    SELECT * FROM direct_acquisition_profiles WHERE investment_id = $1
+  `, [investmentId]);
+  return row || null;
+}
+
+/**
+ * Record the reviewed transaction facts that anchor marks for a Direct
+ * position. Existing legacy round/series fields are deliberately ignored.
+ */
+export async function setDirectAcquisitionProfile(investmentId, fields = {}) {
+  const next = directAcquisitionFields(fields);
+  return withAtomicWrite(async () => {
+    const [investment] = await query(`
+      SELECT id, asset_class FROM investments WHERE id = $1 FOR UPDATE
+    `, [investmentId]);
+    if (!investment || investment.asset_class !== 'direct') {
+      throw new Error('Direct acquisition profile requires a Direct investment');
+    }
+    const [existing] = await query(`
+      SELECT * FROM direct_acquisition_profiles WHERE investment_id = $1
+    `, [investmentId]);
+    if (existing && JSON.stringify(comparableDirectAcquisitionProfile(existing)) === JSON.stringify(next)) {
+      return { profile: existing, idempotent_replay: true, corrected: false };
+    }
+    const reason = String(fields.correctionReason || '').trim();
+    if (existing && !reason) throw new TypeError('Correction reason is required');
+
+    const [profile] = await query(`
+      INSERT INTO direct_acquisition_profiles
+        (investment_id, acquisition_date, acquisition_type, security_class,
+         pricing_reference_round, entry_post_money_valuation,
+         entry_price_per_share, shares_acquired, shares_remaining,
+         economic_parity_status, source_document_id, notes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      ON CONFLICT (investment_id) DO UPDATE SET
+        acquisition_date = EXCLUDED.acquisition_date,
+        acquisition_type = EXCLUDED.acquisition_type,
+        security_class = EXCLUDED.security_class,
+        pricing_reference_round = EXCLUDED.pricing_reference_round,
+        entry_post_money_valuation = EXCLUDED.entry_post_money_valuation,
+        entry_price_per_share = EXCLUDED.entry_price_per_share,
+        shares_acquired = EXCLUDED.shares_acquired,
+        shares_remaining = EXCLUDED.shares_remaining,
+        economic_parity_status = EXCLUDED.economic_parity_status,
+        source_document_id = EXCLUDED.source_document_id,
+        notes = EXCLUDED.notes,
+        updated_at = NOW()
+      RETURNING *
+    `, [
+      investmentId,
+      next.acquisition_date,
+      next.acquisition_type,
+      next.security_class,
+      next.pricing_reference_round,
+      next.entry_post_money_valuation,
+      next.entry_price_per_share,
+      next.shares_acquired,
+      next.shares_remaining,
+      next.economic_parity_status,
+      next.source_document_id,
+      next.notes,
+    ]);
+    await logInvestmentEvent(
+      investmentId,
+      existing ? 'direct_acquisition_profile_corrected' : 'direct_acquisition_profile_recorded',
+      'acquisition_profile',
+      existing ? JSON.stringify(comparableDirectAcquisitionProfile(existing)) : null,
+      JSON.stringify(next),
+      'direct_manual',
+      JSON.stringify({ reason: reason || null, proposal_id: fields.proposalId || null }),
+    );
+    return { profile, idempotent_replay: false, corrected: Boolean(existing) };
+  });
+}
+
 /**
  * Record a dated Direct unrealized holding mark.
  * Realized proceeds come from matched cash-flow evidence when available and
