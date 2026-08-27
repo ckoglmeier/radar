@@ -211,7 +211,8 @@ export async function retryInvestmentUpdate(updateId) {
            operational_stage = 'queued', analysis_started_at = NULL,
            analysis_stage_started_at = NULL, analysis_terminal_at = NULL,
            cancellation_requested = FALSE, failure_code = NULL
-     WHERE id = $1 AND status = 'failed'
+     WHERE id = $1
+       AND (status = 'failed' OR (status = 'pending' AND operational_stage = 'cancelled'))
      RETURNING *
   `, [updateId]);
   if (!update) throw new Error(`Failed investment update not found: ${updateId}`);

@@ -131,6 +131,9 @@ try {
   assert.equal((await requestInvestmentUpdateCancellation(retryable.update.id)).cancellation_requested, true);
   assert.equal((await reconcileInterruptedInvestmentUpdates()).length, 1);
   assert.equal((await getInvestmentUpdate(retryable.update.id)).failure_code, 'provider_disconnected');
+  await retryInvestmentUpdate(retryable.update.id);
+  await updateInvestmentAnalysisLifecycle(retryable.update.id, { stage: 'cancelled', failureCode: 'cancelled' });
+  assert.equal((await retryInvestmentUpdate(retryable.update.id)).operational_stage, 'queued');
 
   const k1Document = await createDocument({
     entity_type: 'investment', entity_id: fund.id,
