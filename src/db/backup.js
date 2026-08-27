@@ -40,6 +40,7 @@ const INSERT_ORDER = [
   'company_aliases',
   'valuations',
   'cash_flows',
+  'direct_position_lifecycle_events',
   'investment_events',
   'investment_theses',
   'pipeline_invites',
