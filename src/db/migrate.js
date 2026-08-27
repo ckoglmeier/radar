@@ -46,6 +46,42 @@ function getPendingMigrations(applied) {
   return migrations;
 }
 
+function migrationDefinitions() {
+  return getPendingMigrations(new Set()).map(({ version, name }) => ({ version, name }));
+}
+
+/**
+ * Inspect migration state without creating schema_migrations or executing DDL.
+ * This is safe to call against an old or empty workspace before a backup or
+ * candidate migration begins.
+ */
+export async function inspectPendingMigrations() {
+  const [migrationTable] = await query(`
+    SELECT EXISTS (
+      SELECT 1
+        FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name = 'schema_migrations'
+    ) AS present
+  `);
+  const migrationTablePresent = Boolean(migrationTable?.present);
+  const appliedRows = migrationTablePresent
+    ? await query(`SELECT version, name FROM schema_migrations ORDER BY version`)
+    : [];
+  const appliedVersions = new Set(appliedRows.map(row => Number(row.version)));
+  const available = migrationDefinitions();
+  return {
+    schema_version: 1,
+    migration_table_present: migrationTablePresent,
+    latest_available_version: available.at(-1)?.version ?? null,
+    applied: appliedRows.map(row => ({
+      version: Number(row.version),
+      name: row.name == null ? null : String(row.name),
+    })),
+    pending: available.filter(migration => !appliedVersions.has(migration.version)),
+  };
+}
+
 function splitStatements(sql) {
   // Split on semicolons at end of line, but respect $$ dollar-quoting
   const statements = [];
