@@ -73,6 +73,27 @@ try {
   });
   await closeDb();
 
+  const localOnlyUrl = `file:${join(scratch, 'local-only-old-schema')}`;
+  await withTenant(localOnlyUrl, async () => {
+    await query(`CREATE TABLE documents (
+      id SERIAL PRIMARY KEY,
+      filename TEXT,
+      content BYTEA,
+      sync_policy TEXT
+    )`);
+    await query(`INSERT INTO documents (filename, content, sync_policy) VALUES ($1, $2, $3)`, [
+      'private.bin', Buffer.from([9, 8, 7, 0]), 'local_only',
+    ]);
+    const snapshot = await createPreMigrationSnapshot();
+    const database = JSON.parse(snapshot.bundle.database);
+    assert.deepEqual(
+      Buffer.from(database.tables.documents[0].content.$radar_bytes_base64, 'base64'),
+      Buffer.from([9, 8, 7, 0]),
+      'encrypted migration snapshot preserves local-only bytes',
+    );
+  });
+  await closeDb();
+
   const currentUrl = `file:${join(scratch, 'current')}`;
   await withTenant(currentUrl, async () => {
     await runMigrations();

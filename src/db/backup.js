@@ -196,30 +196,32 @@ function rowsWithDeferredSelfReferences(encodedRows, selfReferences) {
   return ordered;
 }
 
-export async function createDatabaseBackupPayload() {
-  const [restricted] = await query(`
-    SELECT
-      (SELECT COUNT(*)::int FROM documents WHERE sync_policy = 'local_only') AS documents,
-      (SELECT COUNT(*)::int FROM vehicle_portfolio_snapshots WHERE sync_policy = 'local_only') AS vehicle_snapshots,
-      (SELECT COUNT(*)::int FROM company_facts WHERE sync_policy = 'local_only') AS company_facts
-  `);
-  const restrictedCount = Number(restricted?.documents || 0)
-    + Number(restricted?.vehicle_snapshots || 0)
-    + Number(restricted?.company_facts || 0);
-  if (restrictedCount > 0) {
-    if (
-      Number(restricted?.documents || 0) > 0 &&
-      Number(restricted?.vehicle_snapshots || 0) === 0 &&
-      Number(restricted?.company_facts || 0) === 0
-    ) {
+export async function createDatabaseBackupPayload({ includeLocalOnly = false } = {}) {
+  if (!includeLocalOnly) {
+    const [restricted] = await query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM documents WHERE sync_policy = 'local_only') AS documents,
+        (SELECT COUNT(*)::int FROM vehicle_portfolio_snapshots WHERE sync_policy = 'local_only') AS vehicle_snapshots,
+        (SELECT COUNT(*)::int FROM company_facts WHERE sync_policy = 'local_only') AS company_facts
+    `);
+    const restrictedCount = Number(restricted?.documents || 0)
+      + Number(restricted?.vehicle_snapshots || 0)
+      + Number(restricted?.company_facts || 0);
+    if (restrictedCount > 0) {
+      if (
+        Number(restricted?.documents || 0) > 0 &&
+        Number(restricted?.vehicle_snapshots || 0) === 0 &&
+        Number(restricted?.company_facts || 0) === 0
+      ) {
+        throw new Error(
+          `backup denied: ${restricted.documents} local_only document(s) are not permitted to leave the desktop workspace`,
+        );
+      }
       throw new Error(
-        `backup denied: ${restricted.documents} local_only document(s) are not permitted to leave the desktop workspace`,
+        `backup denied: ${restrictedCount} local_only record(s) are not permitted to leave the desktop workspace `
+        + `(documents: ${restricted.documents}, vehicle snapshots: ${restricted.vehicle_snapshots}, Company facts: ${restricted.company_facts})`,
       );
     }
-    throw new Error(
-      `backup denied: ${restrictedCount} local_only record(s) are not permitted to leave the desktop workspace `
-      + `(documents: ${restricted.documents}, vehicle snapshots: ${restricted.vehicle_snapshots}, Company facts: ${restricted.company_facts})`,
-    );
   }
   const tables = (await query(
     `SELECT table_name FROM information_schema.tables
@@ -235,7 +237,7 @@ export async function createDatabaseBackupPayload() {
            AND column_name = 'sync_policy'
       ) AS present
     `);
-    if (syncPolicyColumn?.present) {
+    if (syncPolicyColumn?.present && !includeLocalOnly) {
       const [restrictedDocuments] = await query(`
         SELECT COUNT(*)::int AS count FROM documents WHERE sync_policy = 'local_only'
       `);
@@ -316,7 +318,10 @@ export async function createPreMigrationSnapshot({
 } = {}) {
   const config = jsonClone(safeConfig, 'pre-migration safe config');
   const safeLenses = validateSnapshotLenses(lenses);
-  const database = await createDatabaseBackupPayload();
+  // This snapshot remains inside the Desktop migration-safety path and is
+  // encrypted before it is written. It must preserve local-only bytes too;
+  // ordinary user-initiated backup/export policy remains fail-closed.
+  const database = await createDatabaseBackupPayload({ includeLocalOnly: true });
   const parsedDatabase = JSON.parse(database.content);
   const inventory = {
     tables: database.tables.map(table => ({ table: table.table, rows: Number(table.rows) })),
