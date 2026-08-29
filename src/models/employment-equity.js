@@ -133,8 +133,10 @@ export async function createEmploymentEquityIssuer(fields = {}) {
   return withEmploymentEquityWrite(async () => {
     const [entity] = await query(`
       INSERT INTO portfolio_entities
-        (legal_name, normalized_name, entity_type, legal_form, jurisdiction, website, description)
-      VALUES ($1, $2, 'operating_company', $3, $4, $5, $6)
+        (legal_name, display_name, normalized_name, entity_type, entity_class,
+         identity_status, legal_form, jurisdiction, website, description)
+      VALUES ($1, $1, $2, 'operating_company', 'organization',
+              'confirmed', $3, $4, $5, $6)
       RETURNING *
     `, [
       legalName,
@@ -144,6 +146,12 @@ export async function createEmploymentEquityIssuer(fields = {}) {
       optionalText(fields.website),
       optionalText(fields.description),
     ]);
+    await query(`
+      INSERT INTO companies (entity_id, metadata_reviewed_at)
+      VALUES ($1, NOW())
+      ON CONFLICT (entity_id) DO UPDATE
+        SET metadata_reviewed_at = NOW(), updated_at = NOW()
+    `, [entity.id]);
     const profile = await insertIssuerProfile(entity.id, fields);
     return { entity, profile };
   });
@@ -155,6 +163,19 @@ export async function createEmploymentEquityIssuerProfile(portfolioEntityId, fie
     if (!entity || entity.entity_type !== 'operating_company') {
       throw new Error('Employment Equity issuer profile requires an operating-company entity');
     }
+    await query(`
+      INSERT INTO companies (entity_id, metadata_reviewed_at)
+      VALUES ($1, NOW())
+      ON CONFLICT (entity_id) DO UPDATE
+        SET metadata_reviewed_at = NOW(), updated_at = NOW()
+    `, [portfolioEntityId]);
+    await query(`
+      UPDATE portfolio_entities
+         SET display_name = COALESCE(display_name, legal_name),
+             entity_class = COALESCE(entity_class, 'organization'),
+             identity_status = 'confirmed', updated_at = NOW()
+       WHERE id = $1
+    `, [portfolioEntityId]);
     const [existing] = await query(`
       SELECT * FROM employment_equity_issuer_profiles WHERE portfolio_entity_id = $1
     `, [portfolioEntityId]);
@@ -276,6 +297,8 @@ export async function createEmploymentEquityPosition(fields = {}) {
       SELECT * FROM employment_equity_issuer_profiles WHERE portfolio_entity_id = $1
     `, [portfolioEntityId]);
     if (!issuerProfile) throw new Error('Employment Equity issuer profile must exist before creating a position');
+    const [company] = await query(`SELECT entity_id FROM companies WHERE entity_id = $1`, [portfolioEntityId]);
+    if (!company) throw new Error('Employment Equity position requires a reviewed Company subtype');
     const status = assertEnum(fields.positionStatus || 'active', POSITION_STATUSES, 'position status');
     const [investment] = await query(`
       INSERT INTO investments

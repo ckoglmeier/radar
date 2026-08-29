@@ -25,6 +25,14 @@ const INSERT_ORDER = [
   'schema_migrations',
   'theses',
   'portfolio_entities',
+  'companies',
+  'investing_entities',
+  'entity_aliases',
+  'entity_redirects',
+  'identity_review_receipts',
+  'fund_vehicle_profiles',
+  'fund_profile_field_ownership',
+  'company_fact_registry',
   'investments',
   'investment_source_identities',
   'investment_consolidations',
@@ -33,6 +41,10 @@ const INSERT_ORDER = [
   // Polymorphic attachment integrity is model-enforced, so documents can be
   // restored before typed records whose explicit source-document FKs need it.
   'documents',
+  'vehicle_portfolio_snapshots',
+  'vehicle_exposure_claims',
+  'company_facts',
+  'company_fact_field_ownership',
   'direct_acquisition_profiles',
   'employment_equity_issuer_profiles',
   'employment_equity_positions',
@@ -134,6 +146,26 @@ async function selfReferenceColumns(table) {
   `, [table])).map(row => row.column_name);
 }
 
+async function generatedColumns(table) {
+  return new Set((await query(`
+    SELECT column_name
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = $1
+       AND is_generated = 'ALWAYS'
+  `, [table])).map(row => row.column_name));
+}
+
+async function jsonColumns(table) {
+  return new Set((await query(`
+    SELECT column_name
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = $1
+       AND data_type IN ('json', 'jsonb')
+  `, [table])).map(row => row.column_name));
+}
+
 function rowsWithDeferredSelfReferences(encodedRows, selfReferences) {
   if (selfReferences.length === 0) {
     return encodedRows.map(encodedRow => ({ row: decodeValue(encodedRow), references: [] }));
@@ -165,12 +197,28 @@ function rowsWithDeferredSelfReferences(encodedRows, selfReferences) {
 }
 
 export async function createDatabaseBackupPayload() {
-  const [restrictedDocuments] = await query(`
-    SELECT COUNT(*)::int AS count FROM documents WHERE sync_policy = 'local_only'
+  const [restricted] = await query(`
+    SELECT
+      (SELECT COUNT(*)::int FROM documents WHERE sync_policy = 'local_only') AS documents,
+      (SELECT COUNT(*)::int FROM vehicle_portfolio_snapshots WHERE sync_policy = 'local_only') AS vehicle_snapshots,
+      (SELECT COUNT(*)::int FROM company_facts WHERE sync_policy = 'local_only') AS company_facts
   `);
-  if (Number(restrictedDocuments?.count || 0) > 0) {
+  const restrictedCount = Number(restricted?.documents || 0)
+    + Number(restricted?.vehicle_snapshots || 0)
+    + Number(restricted?.company_facts || 0);
+  if (restrictedCount > 0) {
+    if (
+      Number(restricted?.documents || 0) > 0 &&
+      Number(restricted?.vehicle_snapshots || 0) === 0 &&
+      Number(restricted?.company_facts || 0) === 0
+    ) {
+      throw new Error(
+        `backup denied: ${restricted.documents} local_only document(s) are not permitted to leave the desktop workspace`,
+      );
+    }
     throw new Error(
-      `backup denied: ${restrictedDocuments.count} local_only document(s) are not permitted to leave the desktop workspace`,
+      `backup denied: ${restrictedCount} local_only record(s) are not permitted to leave the desktop workspace `
+      + `(documents: ${restricted.documents}, vehicle snapshots: ${restricted.vehicle_snapshots}, Company facts: ${restricted.company_facts})`,
     );
   }
   const tables = (await query(
@@ -257,6 +305,8 @@ export async function restoreDatabase({ file, content } = {}) {
       const rows = dump.tables[table];
       if (!Array.isArray(rows)) throw new Error(`backup table is not an array: ${table}`);
       const selfReferences = await selfReferenceColumns(table);
+      const generated = await generatedColumns(table);
+      const json = await jsonColumns(table);
       const deferredSelfReferences = [];
 
       for (const { row, references } of rowsWithDeferredSelfReferences(rows, selfReferences)) {
@@ -264,13 +314,20 @@ export async function restoreDatabase({ file, content } = {}) {
           if (row.id == null) throw new Error(`self-referencing backup table has no id: ${table}`);
           deferredSelfReferences.push({ id: row.id, references });
         }
-        const columns = Object.keys(row);
+        // Generated columns are derivable schema state. Older and current
+        // backups may contain their selected values, but restore must let the
+        // destination database recompute them.
+        const columns = Object.keys(row).filter(column => !generated.has(column));
         if (columns.length === 0) continue;
         const placeholders = columns.map((_, index) => `$${index + 1}`);
         await query(
           `INSERT INTO ${quoteIdentifier(table)} (${columns.map(quoteIdentifier).join(', ')}) ` +
           `VALUES (${placeholders.join(', ')})`,
-          columns.map(column => row[column]),
+          columns.map(column => (
+            json.has(column) && row[column] != null
+              ? JSON.stringify(row[column])
+              : row[column]
+          )),
         );
       }
 

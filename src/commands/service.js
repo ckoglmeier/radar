@@ -30,6 +30,7 @@ import { workspaceCommandDefinitions } from './workspace.js';
 import { pipelineCommandDefinitions } from './pipeline.js';
 import { intakeCouncilCommandDefinitions } from './intake-council.js';
 import { directLifecycleCommandDefinitions } from './direct-lifecycle.js';
+import { canonicalProductModelCommandDefinitions } from './canonical-product-model.js';
 
 export const commandRegistry = createCommandRegistry([
   ...tierACommandDefinitions,
@@ -42,6 +43,7 @@ export const commandRegistry = createCommandRegistry([
   ...pipelineCommandDefinitions,
   ...intakeCouncilCommandDefinitions,
   ...directLifecycleCommandDefinitions,
+  ...canonicalProductModelCommandDefinitions,
 ]);
 
 function jsonValue(value) {

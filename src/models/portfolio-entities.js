@@ -450,6 +450,34 @@ export async function applyPortfolioEntityManifest(manifest) {
         : await resolveExistingEntity(candidate);
       if (action === 'create_and_link' && beforeEntities.length === 0) result.entities_created++;
 
+      if (candidate.entity_type === 'operating_company') {
+        await query(`
+          INSERT INTO companies (entity_id, metadata_reviewed_at)
+          VALUES ($1, NOW())
+          ON CONFLICT (entity_id) DO NOTHING
+        `, [entity.id]);
+        await query(`
+          UPDATE portfolio_entities
+             SET display_name = COALESCE(display_name, legal_name),
+                 entity_class = COALESCE(entity_class, 'organization'),
+                 identity_status = 'confirmed', updated_at = NOW()
+           WHERE id = $1
+        `, [entity.id]);
+      } else if (candidate.entity_type === 'fund_vehicle') {
+        await query(`
+          INSERT INTO investing_entities (entity_id, investing_entity_kind)
+          VALUES ($1, 'fund_vehicle')
+          ON CONFLICT (entity_id) DO NOTHING
+        `, [entity.id]);
+        await query(`
+          UPDATE portfolio_entities
+             SET display_name = COALESCE(display_name, legal_name),
+                 entity_class = COALESCE(entity_class, 'vehicle'),
+                 identity_status = 'confirmed', updated_at = NOW()
+           WHERE id = $1
+        `, [entity.id]);
+      }
+
       for (const positionKey of candidate.position_keys) {
         assertUuid(positionKey, `candidate ${candidate.candidate_id} position_key`);
         const [position] = await query(`
@@ -510,11 +538,16 @@ export async function listPortfolioEntities() {
   return query(`
     SELECT pe.id, pe.entity_key, pe.legal_name, pe.normalized_name,
            pe.entity_type, pe.legal_form, pe.jurisdiction, pe.website,
+           pe.display_name, pe.entity_class, pe.identity_status,
            pe.description, pe.created_at, pe.updated_at,
+           (c.entity_id IS NOT NULL) AS is_company,
+           ie.investing_entity_kind,
            COUNT(i.id)::int AS position_count
       FROM portfolio_entities pe
+      LEFT JOIN companies c ON c.entity_id = pe.id
+      LEFT JOIN investing_entities ie ON ie.entity_id = pe.id
       LEFT JOIN investments i ON i.portfolio_entity_id = pe.id
-     GROUP BY pe.id
+     GROUP BY pe.id, c.entity_id, ie.entity_id
      ORDER BY LOWER(pe.legal_name), pe.id
   `);
 }

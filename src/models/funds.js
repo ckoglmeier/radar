@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isPgliteActive, query, withAtomicWrite } from '../db/index.js';
 import { normalize } from '../utils/company-names.js';
 
@@ -67,6 +67,69 @@ async function withFundWrite(fn) {
     throw new Error('Fund writes require local PGlite transaction support');
   }
   return withAtomicWrite(fn);
+}
+
+function profileHash(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+async function syncFundVehicleProfile(entityId, fields = {}) {
+  const [entity] = await query(`
+    SELECT pe.id, pe.entity_type, ie.investing_entity_kind
+      FROM portfolio_entities pe
+      LEFT JOIN investing_entities ie ON ie.entity_id = pe.id
+     WHERE pe.id = $1
+  `, [entityId]);
+  if (!entity || entity.entity_type !== 'fund_vehicle') {
+    throw new Error('shared Fund profile requires a reviewed fund_vehicle Entity');
+  }
+  if (!entity.investing_entity_kind) {
+    await query(`
+      INSERT INTO investing_entities (entity_id, investing_entity_kind)
+      VALUES ($1, 'fund_vehicle')
+    `, [entityId]);
+  } else if (entity.investing_entity_kind !== 'fund_vehicle') {
+    throw new Error('Fund Entity has a conflicting Investing Entity subtype');
+  }
+  await query(`
+    UPDATE portfolio_entities
+       SET display_name = COALESCE(display_name, legal_name),
+           entity_class = COALESCE(entity_class, 'vehicle'),
+           identity_status = 'confirmed', updated_at = NOW()
+     WHERE id = $1
+  `, [entityId]);
+  const profile = {
+    manager: optionalText(fields.manager),
+    strategy: optionalText(fields.strategy),
+    vintage_year: fields.vintageYear == null ? null : Number(fields.vintageYear),
+    description: optionalText(fields.description),
+  };
+  const [shared] = await query(`
+    INSERT INTO fund_vehicle_profiles
+      (entity_id, manager, strategy, vintage_year, description,
+       review_state, source_hash, reviewed_by, reviewed_at)
+    VALUES ($1,$2,$3,$4,$5,'accepted',$6,'local_user',NOW())
+    ON CONFLICT (entity_id) DO UPDATE
+      SET manager = EXCLUDED.manager,
+          strategy = EXCLUDED.strategy,
+          vintage_year = EXCLUDED.vintage_year,
+          description = EXCLUDED.description,
+          review_state = 'accepted',
+          source_hash = EXCLUDED.source_hash,
+          reviewed_by = 'local_user',
+          reviewed_at = NOW(),
+          updated_at = NOW()
+    RETURNING *
+  `, [entityId, profile.manager, profile.strategy, profile.vintage_year,
+    profile.description, profileHash(profile)]);
+  await query(`
+    UPDATE fund_profiles fp
+       SET manager = $2, strategy = $3, vintage_year = $4,
+           description = $5, updated_at = NOW()
+      FROM investments i
+     WHERE i.id = fp.investment_id AND i.portfolio_entity_id = $1
+  `, [entityId, profile.manager, profile.strategy, profile.vintage_year, profile.description]);
+  return shared;
 }
 
 async function fundPosition(investmentId, { lock = false } = {}) {
@@ -149,7 +212,7 @@ async function insertFundCashActivity({
 export async function createFundProfile(investmentId, fields = {}) {
   assertUsd(fields.currency);
   return withFundWrite(async () => {
-    await fundPosition(investmentId, { lock: true });
+    const position = await fundPosition(investmentId, { lock: true });
     const status = assertFundStatus(fields.fundStatus || 'active');
     const rows = await query(`
       INSERT INTO fund_profiles
@@ -171,12 +234,19 @@ export async function createFundProfile(investmentId, fields = {}) {
       optionalText(fields.migrationKey),
     ]);
     if (rows[0]) {
+      await syncFundVehicleProfile(position.portfolio_entity_id, fields);
       await query(`UPDATE investments SET status = $1, updated_at = NOW() WHERE id = $2`, [
         STATUS_COMPATIBILITY[status], investmentId,
       ]);
       return { profile: rows[0], idempotent_replay: false };
     }
     const [profile] = await query(`SELECT * FROM fund_profiles WHERE investment_id = $1`, [investmentId]);
+    await syncFundVehicleProfile(position.portfolio_entity_id, {
+      manager: profile.manager,
+      strategy: profile.strategy,
+      vintageYear: profile.vintage_year,
+      description: profile.description,
+    });
     return { profile, idempotent_replay: true };
   });
 }
@@ -215,6 +285,18 @@ export async function createFund(fields = {}) {
       ]);
       entityId = entity.id;
     }
+    await query(`
+      INSERT INTO investing_entities (entity_id, investing_entity_kind)
+      VALUES ($1, 'fund_vehicle')
+      ON CONFLICT (entity_id) DO NOTHING
+    `, [entityId]);
+    await query(`
+      UPDATE portfolio_entities
+         SET display_name = COALESCE(display_name, legal_name),
+             entity_class = COALESCE(entity_class, 'vehicle'),
+             identity_status = 'confirmed', updated_at = NOW()
+       WHERE id = $1
+    `, [entityId]);
 
     const [investment] = await query(`
       INSERT INTO investments
@@ -246,6 +328,7 @@ export async function createFund(fields = {}) {
       optionalText(fields.description),
       optionalText(fields.migrationKey),
     ]);
+    await syncFundVehicleProfile(entityId, fields);
 
     let contribution = null;
     if (initialContribution != null) {
@@ -279,7 +362,7 @@ export async function createFund(fields = {}) {
 export async function updateFund(investmentId, fields = {}) {
   assertUsd(fields.currency);
   return withFundWrite(async () => {
-    await fundPosition(investmentId, { lock: true });
+    const position = await fundPosition(investmentId, { lock: true });
     const [before] = await query(`SELECT * FROM fund_profiles WHERE investment_id = $1 FOR UPDATE`, [investmentId]);
     if (!before) throw new Error(`fund profile not found: ${investmentId}`);
     const status = fields.fundStatus == null ? before.fund_status : assertFundStatus(fields.fundStatus);
@@ -301,6 +384,12 @@ export async function updateFund(investmentId, fields = {}) {
       status,
       fields.description === undefined ? null : optionalText(fields.description),
     ]);
+    await syncFundVehicleProfile(position.portfolio_entity_id, {
+      manager: profile.manager,
+      strategy: profile.strategy,
+      vintageYear: profile.vintage_year,
+      description: profile.description,
+    });
     await query(`UPDATE investments SET status = $1, updated_at = NOW() WHERE id = $2`, [
       STATUS_COMPATIBILITY[status], investmentId,
     ]);
@@ -590,11 +679,15 @@ export async function listFunds({ includeArchived = false } = {}) {
   const rows = await query(`
     SELECT i.id AS investment_id, i.position_key, i.company_name,
            i.invest_date, i.investment_entity, i.portfolio_entity_id,
-           pe.legal_name, fp.manager, fp.strategy, fp.vintage_year,
+           pe.legal_name,
+           COALESCE(fvp.manager, fp.manager) AS manager,
+           COALESCE(fvp.strategy, fp.strategy) AS strategy,
+           COALESCE(fvp.vintage_year, fp.vintage_year) AS vintage_year,
            fp.commitment, fp.fund_status, fp.description, fp.archived_at
       FROM fund_profiles fp
       JOIN investments i ON i.id = fp.investment_id
       JOIN portfolio_entities pe ON pe.id = i.portfolio_entity_id
+      LEFT JOIN fund_vehicle_profiles fvp ON fvp.entity_id = pe.id AND fvp.review_state = 'accepted'
      WHERE ($1::boolean OR fp.archived_at IS NULL)
      ORDER BY LOWER(pe.legal_name), i.invest_date, i.id
   `, [includeArchived]);
@@ -606,10 +699,19 @@ export async function getFund(investmentId) {
     SELECT i.id AS investment_id, i.position_key, i.company_name,
            i.invest_date, i.investment_entity, i.portfolio_entity_id,
            pe.legal_name, pe.legal_form, pe.jurisdiction, pe.website,
-           fp.*
+           fp.investment_id,
+           COALESCE(fvp.manager, fp.manager) AS manager,
+           COALESCE(fvp.strategy, fp.strategy) AS strategy,
+           COALESCE(fvp.vintage_year, fp.vintage_year) AS vintage_year,
+           fp.commitment, fp.fund_status,
+           COALESCE(fvp.description, fp.description) AS description,
+           fp.archived_at, fp.migration_source_room_holding_id,
+           fp.migration_key, fp.created_at, fp.updated_at,
+           fvp.review_state AS vehicle_profile_review_state
       FROM fund_profiles fp
       JOIN investments i ON i.id = fp.investment_id
       JOIN portfolio_entities pe ON pe.id = i.portfolio_entity_id
+      LEFT JOIN fund_vehicle_profiles fvp ON fvp.entity_id = pe.id AND fvp.review_state = 'accepted'
      WHERE fp.investment_id = $1
   `, [investmentId]);
   if (!rows[0]) return null;
