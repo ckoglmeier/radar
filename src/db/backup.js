@@ -17,7 +17,7 @@
 // restore is destructive and rare; see docs/phase9/RADAR_SUPABASE_AUTH_PLAN.md.
 
 import { writeFileSync, mkdirSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { join, posix } from 'path';
 import { query, isPgliteActive, withAtomicWrite } from './index.js';
 
 // Parents before children so a future restore can insert in file order.
@@ -226,6 +226,27 @@ export async function createDatabaseBackupPayload() {
      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
   )).map(r => r.table_name);
 
+  if (tables.includes('documents')) {
+    const [syncPolicyColumn] = await query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'documents'
+           AND column_name = 'sync_policy'
+      ) AS present
+    `);
+    if (syncPolicyColumn?.present) {
+      const [restrictedDocuments] = await query(`
+        SELECT COUNT(*)::int AS count FROM documents WHERE sync_policy = 'local_only'
+      `);
+      if (Number(restrictedDocuments?.count || 0) > 0) {
+        throw new Error(
+          `backup denied: ${restrictedDocuments.count} local_only document(s) are not permitted to leave the desktop workspace`,
+        );
+      }
+    }
+  }
+
   const ordered = [
     ...INSERT_ORDER.filter(t => tables.includes(t)),
     ...tables.filter(t => !INSERT_ORDER.includes(t)).sort(),
@@ -251,6 +272,77 @@ export async function createDatabaseBackupPayload() {
     tables: ordered.map(t => ({ table: t, rows: dump.tables[t].length })),
     totalRows,
   };
+}
+
+function jsonClone(value, label) {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) throw new Error();
+    return JSON.parse(serialized);
+  } catch {
+    throw new TypeError(`${label} must be JSON serializable`);
+  }
+}
+
+function validateSnapshotLenses(value) {
+  if (!Array.isArray(value)) throw new TypeError('pre-migration lenses must be an array');
+  return value.map((file, index) => {
+    if (!file || typeof file !== 'object' || Array.isArray(file)
+        || Object.keys(file).sort().join(',') !== 'content_base64,path') {
+      throw new TypeError(`pre-migration lens ${index} has an invalid shape`);
+    }
+    const path = posix.normalize(String(file.path || ''));
+    if (!path || path === '..' || path.startsWith('../') || posix.isAbsolute(path)) {
+      throw new TypeError(`pre-migration lens ${index} has an unsafe path`);
+    }
+    const content = String(file.content_base64 || '');
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(content)) {
+      throw new TypeError(`pre-migration lens ${index} is not base64`);
+    }
+    return { path, content_base64: content };
+  }).sort((left, right) => left.path.localeCompare(right.path));
+}
+
+/**
+ * Build an old-schema-compatible workspace bundle for Desktop encryption.
+ * This function never runs migrations and discovers tables/columns dynamically.
+ * The Desktop must encrypt and authenticate the returned bundle before applying
+ * a pending migration.
+ */
+export async function createPreMigrationSnapshot({
+  safeConfig = {},
+  lenses = [],
+  now = new Date(),
+} = {}) {
+  const config = jsonClone(safeConfig, 'pre-migration safe config');
+  const safeLenses = validateSnapshotLenses(lenses);
+  const database = await createDatabaseBackupPayload();
+  const parsedDatabase = JSON.parse(database.content);
+  const inventory = {
+    tables: database.tables.map(table => ({ table: table.table, rows: Number(table.rows) })),
+    total_rows: Number(database.totalRows),
+    document_rows: Number(database.tables.find(table => table.table === 'documents')?.rows || 0),
+  };
+  const bundle = {
+    format_version: 1,
+    kind: 'radar-pre-migration-snapshot',
+    created_at: new Date(now).toISOString(),
+    database: database.content,
+    config,
+    lenses: safeLenses,
+  };
+
+  // Validate the complete snapshot without assuming a post-migration schema.
+  const roundTrip = JSON.parse(JSON.stringify(bundle));
+  const roundTripDatabase = JSON.parse(roundTrip.database);
+  if (roundTrip.format_version !== 1
+      || roundTrip.kind !== 'radar-pre-migration-snapshot'
+      || roundTripDatabase.format_version !== parsedDatabase.format_version
+      || Object.keys(roundTripDatabase.tables || {}).length !== inventory.tables.length
+      || inventory.tables.reduce((sum, table) => sum + table.rows, 0) !== inventory.total_rows) {
+    throw new Error('pre-migration snapshot validation failed');
+  }
+  return { bundle: roundTrip, inventory };
 }
 
 export async function backupDatabase({ outDir = './backups' } = {}) {
