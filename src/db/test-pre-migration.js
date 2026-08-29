@@ -17,7 +17,7 @@ try {
     assert.equal(inspection.migration_table_present, false);
     assert.equal(inspection.applied.length, 0);
     assert.ok(inspection.pending.length > 0);
-    assert.equal(inspection.latest_available_version, 60);
+    assert.equal(inspection.latest_available_version, 62);
     const after = await query(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`);
     assert.deepEqual(after, [], 'inspection creates no migration table or other schema');
   });
@@ -41,7 +41,7 @@ try {
     assert.equal(inspection.migration_table_present, true);
     assert.deepEqual(inspection.applied, [{ version: 1, name: '001_initial_schema' }]);
     assert.equal(inspection.pending.some(migration => migration.version === 1), false);
-    assert.equal(inspection.pending.at(-1).version, 60);
+    assert.equal(inspection.pending.at(-1).version, 62);
 
     const snapshot = await createPreMigrationSnapshot({
       safeConfig: { appearance: { theme: 'dark' }, ai: { auth_mode: 'subscription' } },
@@ -73,6 +73,27 @@ try {
   });
   await closeDb();
 
+  const interruptedUrl = `file:${join(scratch, 'interrupted')}`;
+  await withTenant(interruptedUrl, async () => {
+    let injected = false;
+    await assert.rejects(
+      () => runMigrations({
+        beforeStatement({ version, statement }) {
+          if (version === 1 && statement === 1) {
+            injected = true;
+            throw new Error('named synthetic migration interruption');
+          }
+        },
+      }),
+      /Migration 001_initial_schema failed at statement 1: named synthetic migration interruption/,
+    );
+    assert.equal(injected, true);
+    const inspection = await inspectPendingMigrations();
+    assert.equal(inspection.applied.length, 0, 'failed migration records zero newly applied versions');
+    assert.equal(inspection.pending[0].version, 1);
+  });
+  await closeDb();
+
   const localOnlyUrl = `file:${join(scratch, 'local-only-old-schema')}`;
   await withTenant(localOnlyUrl, async () => {
     await query(`CREATE TABLE documents (
@@ -100,7 +121,7 @@ try {
     const inspection = await inspectPendingMigrations();
     assert.equal(inspection.migration_table_present, true);
     assert.equal(inspection.pending.length, 0);
-    assert.equal(inspection.applied.at(-1).version, 60);
+    assert.equal(inspection.applied.at(-1).version, 62);
   });
 
   console.log('pre-migration: read-only inspection and old-schema snapshot passed');

@@ -1,7 +1,32 @@
 import { query } from '../db/index.js';
 
 const DEFAULT_USER_ID = 'default';
-const SETTINGS_FIELDS = ['onboarded', 'onboarding_track'];
+const SETTINGS_FIELDS = [
+  'onboarded',
+  'onboarding_track',
+  'beta_setup_version',
+  'beta_setup_completed_at',
+  'beta_setup_dismissed_version',
+  'beta_setup_dismissed_at',
+  'provider_egress_disclosure_version',
+  'provider_egress_disclosure_acknowledged_at',
+  'update_disclosure_version',
+  'update_disclosure_acknowledged_at',
+];
+
+const VERSION_FIELDS = new Set([
+  'beta_setup_version',
+  'beta_setup_dismissed_version',
+  'provider_egress_disclosure_version',
+  'update_disclosure_version',
+]);
+
+const TIMESTAMP_FIELDS = new Set([
+  'beta_setup_completed_at',
+  'beta_setup_dismissed_at',
+  'provider_egress_disclosure_acknowledged_at',
+  'update_disclosure_acknowledged_at',
+]);
 
 function normalizeUserId(userId) {
   return userId || DEFAULT_USER_ID;
@@ -14,6 +39,14 @@ function buildAssignments(fields, startIndex = 2) {
 
   for (const field of SETTINGS_FIELDS) {
     if (!(field in fields)) continue;
+    if (VERSION_FIELDS.has(field) && fields[field] != null
+        && (!Number.isSafeInteger(fields[field]) || fields[field] < 0)) {
+      throw new TypeError(`${field} must be a non-negative integer or null`);
+    }
+    if (TIMESTAMP_FIELDS.has(field) && fields[field] != null
+        && !Number.isFinite(Date.parse(fields[field]))) {
+      throw new TypeError(`${field} must be an ISO timestamp or null`);
+    }
     clauses.push(`${field} = $${nextIndex++}`);
     params.push(fields[field] ?? null);
   }

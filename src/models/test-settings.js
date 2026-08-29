@@ -60,6 +60,42 @@ async function run() {
       eq(updated.onboarding_track, 'theses');
     });
 
+    await test('Private Beta acknowledgements are versioned and durable', async () => {
+      const updated = await updateUserSettings(userId, {
+        beta_setup_version: 1,
+        beta_setup_completed_at: '2026-08-27T22:00:00Z',
+        provider_egress_disclosure_version: 1,
+        provider_egress_disclosure_acknowledged_at: '2026-08-27T22:01:00Z',
+        update_disclosure_version: 1,
+        update_disclosure_acknowledged_at: '2026-08-27T22:02:00Z',
+      });
+      eq(updated.beta_setup_version, 1);
+      eq(updated.provider_egress_disclosure_version, 1);
+      eq(updated.update_disclosure_version, 1);
+      eq(updated.beta_setup_completed_at instanceof Date, true);
+
+      const reloaded = await getUserSettings(userId);
+      eq(reloaded.provider_egress_disclosure_version, 1);
+    });
+
+    await test('Private Beta acknowledgement fields fail closed', async () => {
+      let invalidVersion = false;
+      try {
+        await updateUserSettings(userId, { beta_setup_version: -1 });
+      } catch (error) {
+        invalidVersion = /non-negative integer/.test(error.message);
+      }
+      eq(invalidVersion, true);
+
+      let invalidTime = false;
+      try {
+        await updateUserSettings(userId, { update_disclosure_acknowledged_at: 'not-a-date' });
+      } catch (error) {
+        invalidTime = /ISO timestamp/.test(error.message);
+      }
+      eq(invalidTime, true);
+    });
+
     await test('updateUserSettings rejects empty updates', async () => {
       let rejected = false;
       try {

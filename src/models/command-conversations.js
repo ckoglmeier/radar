@@ -1,5 +1,9 @@
 import { query } from '../db/index.js';
 
+const REQUEST_STATES = new Set(['queued', 'running', 'completed', 'failed', 'timed_out', 'cancelled']);
+const REQUEST_STAGES = new Set(['queued', 'interpreting', 'research', 'planning', 'review_ready', 'complete', 'failed', 'cancelled']);
+const FAILURE_CODES = new Set(['credential_required', 'provider_unavailable', 'provider_disconnected', 'turn_limit', 'deadline', 'source_unavailable', 'validation_failed', 'cancelled', 'unexpected']);
+
 function requiredText(value, label) {
   const text = String(value || '').trim();
   if (!text) throw new TypeError(`${label} is required`);
@@ -106,4 +110,57 @@ export async function resolveCommandConfirmation(proposalId, commandSetHash, sta
      RETURNING *
   `, [proposalId, commandSetHash, status]);
   return row || null;
+}
+
+export async function beginCommandRequest(threadId, messageId) {
+  const [row] = await query(`
+    UPDATE command_threads
+       SET active_request_id = $2, active_request_state = 'queued',
+           active_request_stage = 'queued', active_request_started_at = NOW(),
+           active_request_stage_started_at = NOW(), active_request_terminal_at = NULL,
+           active_request_cancellation_requested = FALSE, active_request_failure_code = NULL,
+           updated_at = NOW()
+     WHERE id = $1
+       AND (active_request_state IS NULL OR active_request_state NOT IN ('queued','running'))
+     RETURNING *
+  `, [threadId, messageId]);
+  if (!row) throw new Error('Command already has an active request or the thread does not exist');
+  return row;
+}
+
+export async function updateCommandRequestLifecycle(threadId, messageId, { state, stage, failureCode = null } = {}) {
+  if (!REQUEST_STATES.has(state) || !REQUEST_STAGES.has(stage)
+      || (failureCode != null && !FAILURE_CODES.has(failureCode))) throw new Error('Invalid Command request lifecycle');
+  const terminal = ['completed', 'failed', 'timed_out', 'cancelled'].includes(state);
+  const [row] = await query(`
+    UPDATE command_threads
+       SET active_request_state = $3, active_request_stage = $4,
+           active_request_stage_started_at = CASE WHEN active_request_stage IS DISTINCT FROM $4 THEN NOW() ELSE active_request_stage_started_at END,
+           active_request_terminal_at = CASE WHEN $5 THEN NOW() ELSE NULL END,
+           active_request_failure_code = $6, updated_at = NOW()
+     WHERE id = $1 AND active_request_id = $2
+     RETURNING *
+  `, [threadId, messageId, state, stage, terminal, failureCode]);
+  if (!row) throw new Error('Command request identity changed');
+  return row;
+}
+
+export async function requestCommandCancellation(threadId, messageId) {
+  const [row] = await query(`
+    UPDATE command_threads SET active_request_cancellation_requested = TRUE, updated_at = NOW()
+     WHERE id = $1 AND active_request_id = $2 AND active_request_state IN ('queued','running')
+     RETURNING *
+  `, [threadId, messageId]);
+  return row || null;
+}
+
+export async function reconcileInterruptedCommandRequests() {
+  return query(`
+    UPDATE command_threads
+       SET active_request_state = 'failed', active_request_stage = 'failed',
+           active_request_stage_started_at = NOW(), active_request_terminal_at = NOW(),
+           active_request_failure_code = 'provider_disconnected', updated_at = NOW()
+     WHERE active_request_state IN ('queued','running')
+     RETURNING id, active_request_id
+  `);
 }
