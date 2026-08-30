@@ -4,6 +4,7 @@ import {
   createEntityRedirect,
   createReviewedEntity,
   linkPositionIdentity,
+  restorePositionIdentity,
 } from '../models/canonical-identity.js';
 import {
   recordVehiclePortfolioDisclosure,
@@ -101,6 +102,7 @@ export const canonicalProductModelCommandDefinitions = [
     name: 'identity.link_position', title: 'Confirm Position identity',
     description: 'Confirm the canonical holder, immediate legal issuer, and Direct or vehicle route for one Position.',
     risk: 'metadata_change',
+    undoPolicy: 'inverse',
     editableInputKeys: ['holderEntityId', 'issuerEntityId', 'routeClassification'],
     inputSchema: schema({
       investmentId: { type: 'integer', minimum: 1 },
@@ -115,10 +117,11 @@ export const canonicalProductModelCommandDefinitions = [
       if (!row) throw new CommandError('TARGET_NOT_FOUND', `Position not found: ${input.investmentId}`);
       return { type: 'position', id: Number(row.id), label: row.company_name };
     },
-    inspect: async target => (await query(`SELECT holder_entity_id, issuer_entity_id, identity_review_status, route_classification FROM investments WHERE id = $1`, [target.id]))[0],
+    inspect: async target => (await query(`SELECT holder_entity_id, issuer_entity_id, identity_review_status, route_classification, identity_receipt_id FROM investments WHERE id = $1`, [target.id]))[0],
     preview: ({ target, input, current }) => preview(`Confirm the holder and immediate issuer for ${target.label}.`, target, current, input),
     preconditions: ({ current }) => current,
     apply: ({ target, input }) => linkPositionIdentity(target.id, { ...input, reviewedBy: 'local_user' }),
+    undo: ({ target, before }) => restorePositionIdentity(target.id, before),
     affectedResources: ({ target }) => [target],
   }),
   base({

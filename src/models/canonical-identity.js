@@ -331,6 +331,194 @@ export async function linkPositionIdentity(investmentId, fields = {}) {
   });
 }
 
+export async function restorePositionIdentity(investmentId, snapshot = {}) {
+  const positionId = Number(investmentId);
+  if (!Number.isSafeInteger(positionId) || positionId <= 0) throw new TypeError('Position ID must be a positive integer');
+  const status = requiredText(snapshot.identity_review_status, 'Identity review status');
+  const route = requiredText(snapshot.route_classification, 'Route classification');
+  if (!['unresolved', 'accepted'].includes(status)) throw new TypeError(`invalid identity review status: ${status}`);
+  if (![...ROUTES, 'unresolved'].includes(route)) throw new TypeError(`invalid route classification: ${route}`);
+  const holderEntityId = snapshot.holder_entity_id == null ? null : assertUuid(snapshot.holder_entity_id, 'Holder Entity ID');
+  const issuerEntityId = snapshot.issuer_entity_id == null ? null : assertUuid(snapshot.issuer_entity_id, 'Issuer Entity ID');
+  const receiptId = snapshot.identity_receipt_id == null ? null : assertUuid(snapshot.identity_receipt_id, 'Identity receipt ID');
+  if (status === 'accepted' && (!holderEntityId || !issuerEntityId || !receiptId || route === 'unresolved')) {
+    throw new TypeError('accepted identity requires holder, issuer, route, and receipt');
+  }
+  if (status === 'unresolved' && route !== 'unresolved') {
+    throw new TypeError('unresolved identity requires an unresolved route');
+  }
+  return withAtomicWrite(async () => {
+    const [restored] = await query(`
+      UPDATE investments
+         SET holder_entity_id = $2,
+             issuer_entity_id = $3,
+             identity_review_status = $4,
+             route_classification = $5,
+             identity_receipt_id = $6,
+             updated_at = NOW()
+       WHERE id = $1 AND asset_class <> 'merged'
+       RETURNING *
+    `, [positionId, holderEntityId, issuerEntityId, status, route, receiptId]);
+    if (!restored) throw new Error(`active Position not found: ${positionId}`);
+    return { position: restored };
+  });
+}
+
+function entityName(row) {
+  return row.display_name || row.legal_name;
+}
+
+function addCandidate(index, normalizedName, entityId) {
+  if (!normalizedName) return;
+  if (!index.has(normalizedName)) index.set(normalizedName, new Set());
+  index.get(normalizedName).add(entityId);
+}
+
+function resolvedRedirect(entityId, redirects) {
+  let current = entityId;
+  const seen = new Set();
+  while (current && redirects.has(current) && !seen.has(current)) {
+    seen.add(current);
+    current = redirects.get(current);
+  }
+  return current;
+}
+
+export async function proposeCanonicalIdentityMappings() {
+  const [positions, entities, aliases, precedents, redirects] = await Promise.all([
+    query(`
+      SELECT i.id, i.position_key, i.company_name, i.asset_class,
+             i.investment_entity, i.portfolio_entity_id
+        FROM investments i
+       WHERE i.asset_class <> 'merged' AND i.identity_review_status = 'unresolved'
+       ORDER BY i.asset_class, LOWER(i.company_name), i.id
+    `),
+    canonicalIdentityCandidates(),
+    query(`
+      SELECT ea.entity_id, ea.alias_normalized
+        FROM entity_aliases ea
+       WHERE ea.review_state = 'accepted'
+       ORDER BY ea.entity_id, ea.id
+    `),
+    query(`
+      SELECT investment_entity, holder_entity_id
+        FROM investments
+       WHERE asset_class <> 'merged'
+         AND identity_review_status = 'accepted'
+         AND holder_entity_id IS NOT NULL
+         AND NULLIF(TRIM(investment_entity), '') IS NOT NULL
+       ORDER BY id
+    `),
+    query(`SELECT superseded_entity_id, canonical_entity_id FROM entity_redirects`),
+  ]);
+
+  const byId = new Map(entities.map(row => [row.id, row]));
+  const redirectMap = new Map(redirects.map(row => [row.superseded_entity_id, row.canonical_entity_id]));
+  const holderNames = new Map();
+  const issuerNames = new Map();
+  const holderPrecedent = new Map();
+
+  for (const row of entities) {
+    const normalizedNames = new Set([normalize(row.legal_name), normalize(row.display_name)].filter(Boolean));
+    if (row.investing_entity_kind) {
+      for (const name of normalizedNames) addCandidate(holderNames, name, row.id);
+    }
+    if (row.is_company || ['spv', 'fund_vehicle'].includes(row.investing_entity_kind)) {
+      for (const name of normalizedNames) addCandidate(issuerNames, name, row.id);
+    }
+  }
+  for (const alias of aliases) {
+    const row = byId.get(alias.entity_id);
+    if (!row) continue;
+    if (row.investing_entity_kind) addCandidate(holderNames, alias.alias_normalized, row.id);
+    if (row.is_company || ['spv', 'fund_vehicle'].includes(row.investing_entity_kind)) {
+      addCandidate(issuerNames, alias.alias_normalized, row.id);
+    }
+  }
+  for (const precedent of precedents) {
+    addCandidate(holderPrecedent, normalize(precedent.investment_entity), precedent.holder_entity_id);
+  }
+
+  const proposals = positions.map(position => {
+    const routeClassification = position.asset_class === 'fund' ? 'vehicle_interest' : 'direct_issuer';
+    const holderName = normalize(position.investment_entity);
+    const holderIds = new Set([
+      ...(holderNames.get(holderName) || []),
+      ...(holderPrecedent.get(holderName) || []),
+    ]);
+    const validHolderIds = [...holderIds].filter(id => byId.get(id)?.investing_entity_kind);
+
+    const portfolioEntityId = resolvedRedirect(position.portfolio_entity_id, redirectMap);
+    const portfolioEntity = byId.get(portfolioEntityId);
+    const validIssuer = routeClassification === 'vehicle_interest'
+      ? ['spv', 'fund_vehicle'].includes(portfolioEntity?.investing_entity_kind)
+      : Boolean(portfolioEntity?.is_company);
+    const namedIssuerIds = issuerNames.get(normalize(position.company_name)) || new Set();
+    const issuerIds = validIssuer ? [portfolioEntityId] : [...namedIssuerIds].filter(id => {
+      const row = byId.get(id);
+      return routeClassification === 'vehicle_interest'
+        ? ['spv', 'fund_vehicle'].includes(row?.investing_entity_kind)
+        : Boolean(row?.is_company);
+    });
+    const uniqueIssuerIds = [...new Set(issuerIds)];
+    const ready = Boolean(holderName) && validHolderIds.length === 1 && uniqueIssuerIds.length === 1;
+    const missing = [];
+    if (!holderName) missing.push('holder name is not recorded');
+    else if (validHolderIds.length === 0) missing.push('no exact reviewed holder');
+    else if (validHolderIds.length > 1) missing.push('holder name matches more than one reviewed entity');
+    if (uniqueIssuerIds.length === 0) missing.push('no exact reviewed immediate issuer');
+    else if (uniqueIssuerIds.length > 1) missing.push('issuer name matches more than one reviewed entity');
+    const holder = validHolderIds.length === 1 ? byId.get(validHolderIds[0]) : null;
+    const issuer = uniqueIssuerIds.length === 1 ? byId.get(uniqueIssuerIds[0]) : null;
+    return {
+      investment_id: Number(position.id),
+      position_key: position.position_key,
+      company_name: position.company_name,
+      asset_class: position.asset_class,
+      investment_entity: position.investment_entity,
+      route_classification: routeClassification,
+      holder_entity_id: holder?.id || null,
+      holder_name: holder ? entityName(holder) : null,
+      issuer_entity_id: issuer?.id || null,
+      issuer_name: issuer ? entityName(issuer) : null,
+      confidence: ready ? 'deterministic' : 'needs_review',
+      selected_by_default: ready,
+      evidence: ready ? [
+        holderPrecedent.get(holderName)?.has(holder.id) ? 'same recorded holder was reviewed before' : 'exact reviewed holder name or alias',
+        validIssuer ? 'existing canonical Position entity' : 'exact reviewed issuer name or alias',
+      ] : [],
+      missing,
+      holder_candidates: validHolderIds.map(id => ({ id, name: entityName(byId.get(id)) })),
+      issuer_candidates: uniqueIssuerIds.map(id => ({ id, name: entityName(byId.get(id)) })),
+    };
+  });
+  const ready = proposals.filter(row => row.selected_by_default);
+  const grouped = new Map();
+  for (const proposal of ready) {
+    const key = `${proposal.holder_entity_id}:${proposal.route_classification}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        holder_entity_id: proposal.holder_entity_id,
+        holder_name: proposal.holder_name,
+        route_classification: proposal.route_classification,
+        positions: [],
+      });
+    }
+    grouped.get(key).positions.push(proposal);
+  }
+  return {
+    summary: {
+      total: proposals.length,
+      ready: ready.length,
+      needs_review: proposals.length - ready.length,
+      groups: grouped.size,
+    },
+    groups: [...grouped.values()],
+    proposals,
+  };
+}
+
 export async function canonicalIdentityReviewQueue() {
   const [positions, redirects, aliases, exposures] = await Promise.all([
     query(`

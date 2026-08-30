@@ -5,13 +5,19 @@ import { join } from 'node:path';
 import { closeDb, query, withTenant } from '../db/index.js';
 import { runMigrations } from '../db/migrate.js';
 import { createDatabaseBackupPayload, restoreDatabase } from '../db/backup.js';
-import { commandMetadata } from '../commands/service.js';
+import {
+  authorizeCommandProposal,
+  commandMetadata,
+  planCommandProposal,
+  undoCommandReceipt,
+} from '../commands/service.js';
 import {
   canonicalIdentityCandidates,
   canonicalIdentityReviewQueue,
   createEntityRedirect,
   createReviewedEntity,
   linkPositionIdentity,
+  proposeCanonicalIdentityMappings,
   resolveCanonicalEntityId,
 } from './canonical-identity.js';
 import {
@@ -83,10 +89,12 @@ try {
 
     const [directPosition] = await query(`
       INSERT INTO investments
-        (company_name, status, invest_date, invested, net_value, asset_class, source)
-      VALUES ('Acme Robotics', 'Live', '2024-01-15', 10000, 12000, 'direct', 'test')
+        (company_name, status, invest_date, invested, net_value, asset_class, source,
+         investment_entity, portfolio_entity_id)
+      VALUES ('Acme Robotics', 'Live', '2024-01-15', 10000, 12000, 'direct', 'test',
+              'CK Test Holdings LLC', $1)
       RETURNING *
-    `);
+    `, [company.entity.id]);
     const linked = await linkPositionIdentity(directPosition.id, {
       holderEntityId: holder.entity.id,
       issuerEntityId: company.entity.id,
@@ -281,6 +289,72 @@ try {
     const candidates = await canonicalIdentityCandidates();
     assert.ok(candidates.some(row => row.id === holder.entity.id && row.investing_entity_kind === 'llc'));
     assert.ok(candidates.some(row => row.id === company.entity.id && row.is_company));
+
+    const readyPositions = await query(`
+      INSERT INTO investments
+        (company_name, status, invest_date, asset_class, source,
+         investment_entity, portfolio_entity_id)
+      VALUES
+        ('Acme Robotics Follow-on', 'Live', '2025-08-02', 'direct', 'test',
+         'CK Test Holdings LLC', $1),
+        ('Acme Robotics Secondary', 'Live', '2025-08-03', 'direct', 'test',
+         'CK Test Holdings LLC', $1)
+      RETURNING id
+    `, [company.entity.id]);
+    const [beforeMappingProposal] = await query(`
+      SELECT COUNT(*) FILTER (WHERE identity_review_status = 'accepted')::int AS accepted
+        FROM investments
+       WHERE id = ANY($1::int[])
+    `, [readyPositions.map(row => Number(row.id))]);
+    const receiptCountBefore = (await query(`SELECT COUNT(*)::int AS count FROM identity_review_receipts`))[0].count;
+    const bulkMappings = await proposeCanonicalIdentityMappings();
+    assert.equal(bulkMappings.summary.ready, 2);
+    assert.equal(bulkMappings.summary.needs_review, 1);
+    assert.equal(bulkMappings.groups.length, 1);
+    assert.deepEqual(
+      bulkMappings.groups[0].positions.map(row => row.investment_id),
+      readyPositions.map(row => Number(row.id)),
+    );
+    assert.equal(beforeMappingProposal.accepted, 0);
+    assert.equal((await query(`SELECT COUNT(*)::int AS count FROM identity_review_receipts`))[0].count, receiptCountBefore,
+      'bulk mapping proposals are read-only');
+
+    const selected = bulkMappings.proposals.filter(row => row.selected_by_default);
+    const plannedMappings = await planCommandProposal(selected.map(row => ({
+      name: 'identity.link_position',
+      input: {
+        investmentId: row.investment_id,
+        holderEntityId: row.holder_entity_id,
+        issuerEntityId: row.issuer_entity_id,
+        routeClassification: row.route_classification,
+        sourceHash: `bulk-map:${row.investment_id}`,
+        idempotencyKey: `bulk-map:${row.investment_id}`,
+      },
+      provenance: { kind: 'user_attested', evidence: row.evidence.join('; ') },
+    })), {
+      originSurface: 'manual_ui', actorType: 'user', actorId: 'test_reviewer',
+      intentText: 'Review deterministic identity mappings',
+    });
+    const actorCapabilities = ['portfolio:apply:metadata'];
+    const appliedMappings = await authorizeCommandProposal(
+      plannedMappings.proposal.id,
+      plannedMappings.proposal.command_set_hash,
+      { authorizationKind: 'manual_ui', actorId: 'test_reviewer', actorCapabilities },
+    );
+    assert.equal(appliedMappings.receipt.undo.available, true);
+    assert.equal(appliedMappings.receipt.commands.length, 2);
+    assert.equal((await query(`
+      SELECT COUNT(*)::int AS count FROM investments
+       WHERE id = ANY($1::int[]) AND identity_review_status = 'accepted'
+    `, [readyPositions.map(row => Number(row.id))]))[0].count, 2);
+    await undoCommandReceipt(appliedMappings.receipt.id, { actorId: 'test_reviewer', actorCapabilities });
+    assert.equal((await query(`
+      SELECT COUNT(*)::int AS count FROM investments
+       WHERE id = ANY($1::int[])
+         AND identity_review_status = 'unresolved'
+         AND route_classification = 'unresolved'
+         AND holder_entity_id IS NULL AND issuer_entity_id IS NULL
+    `, [readyPositions.map(row => Number(row.id))]))[0].count, 2);
 
     await proposeCompanyFact({
       companyEntityId: company.entity.id,
