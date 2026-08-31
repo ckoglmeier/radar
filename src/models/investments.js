@@ -8,6 +8,7 @@
 
 import { createHash } from 'node:crypto';
 import { query, withAtomicWrite } from '../db/index.js';
+import { roundToStageBucket } from '../utils/stage.js';
 
 /**
  * Return a non-mutating review hint for names that may represent fund vehicles.
@@ -383,9 +384,11 @@ export async function getDirectAcquisitionProfile(investmentId) {
  */
 export async function setDirectAcquisitionProfile(investmentId, fields = {}) {
   const next = directAcquisitionFields(fields);
+  const pricingStage = roundToStageBucket(next.pricing_reference_round);
+  const derivedStageBucket = pricingStage === 'unknown' ? null : pricingStage;
   return withAtomicWrite(async () => {
     const [investment] = await query(`
-      SELECT id, asset_class FROM investments WHERE id = $1 FOR UPDATE
+      SELECT id, asset_class, stage_bucket FROM investments WHERE id = $1 FOR UPDATE
     `, [investmentId]);
     if (!investment || investment.asset_class !== 'direct') {
       throw new Error('Direct acquisition profile requires a Direct investment');
@@ -393,7 +396,32 @@ export async function setDirectAcquisitionProfile(investmentId, fields = {}) {
     const [existing] = await query(`
       SELECT * FROM direct_acquisition_profiles WHERE investment_id = $1
     `, [investmentId]);
-    if (existing && JSON.stringify(comparableDirectAcquisitionProfile(existing)) === JSON.stringify(next)) {
+    const profileUnchanged = existing
+      && JSON.stringify(comparableDirectAcquisitionProfile(existing)) === JSON.stringify(next);
+    if (profileUnchanged) {
+      if (derivedStageBucket && investment.stage_bucket !== derivedStageBucket) {
+        await query(`
+          UPDATE investments
+             SET stage_bucket = $1, updated_at = NOW()
+           WHERE id = $2
+        `, [derivedStageBucket, investmentId]);
+        await logInvestmentEvent(
+          investmentId,
+          'direct_pricing_stage_reclassified',
+          'stage_bucket',
+          investment.stage_bucket,
+          derivedStageBucket,
+          'direct_acquisition_profile',
+          JSON.stringify({ pricing_reference_round: next.pricing_reference_round }),
+        );
+        return {
+          profile: existing,
+          stage_bucket: derivedStageBucket,
+          idempotent_replay: false,
+          corrected: false,
+          stage_reclassified: true,
+        };
+      }
       return { profile: existing, idempotent_replay: true, corrected: false };
     }
     const reason = String(fields.correctionReason || '').trim();
@@ -434,6 +462,13 @@ export async function setDirectAcquisitionProfile(investmentId, fields = {}) {
       next.source_document_id,
       next.notes,
     ]);
+    if (derivedStageBucket && investment.stage_bucket !== derivedStageBucket) {
+      await query(`
+        UPDATE investments
+           SET stage_bucket = $1, updated_at = NOW()
+         WHERE id = $2
+      `, [derivedStageBucket, investmentId]);
+    }
     await logInvestmentEvent(
       investmentId,
       existing ? 'direct_acquisition_profile_corrected' : 'direct_acquisition_profile_recorded',
@@ -443,7 +478,12 @@ export async function setDirectAcquisitionProfile(investmentId, fields = {}) {
       'direct_manual',
       JSON.stringify({ reason: reason || null, proposal_id: fields.proposalId || null }),
     );
-    return { profile, idempotent_replay: false, corrected: Boolean(existing) };
+    return {
+      profile,
+      stage_bucket: derivedStageBucket || investment.stage_bucket,
+      idempotent_replay: false,
+      corrected: Boolean(existing),
+    };
   });
 }
 

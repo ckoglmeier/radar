@@ -19,9 +19,9 @@ try {
     const [investment] = await query(`
       INSERT INTO investments
         (company_name, status, invest_date, invested, realized_value,
-         computed_net_invested, source, asset_class)
+         computed_net_invested, source, asset_class, stage_bucket)
       VALUES ('Direct Mark Fixture', 'Live', '2024-01-01', 1000, 25,
-              900, 'manual', 'direct')
+              900, 'manual', 'direct', 'series-b')
       RETURNING *
     `);
     await query(`
@@ -54,6 +54,16 @@ try {
     assert.equal(savedAcquisition.security_class, 'Series B preferred');
     assert.equal(savedAcquisition.pricing_reference_round, 'Series D');
     assert.equal(Number(savedAcquisition.entry_post_money_valuation), 18_000_000_000);
+    const [repricedInvestment] = await query(`SELECT stage_bucket FROM investments WHERE id = $1`, [investment.id]);
+    assert.equal(repricedInvestment.stage_bucket, 'growth',
+      'portfolio stage follows the pricing reference round, not the held security class');
+    await query(`UPDATE investments SET stage_bucket = 'series-b' WHERE id = $1`, [investment.id]);
+    await query(`DELETE FROM schema_migrations WHERE version = 68`);
+    const stageMigration = await runMigrations();
+    assert.deepEqual(stageMigration.migrations, ['068_pricing_reference_stage']);
+    const [migratedInvestment] = await query(`SELECT stage_bucket FROM investments WHERE id = $1`, [investment.id]);
+    assert.equal(migratedInvestment.stage_bucket, 'growth',
+      'migration repairs legacy stage buckets from reviewed pricing references');
     await assert.rejects(
       () => setDirectAcquisitionProfile(investment.id, {
         ...acquisition, economicParityStatus: 'confirmed',
