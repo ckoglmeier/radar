@@ -16,6 +16,7 @@ import {
   recordEmploymentEquityDisposition,
 } from '../models/employment-equity.js';
 import { portfolioRealizationEvents, positionLifecycleHistory } from './portfolio-realizations.js';
+import { portfolioDetail } from './portfolio.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-portfolio-realizations-'));
 const databaseUrl = `file:${join(scratch, 'db')}`;
@@ -80,6 +81,19 @@ try {
       cashFlowId: exitFlow.id, evidenceNote: 'Closing statement', idempotencyKey: 'exit:full:1',
     });
     assert.equal(replay.idempotent_replay, true);
+    const [cumulativeExit] = await query(`
+      SELECT status, best_unrealized_value, best_realized, best_total_value,
+             best_multiple, lifecycle_closed
+      FROM investments_effective WHERE id = $1
+    `, [exited.id]);
+    assert.equal(cumulativeExit.status, 'Realized');
+    assert.equal(cumulativeExit.lifecycle_closed, true);
+    assert.equal(Number(cumulativeExit.best_unrealized_value), 0);
+    assert.equal(Number(cumulativeExit.best_realized), 1700,
+      'every matched exit distribution contributes to realized proceeds');
+    assert.equal(Number(cumulativeExit.best_total_value), 1700,
+      'closed-position net value equals cumulative realized proceeds');
+    assert.equal(Number(cumulativeExit.best_multiple), 1.7);
     await assert.rejects(
       () => recordDirectLifecycleEvent(exited.id, {
         date: '2026-02-11', eventType: 'full_exit', remainingInterest: 'no',
@@ -138,6 +152,45 @@ try {
       date: '2026-06-03', eventType: 'full_exit', remainingInterest: 'no',
       cashFlowId: contradictoryFlow.id, idempotencyKey: 'contradictory:1',
     });
+
+    const [effectiveExit] = await query(`
+      SELECT status, best_unrealized_value, best_realized, best_total_value,
+             best_multiple, lifecycle_closed, effective_close_date
+      FROM investments_effective WHERE id = $1
+    `, [contradictory.id]);
+    assert.equal(effectiveExit.status, 'Realized');
+    assert.equal(effectiveExit.lifecycle_closed, true);
+    assert.equal(Number(effectiveExit.best_unrealized_value), 0);
+    assert.equal(Number(effectiveExit.best_realized), 900);
+    assert.equal(Number(effectiveExit.best_total_value), 900);
+    assert.equal(Number(effectiveExit.best_multiple), 900 / 700);
+    assert.equal(new Date(effectiveExit.effective_close_date).toISOString().slice(0, 10), '2026-06-03');
+
+    const [detailExit] = await portfolioDetail('Contradictory Exit Co');
+    assert.equal(detailExit.effective_status, 'Realized');
+    assert.equal(detailExit.status, 'Realized');
+    assert.equal(detailExit.recorded_status, 'Realized');
+    const closedState = detailExit.valuation_history.find(row => row.kind === 'position_closed');
+    assert.ok(closedState);
+    assert.equal(Number(closedState.unrealized), 0);
+    assert.equal(Number(closedState.realized), 900);
+    assert.equal(Number(closedState.net), 900);
+
+    const legacyClosed = await direct('Legacy Closed With Stale Mark Co', {
+      status: 'Realized', invested: 500, unrealizedValue: 800, netValue: 800,
+    });
+    await distribution(legacyClosed.id, '2026-06-04', 725);
+    const [legacyEffective] = await query(`
+      SELECT status, best_unrealized_value, best_realized, best_total_value,
+             lifecycle_closed, effective_close_date
+      FROM investments_effective WHERE id = $1
+    `, [legacyClosed.id]);
+    assert.equal(legacyEffective.status, 'Realized');
+    assert.equal(legacyEffective.lifecycle_closed, true);
+    assert.equal(Number(legacyEffective.best_unrealized_value), 0);
+    assert.equal(Number(legacyEffective.best_realized), 725);
+    assert.equal(Number(legacyEffective.best_total_value), 725);
+    assert.equal(new Date(legacyEffective.effective_close_date).toISOString().slice(0, 10), '2026-06-04');
     const refunded = await direct('Refund Co', { invested: 100 });
     await query(`
       INSERT INTO cash_flows

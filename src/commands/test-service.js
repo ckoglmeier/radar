@@ -347,8 +347,15 @@ try {
         ('2025-01-02', 'adjustment', 20, 'Command Direct', 'test', 'tier-b-2', 'pending')
       RETURNING id
     `);
+    const [alreadyLinkedPending] = await query(`
+      INSERT INTO cash_flows
+        (investment_id, flow_date, type, amount, company_raw, source, external_hash, reconciliation_status)
+      VALUES
+        ($1, '2025-01-03', 'distribution', 30, 'Command Direct', 'test', 'tier-b-linked-pending', 'pending')
+      RETURNING id
+    `, [direct.id]);
     const tierB = await planCommandProposal([
-      { name: 'transaction.match_to_position', input: { cashFlowIds: [cashFlows[0].id], investmentId: direct.id } },
+      { name: 'transaction.match_to_position', input: { cashFlowIds: [cashFlows[0].id, alreadyLinkedPending.id], investmentId: direct.id } },
       { name: 'transaction.classify', input: { cashFlowIds: [cashFlows[1].id], action: 'ignored', note: 'Reviewed fixture' } },
       { name: 'company.save_alias', input: { canonicalInvestmentId: direct.id, alias: 'CD Ventures' } },
     ], {
@@ -364,6 +371,7 @@ try {
     assert.equal(Number(classified[0].investment_id), Number(direct.id));
     assert.equal(classified[0].reconciliation_status, 'matched');
     assert.equal(classified[1].reconciliation_status, 'ignored');
+    assert.equal((await query(`SELECT reconciliation_status FROM cash_flows WHERE id = $1`, [alreadyLinkedPending.id]))[0].reconciliation_status, 'matched');
     assert.equal((await query(`SELECT canonical_company_name FROM company_aliases WHERE alias = 'CD Ventures'`))[0].canonical_company_name, 'Command Direct');
 
     const [parallelDirect] = await query(`

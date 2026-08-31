@@ -704,7 +704,14 @@ export async function reconcilePortfolio() {
 export async function portfolioDetail(companyName) {
   const rows = await query(`
     SELECT i.*,
+      ie.status AS effective_status,
       ie.best_unrealized_value,
+      ie.best_realized,
+      ie.best_total_value,
+      ie.best_multiple,
+      ie.lifecycle_closed,
+      ie.effective_close_date,
+      ie.effective_close_event_type,
       COALESCE(
         (SELECT json_agg(json_build_object('name', t.name, 'is_primary', it.is_primary, 'confidence', it.confidence, 'weight', it.weight))
          FROM investment_theses it JOIN theses t ON t.id = it.thesis_id WHERE it.investment_id = i.id),
@@ -737,10 +744,28 @@ export async function portfolioDetail(companyName) {
     cfByInvestment[cf.investment_id].push({ date: cf.date, amount: Number(cf.amount) });
   }
   for (const r of rows) {
+    r.recorded_status = r.status;
+    r.status = r.effective_status;
     const flows = [...(cfByInvestment[r.id] || [])];
     const unrealized = Number(r.best_unrealized_value || 0);
     if (unrealized > 0) flows.push({ date: today, amount: unrealized });
     r.irr = flows.length >= 2 ? calculateIRR(flows) : null;
+    // Valuations remain immutable source snapshots. Add a clearly-labeled
+    // derived row for the effective closed state instead of rewriting history.
+    if (r.lifecycle_closed) {
+      r.valuation_history = [
+        ...(r.valuation_history || []),
+        {
+          date: r.effective_close_date,
+          unrealized: Number(r.best_unrealized_value || 0),
+          realized: Number(r.best_realized || 0),
+          net: Number(r.best_total_value || 0),
+          multiple: r.best_multiple == null ? null : Number(r.best_multiple),
+          kind: 'position_closed',
+          event_type: r.effective_close_event_type,
+        },
+      ];
+    }
   }
 
   // Add lot info with QSBS countdown

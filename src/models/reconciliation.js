@@ -43,6 +43,24 @@ export async function markCashFlowsMatched(cashFlowIds, investmentId) {
   );
   if (!target[0]) throw new Error('Choose a valid direct position');
 
+  const candidates = await query(
+    `SELECT id, investment_id, reconciliation_status
+       FROM cash_flows
+      WHERE id = ANY($1::int[])
+      ORDER BY id`,
+    [ids],
+  );
+  if (candidates.length !== ids.length) {
+    throw new Error('One or more cash flows were not found');
+  }
+  const ineligible = candidates.find(row => (
+    row.reconciliation_status !== 'pending'
+      || (row.investment_id != null && Number(row.investment_id) !== targetId)
+  ));
+  if (ineligible) {
+    throw new Error(`Cash flow ${ineligible.id} is not pending for the selected position`);
+  }
+
   const rows = await query(
     `UPDATE cash_flows
         SET investment_id = $1,
@@ -50,11 +68,14 @@ export async function markCashFlowsMatched(cashFlowIds, investmentId) {
             reconciliation_note = NULL,
             reconciled_at = NOW()
       WHERE id = ANY($2::int[])
-        AND investment_id IS NULL
+        AND (investment_id IS NULL OR investment_id = $1)
         AND reconciliation_status = 'pending'
       RETURNING id`,
     [targetId, ids],
   );
+  if (rows.length !== ids.length) {
+    throw new Error('Not every selected cash flow could be matched');
+  }
   if (rows.length > 0) await recomputeInvestmentReturns();
   return rows;
 }
