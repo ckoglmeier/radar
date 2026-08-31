@@ -174,6 +174,9 @@ export async function directReturnRegister(options = {}) {
         id: Number(row.id),
         company_name: row.company_name,
         reasons,
+        recorded_realized_value: positionRealized,
+        dated_distributions: datedDistributions,
+        missing_distribution_amount: Math.max(0, positionRealized - datedDistributions),
       });
     }
   }

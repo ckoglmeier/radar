@@ -116,6 +116,9 @@ try {
       id: 6,
       company_name: 'Undated Proceeds',
       reasons: ['realized_value_exceeds_dated_distributions'],
+      recorded_realized_value: 50,
+      dated_distributions: 0,
+      missing_distribution_amount: 50,
     }]);
     assert.equal(unavailable.current_total_value, 780);
     assert.equal(unavailable.unrealized_terminal_value, 710);

@@ -1,6 +1,7 @@
 import { query, writeCapabilities } from '../db/index.js';
 import {
   recordDirectLifecycleEvent,
+  resolveDirectReturnTiming,
   voidDirectLifecycleEvent,
 } from '../models/direct-lifecycle-events.js';
 import { CommandError } from './errors.js';
@@ -53,6 +54,30 @@ async function inspectPosition(target) {
   const [row] = await query(`
     SELECT id, company_name, asset_class, status, updated_at
       FROM investments WHERE id = $1
+  `, [target.id]);
+  if (!row) throw new CommandError('TARGET_NOT_FOUND', `Direct position not found: ${target.id}`);
+  return row;
+}
+
+async function inspectReturnResolution(target) {
+  const [row] = await query(`
+    SELECT i.id, i.company_name, i.asset_class, i.status, i.updated_at,
+           COALESCE(i.computed_realized, latest.realized_value, i.realized_value, 0) AS realized_value,
+           COALESCE((
+             SELECT SUM(cf.amount) FROM cash_flows cf
+              WHERE cf.investment_id = i.id
+                AND cf.type = 'distribution'
+                AND cf.amount > 0
+           ), 0) AS dated_distributions
+      FROM investments i
+      LEFT JOIN LATERAL (
+        SELECT v.realized_value
+          FROM valuations v
+         WHERE v.investment_id = i.id
+         ORDER BY v.snapshot_date DESC, v.id DESC
+         LIMIT 1
+      ) latest ON TRUE
+     WHERE i.id = $1
   `, [target.id]);
   if (!row) throw new CommandError('TARGET_NOT_FOUND', `Direct position not found: ${target.id}`);
   return row;
@@ -143,6 +168,78 @@ export const directLifecycleCommandDefinitions = [
     ).then(rows => rows[0]),
     affectedResources: ({ target, result }) => [
       target,
+      ...(result?.event?.id ? [{ type: 'direct_lifecycle_event', id: result.event.id, label: target.label }] : []),
+    ],
+  }),
+  base({
+    name: 'direct.resolve_return_timing',
+    title: 'Resolve Direct return timing',
+    description: 'Record dated proceeds and their Direct lifecycle event to complete IRR evidence.',
+    risk: 'lifecycle',
+    editableInputKeys: [
+      'date', 'amount', 'eventType', 'remainingInterest', 'sourceDocumentId', 'evidenceNote',
+    ],
+    inputSchema: schema({
+      investmentId: { type: 'integer', minimum: 1 },
+      date: { type: 'string', format: 'date' },
+      amount: { type: 'number', exclusiveMinimum: 0 },
+      eventType: {
+        type: 'string',
+        enum: ['partial_liquidity', 'full_exit', 'dissolution'],
+      },
+      remainingInterest: { type: 'string', enum: ['yes', 'no'] },
+      sourceDocumentId: nullableId,
+      evidenceNote: nullableText,
+    }, ['investmentId', 'date', 'amount', 'eventType', 'remainingInterest']),
+    resolve: input => directTarget(input.investmentId),
+    inspect: inspectReturnResolution,
+    preview: ({ target, input, current }) => {
+      const unresolvedAmount = Math.max(
+        0,
+        Number(current.realized_value || 0) - Number(current.dated_distributions || 0),
+      );
+      return {
+        summary: `Record ${input.amount} of return proceeds for ${target.label} on ${input.date}.`,
+        target,
+        before: [
+          { field: 'recorded_realized_value', value: Number(current.realized_value || 0) },
+          { field: 'dated_distributions', value: Number(current.dated_distributions || 0) },
+          { field: 'unresolved_return_amount', value: unresolvedAmount },
+        ],
+        after: [
+          { field: 'dated_distribution', value: input.amount },
+          { field: 'event_date', value: input.date },
+          { field: 'event_type', value: input.eventType },
+          { field: 'remaining_interest', value: input.remainingInterest },
+        ],
+        derivedEffects: [{ field: 'irr_evidence', value: 'dated return recorded' }],
+        warnings: [
+          ...(Math.abs(unresolvedAmount - Number(input.amount)) > 0.01
+            ? [`The entered proceeds differ from the unresolved recorded amount of ${unresolvedAmount}.`]
+            : []),
+          'Confirm the actual cash-settlement date; a valuation date is not sufficient.',
+        ],
+        requiredReason: false,
+      };
+    },
+    preconditions: ({ current }) => ({
+      updated_at: current.updated_at,
+      realized_value: Number(current.realized_value || 0),
+      dated_distributions: Number(current.dated_distributions || 0),
+    }),
+    apply: ({ target, input, idempotencyKey }) => resolveDirectReturnTiming(
+      target.id,
+      { ...input, idempotencyKey },
+    ),
+    inspectAfter: ({ result }) => ({
+      cash_flow_id: Number(result.cash_flow.id),
+      lifecycle_event_id: result.event.id,
+      flow_date: dateOnly(result.cash_flow.flow_date),
+      amount: Number(result.cash_flow.amount),
+    }),
+    affectedResources: ({ target, result }) => [
+      target,
+      ...(result?.cash_flow?.id ? [{ type: 'cash_flow', id: Number(result.cash_flow.id), label: target.label }] : []),
       ...(result?.event?.id ? [{ type: 'direct_lifecycle_event', id: result.event.id, label: target.label }] : []),
     ],
   }),

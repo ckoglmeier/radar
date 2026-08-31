@@ -133,6 +133,60 @@ export async function recordDirectLifecycleEvent(investmentId, fields = {}) {
   });
 }
 
+export async function resolveDirectReturnTiming(investmentId, fields = {}) {
+  const amount = Number(fields.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new TypeError('Return amount must be greater than zero');
+  }
+  const idempotencyKey = requiredText(fields.idempotencyKey, 'Idempotency key');
+
+  return withLifecycleWrite(async () => {
+    const position = await directPosition(Number(investmentId), { lock: true });
+    const externalHash = `direct-return-resolution:${idempotencyKey}`;
+    let [cashFlow] = await query(`
+      SELECT * FROM cash_flows WHERE external_hash = $1
+    `, [externalHash]);
+    if (cashFlow) {
+      const same = Number(cashFlow.investment_id) === Number(position.id)
+        && dateOnly(cashFlow.flow_date) === isoDate(fields.date, 'Return date')
+        && cashFlow.type === 'distribution'
+        && Math.abs(Number(cashFlow.amount) - amount) <= 0.01;
+      if (!same) throw new Error('Direct return-resolution idempotency key conflicts with another cash flow');
+    } else {
+      [cashFlow] = await query(`
+        INSERT INTO cash_flows
+          (investment_id, flow_date, type, subtype, amount, description,
+           company_raw, source, external_hash, reconciliation_status, reconciled_at)
+        VALUES ($1,$2,'distribution','manual_return_resolution',$3,$4,$5,
+                'manual_return_resolution',$6,'matched',NOW())
+        RETURNING *
+      `, [
+        position.id,
+        isoDate(fields.date, 'Return date'),
+        amount,
+        `${position.company_name} — recorded return proceeds`,
+        position.company_name,
+        externalHash,
+      ]);
+    }
+
+    const lifecycle = await recordDirectLifecycleEvent(position.id, {
+      date: fields.date,
+      eventType: fields.eventType,
+      remainingInterest: fields.remainingInterest,
+      cashFlowId: cashFlow.id,
+      sourceDocumentId: fields.sourceDocumentId,
+      evidenceNote: fields.evidenceNote,
+      idempotencyKey: `${idempotencyKey}:lifecycle`,
+    });
+    return {
+      cash_flow: cashFlow,
+      event: lifecycle.event,
+      idempotent_replay: Boolean(lifecycle.idempotent_replay),
+    };
+  });
+}
+
 export async function voidDirectLifecycleEvent(eventId, fields = {}) {
   const reason = requiredText(fields.reason, 'Void reason');
   const replacementEventId = fields.replacementEventId == null

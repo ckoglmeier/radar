@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeDb, query, withTenant } from '../db/index.js';
 import { runMigrations } from '../db/migrate.js';
+import { directReturnRegister } from '../reports/portfolio.js';
 import { authorizeCommandProposal, planCommandProposal } from './service.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-direct-lifecycle-commands-'));
@@ -55,8 +56,46 @@ try {
     const voided = await authorize(voidProposal, 'inline_confirmation');
     assert.equal(voided.status, 'applied');
     assert.ok((await query(`SELECT voided_at FROM direct_position_lifecycle_events WHERE id = $1`, [eventId]))[0].voided_at);
+
+    const [unresolved] = await query(`
+      INSERT INTO investments
+        (company_name, status, invest_date, invested, realized_value,
+         unrealized_value, net_value, source, asset_class)
+      VALUES ('Inline Resolution Co','Realized','2024-04-01',250,375,0,375,'test','direct')
+      RETURNING id
+    `);
+    assert.deepEqual(
+      (await directReturnRegister({ asOf: '2026-08-31' })).coverage.irr.unresolved_positions
+        .filter(row => Number(row.id) === Number(unresolved.id))
+        .map(row => row.missing_distribution_amount),
+      [375],
+    );
+
+    const resolutionProposal = await plan('direct.resolve_return_timing', {
+      investmentId: unresolved.id,
+      date: '2026-04-14',
+      amount: 375,
+      eventType: 'full_exit',
+      remainingInterest: 'no',
+      evidenceNote: 'Confirmed settlement statement',
+    }, 'resolve-return-timing');
+    assert.equal((await authorize(resolutionProposal)).status, 'confirmation_required');
+    const resolution = await authorize(resolutionProposal, 'inline_confirmation');
+    assert.equal(resolution.status, 'applied');
+    const [resolvedFlow] = await query(`
+      SELECT type, subtype, amount, flow_date, reconciliation_status
+        FROM cash_flows WHERE investment_id = $1 AND subtype = 'manual_return_resolution'
+    `, [unresolved.id]);
+    assert.equal(resolvedFlow.type, 'distribution');
+    assert.equal(Number(resolvedFlow.amount), 375);
+    assert.equal(resolvedFlow.reconciliation_status, 'matched');
+    assert.equal(
+      (await directReturnRegister({ asOf: '2026-08-31' })).coverage.irr.unresolved_positions
+        .some(row => Number(row.id) === Number(unresolved.id)),
+      false,
+    );
   });
-  console.log('Direct lifecycle commands: proposal, confirmation, apply, receipt, and void passed');
+  console.log('Direct lifecycle commands: proposal, confirmation, inline return resolution, apply, receipt, and void passed');
 } finally {
   await closeDb();
   rmSync(scratch, { recursive: true, force: true });
