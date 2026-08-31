@@ -16,7 +16,7 @@ import {
   recordEmploymentEquityDisposition,
 } from '../models/employment-equity.js';
 import { portfolioRealizationEvents, positionLifecycleHistory } from './portfolio-realizations.js';
-import { portfolioDetail } from './portfolio.js';
+import { portfolioDetail, portfolioList } from './portfolio.js';
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-portfolio-realizations-'));
 const databaseUrl = `file:${join(scratch, 'db')}`;
@@ -165,6 +165,12 @@ try {
     assert.equal(Number(effectiveExit.best_total_value), 900);
     assert.equal(Number(effectiveExit.best_multiple), 900 / 700);
     assert.equal(new Date(effectiveExit.effective_close_date).toISOString().slice(0, 10), '2026-06-03');
+
+    const listedExit = (await portfolioList()).find(row => Number(row.id) === Number(contradictory.id));
+    assert.equal(Number(listedExit.unrealized_value), 0);
+    assert.equal(Number(listedExit.realized_value), 900);
+    assert.equal(Number(listedExit.net_value), 900);
+    assert.equal(new Date(listedExit.closed_date).toISOString().slice(0, 10), '2026-06-03');
 
     const [detailExit] = await portfolioDetail('Contradictory Exit Co');
     assert.equal(detailExit.effective_status, 'Realized');

@@ -553,8 +553,10 @@ export async function portfolioList(sortBy = 'invest_date', opts = {}) {
     SELECT
       i.id, i.company_name, i.status, i.invest_date, i.invested,
       i.best_unrealized_value AS unrealized_value,
+      i.best_realized AS realized_value,
       COALESCE(i.best_total_value, i.invested) AS net_value,
       COALESCE(i.best_multiple, 1.0) AS multiple,
+      i.effective_close_date AS closed_date,
       i.round, i.market, i.lead,
       raw.conviction_now, raw.conviction_entry, raw.qsbs_eligible,
       COALESCE(
