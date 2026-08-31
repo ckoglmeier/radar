@@ -2,6 +2,21 @@
 import { query } from '../db/index.js';
 import { calculateIRR } from '../utils/irr.js';
 import { STAGE_ORDER, BARBELL_GROUPS, stageLabel, stageToBarbellGroup } from '../utils/stage.js';
+import { positionReturnMetrics } from './portfolio.js';
+
+function normalizedThesisName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function numberOrNull(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 export async function thesisPerformance(opts = {}) {
   const { since, until } = opts;
@@ -13,6 +28,8 @@ export async function thesisPerformance(opts = {}) {
 
   const rows = await query(`
     SELECT
+      t.id AS thesis_id,
+      t.lens_thesis_id,
       t.name AS thesis,
       t.active,
       t.inactive_at,
@@ -31,7 +48,7 @@ export async function thesisPerformance(opts = {}) {
     LEFT JOIN investment_theses it ON it.thesis_id = t.id
     LEFT JOIN investments i ON i.id = it.investment_id AND i.asset_class = 'direct'
     ${whereClause}
-    GROUP BY t.id, t.name, t.active, t.inactive_at
+    GROUP BY t.id, t.lens_thesis_id, t.name, t.active, t.inactive_at
     ORDER BY total_invested DESC NULLS LAST
   `, params);
 
@@ -87,6 +104,119 @@ export async function thesisPerformance(opts = {}) {
   }
 
   return rows;
+}
+
+async function resolveThesisReference(reference) {
+  const id = Number(typeof reference === 'object' ? reference?.id : reference);
+  if (Number.isInteger(id) && id > 0) {
+    const [thesis] = await query('SELECT * FROM theses WHERE id = $1', [id]);
+    return thesis ? { state: 'resolved', thesis } : { state: 'missing', matches: [] };
+  }
+
+  const slug = typeof reference === 'object' ? String(reference?.slug || '').trim() : '';
+  if (slug) {
+    const [thesis] = await query('SELECT * FROM theses WHERE lens_thesis_id = $1', [slug]);
+    return thesis ? { state: 'resolved', thesis } : { state: 'missing', matches: [] };
+  }
+
+  const name = typeof reference === 'object' ? reference?.name : reference;
+  const expected = normalizedThesisName(name);
+  if (!expected) return { state: 'missing', matches: [] };
+  const theses = await query('SELECT * FROM theses ORDER BY id');
+  const matches = theses.filter(thesis => normalizedThesisName(thesis.name) === expected);
+  if (matches.length === 1) return { state: 'resolved', thesis: matches[0] };
+  return { state: matches.length > 1 ? 'ambiguous' : 'missing', matches };
+}
+
+/**
+ * Canonical thesis read model shared by product surfaces and analytical agents.
+ * Membership is always read from investment_theses by stable thesis ID.
+ */
+export async function thesisDetail(reference, options = {}) {
+  const resolution = await resolveThesisReference(reference);
+  if (resolution.state === 'missing') return null;
+  if (resolution.state === 'ambiguous') {
+    return {
+      schema_version: 1,
+      kind: 'ambiguous_thesis',
+      matches: resolution.matches.map(thesis => ({
+        id: Number(thesis.id), slug: thesis.lens_thesis_id || null, name: thesis.name,
+        active: Boolean(thesis.active),
+      })),
+    };
+  }
+
+  const thesis = resolution.thesis;
+  const [report, performanceRows, assignments] = await Promise.all([
+    positionReturnMetrics({
+      asOf: options.asOf,
+      filters: { assetType: 'direct', thesisId: Number(thesis.id) },
+      limit: options.limit,
+    }),
+    thesisPerformance({ since: options.since, until: options.until }),
+    query(`
+      SELECT investment_id, is_primary, weight, confidence, tagged_by
+        FROM investment_theses
+       WHERE thesis_id = $1
+       ORDER BY investment_id
+    `, [thesis.id]),
+  ]);
+  const performance = performanceRows.find(row => Number(row.thesis_id) === Number(thesis.id)) || null;
+  const assignmentByInvestment = new Map(assignments.map(row => [Number(row.investment_id), row]));
+  const positions = report.positions.map(position => {
+    const assignment = assignmentByInvestment.get(Number(position.position_id));
+    const weight = numberOrNull(assignment?.weight) ?? 100;
+    return {
+      ...position,
+      attribution: {
+        weight_percent: weight,
+        is_primary: Boolean(assignment?.is_primary),
+        confidence: assignment?.confidence || null,
+        tagged_by: assignment?.tagged_by || null,
+      },
+      attributed_invested_capital: position.invested_capital == null
+        ? null : Number(position.invested_capital) * weight / 100,
+      attributed_net_value: position.current_net_value == null
+        ? null : Number(position.current_net_value) * weight / 100,
+    };
+  });
+
+  return {
+    schema_version: 1,
+    kind: 'thesis_detail',
+    as_of: report.as_of,
+    sort: report.sort,
+    thesis: {
+      id: Number(thesis.id),
+      slug: thesis.lens_thesis_id || null,
+      name: thesis.name,
+      active: Boolean(thesis.active),
+      inactive_at: thesis.inactive_at ? String(thesis.inactive_at).slice(0, 10) : null,
+      inactive_reason: thesis.inactive_reason || null,
+      belief: thesis.belief || null,
+      proves_true: thesis.proves_true || null,
+      proves_false: thesis.proves_false || null,
+      open_question: thesis.open_question || null,
+      conviction_now: numberOrNull(thesis.conviction_now),
+      conviction_entry: numberOrNull(thesis.conviction_entry),
+      qualifications: thesis.qualifications || [],
+      exclusions: thesis.exclusions || [],
+      conviction_signal: thesis.conviction_signal || null,
+    },
+    summary: performance ? {
+      position_count: Number(performance.deal_count || 0),
+      invested_basis: numberOrNull(performance.total_invested),
+      net_value: numberOrNull(performance.total_net_value),
+      tvpi: numberOrNull(performance.tvpi),
+      irr: numberOrNull(performance.irr),
+      live_count: Number(performance.live || 0),
+      realized_count: Number(performance.realized || 0),
+    } : {
+      position_count: 0, invested_basis: null, net_value: null, tvpi: null,
+      irr: null, live_count: 0, realized_count: 0,
+    },
+    positions,
+  };
 }
 
 export async function thesisList() {

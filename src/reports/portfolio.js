@@ -262,6 +262,15 @@ export async function positionReturnMetrics(options = {}) {
       WHERE it_filter.investment_id = i.id AND LOWER(t_filter.name) = LOWER($${params.length})
     )`);
   }
+  if (filters.thesisId != null) {
+    const thesisId = Number(filters.thesisId);
+    if (!Number.isInteger(thesisId) || thesisId <= 0) throw new TypeError('thesisId must be a positive integer');
+    params.push(thesisId);
+    conditions.push(`EXISTS (
+      SELECT 1 FROM investment_theses it_filter
+      WHERE it_filter.investment_id = i.id AND it_filter.thesis_id = $${params.length}
+    )`);
+  }
   const rows = await query(`
     SELECT i.id, i.company_name, i.asset_class, i.status, i.invest_date,
            i.stage_bucket, i.market, i.carry, i.invested, i.computed_net_invested,
