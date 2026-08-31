@@ -43,7 +43,20 @@ function base(definition) {
 }
 
 function preview(summary, target, before, after, warnings = []) {
-  return { summary, target, before: [before], after: [after], derivedEffects: [], warnings, requiredReason: false };
+  const fields = snapshot => {
+    if (snapshot == null) return [];
+    if (Array.isArray(snapshot)) return snapshot;
+    return Object.entries(snapshot).map(([field, value]) => ({ field, value }));
+  };
+  return {
+    summary,
+    target,
+    before: fields(before),
+    after: fields(after),
+    derivedEffects: [],
+    warnings,
+    requiredReason: false,
+  };
 }
 
 async function entityTarget(entityId) {

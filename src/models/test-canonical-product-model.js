@@ -335,6 +335,11 @@ try {
       originSurface: 'manual_ui', actorType: 'user', actorId: 'test_reviewer',
       intentText: 'Review deterministic identity mappings',
     });
+    for (const proposalPreview of plannedMappings.proposal.previews) {
+      assert.ok(proposalPreview.before.every(item => typeof item.field === 'string'));
+      assert.ok(proposalPreview.after.every(item => typeof item.field === 'string'));
+      assert.ok(proposalPreview.after.some(item => item.field === 'routeClassification'));
+    }
     const actorCapabilities = ['portfolio:apply:metadata'];
     const appliedMappings = await authorizeCommandProposal(
       plannedMappings.proposal.id,
