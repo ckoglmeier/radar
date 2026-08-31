@@ -544,6 +544,7 @@ export async function portfolioList(sortBy = 'invest_date', opts = {}) {
   // Use investments_effective view for best-available derived values
   const sortCol = sort === 'multiple' ? 'best_multiple'
     : sort === 'net_value' ? 'best_total_value'
+    : sort === 'invested' ? 'best_invested_basis'
     : sort;
 
   const conditions = [];
@@ -554,10 +555,12 @@ export async function portfolioList(sortBy = 'invest_date', opts = {}) {
 
   const rows = await query(`
     SELECT
-      i.id, i.company_name, i.status, i.invest_date, i.invested,
+      i.id, i.company_name, i.status, i.invest_date,
+      i.best_invested_basis AS invested,
+      i.invested AS recorded_invested,
       i.best_unrealized_value AS unrealized_value,
       i.best_realized AS realized_value,
-      COALESCE(i.best_total_value, i.invested) AS net_value,
+      COALESCE(i.best_total_value, i.best_invested_basis) AS net_value,
       COALESCE(i.best_multiple, 1.0) AS multiple,
       i.effective_close_date AS closed_date,
       i.round, i.market, i.lead,
@@ -717,6 +720,7 @@ export async function portfolioDetail(companyName) {
       ie.lifecycle_closed,
       ie.effective_close_date,
       ie.effective_close_event_type,
+      ie.best_invested_basis,
       COALESCE(
         (SELECT json_agg(json_build_object('name', t.name, 'is_primary', it.is_primary, 'confidence', it.confidence, 'weight', it.weight))
          FROM investment_theses it JOIN theses t ON t.id = it.thesis_id WHERE it.investment_id = i.id),
@@ -749,6 +753,8 @@ export async function portfolioDetail(companyName) {
     cfByInvestment[cf.investment_id].push({ date: cf.date, amount: Number(cf.amount) });
   }
   for (const r of rows) {
+    r.recorded_invested = r.invested;
+    r.invested = r.best_invested_basis;
     r.recorded_status = r.status;
     r.status = r.effective_status;
     const flows = [...(cfByInvestment[r.id] || [])];

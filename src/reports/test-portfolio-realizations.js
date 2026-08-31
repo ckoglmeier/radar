@@ -204,6 +204,25 @@ try {
          external_hash, reconciliation_status, reconciled_at)
       VALUES ($1,'2026-06-05','refund',50,'Returned allocation','test','refund:1','matched',NOW())
     `, [refunded.id]);
+    await query(`
+      INSERT INTO cash_flows
+        (investment_id, flow_date, type, amount, description, source,
+         external_hash, reconciliation_status, reconciled_at)
+      VALUES ($1,'2026-01-01','investment',-100,'Initial check','test','refund:investment','matched',NOW())
+    `, [refunded.id]);
+    const [refundedEffective] = await query(`
+      SELECT best_invested_basis, cf_total_invested, cf_total_refunded
+      FROM investments_effective WHERE id = $1
+    `, [refunded.id]);
+    assert.equal(Number(refundedEffective.best_invested_basis), 50);
+    assert.equal(Number(refundedEffective.cf_total_invested), 100);
+    assert.equal(Number(refundedEffective.cf_total_refunded), 50);
+    const refundedList = (await portfolioList()).find(row => Number(row.id) === Number(refunded.id));
+    assert.equal(Number(refundedList.invested), 50, 'list reports net basis after refunds');
+    assert.equal(Number(refundedList.recorded_invested), 100, 'list preserves the recorded source fact');
+    const [refundedDetail] = await portfolioDetail('Refund Co');
+    assert.equal(Number(refundedDetail.invested), 50, 'detail reports net basis after refunds');
+    assert.equal(Number(refundedDetail.recorded_invested), 100, 'detail preserves the recorded source fact');
 
     const activeFund = await createFund({
       legalName: 'Active Fund I', commitmentDate: '2025-01-01', fundStatus: 'active',
