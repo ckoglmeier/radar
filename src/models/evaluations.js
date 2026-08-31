@@ -162,15 +162,18 @@ export function parseDealLogContent(content, filename, opts = {}) {
   // "## Total: 25/45"
   // "## Total: 37/50"  (inside code block)
   let total_score = null;
-  const totalPatterns = [
-    /#+\s*Total:\s*\*{0,2}(\d+(?:\.\d+)?)\s*\/\s*\d+/m,
-    /Total:\s*\*{0,2}(\d+(?:\.\d+)?)\s*\/\s*\d+/m,
-  ];
-  for (const pat of totalPatterns) {
-    const m = content.match(pat);
-    if (m) {
-      total_score = parseFloat(m[1]);
-      break;
+  const declaredTotals = [...content.matchAll(
+    /^[ \t]*(?:#{1,6}[ \t]*)?\*{0,2}Total:\*{0,2}[ \t]*\*{0,2}(\d+(?:\.\d+)?)[ \t]*\/[ \t]*(\d+(?:\.\d+)?)/gim,
+  )].map(match => ({ score: Number(match[1]), denominator: Number(match[2]) }));
+  const preferredTotal = declaredTotals.filter(item => item.denominator === 50).at(-1)
+    || declaredTotals.at(-1)
+    || null;
+  if (preferredTotal && Number.isFinite(preferredTotal.score)) {
+    total_score = preferredTotal.score;
+    // Historical rubrics sometimes declared a wider scale. Preserve ordinary
+    // legacy numerators, but never persist an impossible >50 entry grade.
+    if (total_score > 50 && preferredTotal.denominator > 0) {
+      total_score = (total_score / preferredTotal.denominator) * 50;
     }
   }
 

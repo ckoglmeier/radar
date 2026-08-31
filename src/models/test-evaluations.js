@@ -236,6 +236,21 @@ test('Total from "## Total: 25/45" (different denominator)', () => {
   approx(result.total_score, 25);
 });
 
+test('Final /50 Total wins over an earlier wider-scale total', () => {
+  const content = `# Deal Log: Test
+## Total: 85/100
+Intermediate legacy score.
+## Total: 43/50`;
+  const result = parseMarkdown('test.md', content);
+  approx(result.total_score, 43);
+});
+
+test('A lone wider-scale score above 50 is normalized to the product scale', () => {
+  const content = '# Deal Log: Test\n## Total: 85/100';
+  const result = parseMarkdown('test.md', content);
+  approx(result.total_score, 42.5);
+});
+
 test('Total from single hash heading "# Total: 32/50"', () => {
   const content = '# Deal Log: Test\nSome content\n# Total: 32/50';
   const result = parseMarkdown('test.md', content);
