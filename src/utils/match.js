@@ -19,14 +19,13 @@ import { normalize, tokenize, STOPWORDS } from './company-names.js';
  */
 export async function loadInvestmentUniverse() {
   return query(`
-    SELECT id, company_name
-      FROM investments
+    SELECT ie.id, ie.company_name
+      FROM investments_effective ie
     UNION ALL
-    SELECT i.id, a.alias AS company_name
+    SELECT ie.id, a.alias AS company_name
       FROM company_aliases a
-      JOIN investments i
-        ON LOWER(BTRIM(i.company_name)) = LOWER(BTRIM(a.canonical_company_name))
-     WHERE i.asset_class = 'direct'
+      JOIN investments_effective ie
+        ON LOWER(BTRIM(ie.company_name)) = LOWER(BTRIM(a.canonical_company_name))
      ORDER BY id
   `);
 }
@@ -38,13 +37,15 @@ export async function loadInvestmentUniverse() {
 // batch ingesters to amortize the load across many matches.
 export async function matchCompanyToInvestment(companyName, { universe } = {}) {
   if (!companyName) return { investment_id: null, confidence: 'unmatched' };
+  if (!Array.isArray(universe)) {
+    throw new TypeError('matchCompanyToInvestment requires a preloaded Direct investment universe');
+  }
 
   const norm = normalize(companyName);
   if (!norm) return { investment_id: null, confidence: 'unmatched' };
 
   // Try exact normalized match first
-  const all = universe || await query(`SELECT id, company_name FROM investments`);
-  const exact = all.filter(r => normalize(r.company_name) === norm);
+  const exact = universe.filter(r => normalize(r.company_name) === norm);
   if (exact.length === 1) return { investment_id: exact[0].id, confidence: 'exact' };
   if (exact.length > 1) return { investment_id: null, confidence: 'ambiguous' };
 
@@ -54,7 +55,7 @@ export async function matchCompanyToInvestment(companyName, { universe } = {}) {
   const tokens = tokenize(norm);
   if (tokens.length === 0) return { investment_id: null, confidence: 'unmatched' };
 
-  const candidates = all
+  const candidates = universe
     .map(r => ({ id: r.id, name: r.company_name, normName: normalize(r.company_name) }))
     .filter(r => {
       const rTokens = r.normName.split(/\s+/).filter(t => !STOPWORDS.has(t));

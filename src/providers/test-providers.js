@@ -286,12 +286,14 @@ async function run() {
     eq(fake.calls[0].options.env[API_KEY_ENV], 'sk-ant-real');
   });
 
-  await testAsync('runSession forces headless permission mode', async () => {
+  await testAsync('runSession forces headless permission mode and isolates ambient configuration', async () => {
     const fake = makeFakeQuery();
     const p = new AgentSdkProvider({ authMode: 'api_key', parentEnv: {}, query: fake });
     await p.runSession({ prompt: 'x' });
     eq(fake.calls[0].options.permissionMode, 'bypassPermissions');
     eq(fake.calls[0].options.allowDangerouslySkipPermissions, true);
+    eq(JSON.stringify(fake.calls[0].options.settingSources), '[]');
+    eq(fake.calls[0].options.strictMcpConfig, true);
   });
 
   await testAsync('per-call model overrides the default (tiering)', async () => {

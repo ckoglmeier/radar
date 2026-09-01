@@ -14,6 +14,8 @@
 //   - systemPrompt / append: session framing
 //   - permissionMode 'bypassPermissions' (+ allowDangerouslySkipPermissions):
 //                 headless, no interactive permission prompts
+//   - settingSources: [] + strictMcpConfig: true: Radar sessions never inherit
+//                 interactive Claude settings, hooks, plugins, or ambient MCP
 //   - abortController: cancellation
 // The terminal `{ type: 'result' }` message carries `result` (final text),
 // `usage`, `modelUsage`, `total_cost_usd`, `num_turns`, `session_id`.
@@ -164,6 +166,8 @@ export class AgentSdkProvider {
       env,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
+      settingSources: [],
+      strictMcpConfig: true,
     };
 
     const model = req.model || this.defaultModel;

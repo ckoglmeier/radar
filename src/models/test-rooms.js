@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { query } from '../db/index.js';
+import { loadInvestmentUniverse } from '../utils/match.js';
 import { upsertInvestment } from './investments.js';
 import { upsertInvite } from './pipeline.js';
 import {
@@ -109,7 +110,7 @@ async function run() {
         deal_slug: dealSlug,
         company_name: company,
         status: 'invite',
-      });
+      }, { universe: await loadInvestmentUniverse() });
 
       const room = await createRoom({
         name: 'Radar Room',

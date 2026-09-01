@@ -4,7 +4,8 @@
 // Uses the `universe` option to inject a mock investment list.
 // Run: node src/utils/test-match.js
 
-import { matchCompanyToInvestment } from './match.js';
+import { query } from '../db/index.js';
+import { loadInvestmentUniverse, matchCompanyToInvestment } from './match.js';
 
 let passed = 0;
 let failed = 0;
@@ -188,6 +189,42 @@ async function runTests() {
   test('no match — empty universe', async () => {
     eq(await matchCompanyToInvestment('Nexar', { universe: [] }),
       { investment_id: null, confidence: 'unmatched' });
+  });
+
+  test('missing universe fails closed instead of querying raw investments', async () => {
+    let error = null;
+    try {
+      await matchCompanyToInvestment('Nexar');
+    } catch (caught) {
+      error = caught;
+    }
+    eq(error?.message, 'matchCompanyToInvestment requires a preloaded Direct investment universe');
+  });
+
+  test('loaded universe contains only effective Direct positions and their aliases', async () => {
+    const directName = 'Synthetic Match Boundary Direct';
+    const fundName = 'Synthetic Match Boundary Fund';
+    const aliasName = 'Synthetic Match Boundary Alias';
+    await query(`
+      INSERT INTO investments
+        (company_name, status, invest_date, invested, source, asset_class)
+      VALUES
+        ($1, 'Live', '2026-01-01', 100, 'test-match', 'direct'),
+        ($2, 'Live', '2026-01-01', 100, 'test-match', 'fund')
+    `, [directName, fundName]);
+    await query(`
+      INSERT INTO company_aliases
+        (alias, alias_normalized, canonical_company_name, canonical_normalized,
+         provenance_source, confirmed_by)
+      VALUES ($1, 'synthetic match boundary alias', $2,
+              'synthetic match boundary direct', 'test-match', 'test')
+      ON CONFLICT (alias_normalized) DO NOTHING
+    `, [aliasName, directName]);
+
+    const loaded = await loadInvestmentUniverse();
+    eq(loaded.some(row => row.company_name === directName), true);
+    eq(loaded.some(row => row.company_name === aliasName), true);
+    eq(loaded.some(row => row.company_name === fundName), false);
   });
 
   test('no match — short form does not substring-match', async () => {
