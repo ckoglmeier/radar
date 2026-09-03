@@ -64,13 +64,44 @@ try {
     const investInput = decisionInput(Number(invites[1].id), Number(evaluations[1].id), 'Invest Co', 'invest', {
       chosenSize: 10000, thesisId: Number(thesis.id),
     });
+    await query('UPDATE pipeline_invites SET min_investment_usd = 10000 WHERE id = $1', [invites[1].id]);
+    await assert.rejects(
+      () => run('pipeline.seal_decision', { ...investInput, chosenSize: 5000 }, 'seal-below-minimum', 'inline_confirmation'),
+      /below this deal's.*minimum/,
+    );
+    assert.equal((await query('SELECT investment_id FROM pipeline_invites WHERE id = $1', [invites[1].id]))[0].investment_id, null);
     assert.equal((await run('pipeline.seal_decision', investInput, 'seal-invest', 'inline_confirmation')).status, 'applied');
-    const committed = (await query('SELECT status, investment_id FROM pipeline_invites WHERE id = $1', [invites[1].id]))[0];
+    let committed = (await query('SELECT status, investment_id FROM pipeline_invites WHERE id = $1', [invites[1].id]))[0];
     assert.equal(committed.status, 'committed');
+    const firstPlaceholderId = Number(committed.investment_id);
+    await query(`
+      INSERT INTO cash_flows (investment_id, flow_date, type, amount, source)
+      VALUES ($1, '2026-08-24', 'investment', -10000, 'test')
+    `, [firstPlaceholderId]);
+    await assert.rejects(
+      () => run('pipeline.reopen_decision', { inviteId: Number(invites[1].id) }, 'reopen-with-activity', 'inline_confirmation'),
+      /activity or economic records/,
+    );
+    assert.equal((await query('SELECT id FROM investments WHERE id = $1', [firstPlaceholderId])).length, 1);
+    await query('DELETE FROM cash_flows WHERE investment_id = $1', [firstPlaceholderId]);
+    assert.equal((await run('pipeline.reopen_decision', {
+      inviteId: Number(invites[1].id),
+    }, 'reopen-commitment', 'inline_confirmation')).status, 'applied');
+    assert.equal((await query('SELECT status, investment_id FROM pipeline_invites WHERE id = $1', [invites[1].id]))[0].status, 'invite');
+    assert.equal((await query('SELECT id FROM investments WHERE id = $1', [firstPlaceholderId])).length, 0);
+    assert.equal((await query('SELECT sealed FROM decision_records WHERE pipeline_invite_id = $1 ORDER BY id DESC LIMIT 1', [invites[1].id]))[0].sealed, false);
+
+    assert.equal((await run('pipeline.seal_decision', investInput, 'reseal-invest', 'inline_confirmation')).status, 'applied');
+    committed = (await query('SELECT status, investment_id FROM pipeline_invites WHERE id = $1', [invites[1].id]))[0];
     assert.equal((await run('pipeline.mark_executed', {
       inviteId: Number(invites[1].id), executionDate: '2026-08-24', actualAmount: 9500,
     }, 'execute-investment')).status, 'applied');
     assert.equal((await query('SELECT status, invested FROM investments WHERE id = $1', [committed.investment_id]))[0].status, 'Live');
+    await assert.rejects(
+      () => run('pipeline.reopen_decision', { inviteId: Number(invites[1].id) }, 'reopen-executed', 'inline_confirmation'),
+      /unexecuted committed decision|Executed investments/,
+    );
+    assert.equal((await query('SELECT status FROM investments WHERE id = $1', [committed.investment_id]))[0].status, 'Live');
 
     assert.equal((await run('pipeline.clear', {
       inviteId: Number(invites[2].id),

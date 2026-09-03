@@ -2,7 +2,7 @@ import { query, writeCapabilities } from '../db/index.js';
 import {
   clearPipelineInvite,
   markPipelineInvestmentExecuted,
-  reopenPassedPipelineDecision,
+  reopenPipelineDecision,
   sealPipelineDecision,
 } from '../models/pipeline-actions.js';
 import { CommandError } from './errors.js';
@@ -117,18 +117,24 @@ export const pipelineCommandDefinitions = [
   }),
   definition({
     name: 'pipeline.reopen_decision',
-    title: 'Reopen passed pipeline decision',
-    description: 'Reopen a sealed pass for sizing while retaining the original decision record.',
+    title: 'Reconsider pipeline decision',
+    description: 'Reconsider a pass or an unexecuted commitment while retaining the original decision record.',
     editableInputKeys: [],
     inputSchema: schema({ inviteId: { type: 'integer', minimum: 1 } }, ['inviteId']),
     preview: ({ target, current }) => ({
-      summary: `Reopen the passed decision for ${target.label}.`, target,
+      summary: `Reconsider the decision for ${target.label}.`, target,
       before: [{ field: 'status', value: current.status }, { field: 'sealed', value: current.sealed }],
       after: [{ field: 'status', value: 'invite' }, { field: 'sealed', value: false }],
-      derivedEffects: [], warnings: [], requiredReason: true,
+      derivedEffects: current.decision === 'invest'
+        ? ['Removes the generated Closing placeholder only if it has no activity or economic records.']
+        : [],
+      warnings: current.decision === 'invest'
+        ? ['Executed investments cannot be reconsidered from the pipeline.']
+        : [],
+      requiredReason: true,
     }),
     preconditions: ({ current }) => current,
-    apply: ({ target }) => reopenPassedPipelineDecision(target.id),
+    apply: ({ target }) => reopenPipelineDecision(target.id),
   }),
   definition({
     name: 'pipeline.mark_executed',

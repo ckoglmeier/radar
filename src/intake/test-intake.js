@@ -12,7 +12,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { query } from '../db/index.js';
 import { upsertInvestment } from '../models/investments.js';
-import { classifyArtifact, intakePreview, intakeCommit, withTx } from './index.js';
+import { classifyArtifact, intakePreview, intakeCommit, intakeCommitBatch, withTx } from './index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -508,6 +508,29 @@ async function run() {
       eq(row.company_name, companyName);
       eq(row.round, 'Series A');
       eq(Number(row.allocation_usd), 250000);
+      eq(Number(row.valuation_usd), 48000000);
+    });
+
+    await test('batch intake promotes parsed deal terms into the pipeline record', async () => {
+      const companyName = `ZZINTAKE Batch Terms ${stamp}`;
+      const preview = await intakePreview({
+        content: buildAngelListPageHtml(companyName), filename: 'batch-deal.html', mime: 'text/html',
+      });
+      const result = await intakeCommitBatch({
+        preview_ids: [preview.preview_id],
+        destination: { kind: 'new_pipeline_invite', company_name: companyName },
+      });
+      const [row] = await query(`
+        SELECT company_name, round, market, allocation_usd, min_investment_usd,
+               carry_pct, valuation_text, valuation_usd
+          FROM pipeline_invites WHERE id = $1
+      `, [result.created.id]);
+      eq(row.company_name, companyName);
+      eq(row.round, 'Series A');
+      eq(row.market, 'Robotics');
+      eq(Number(row.allocation_usd), 250000);
+      eq(Number(row.min_investment_usd), 5000);
+      eq(Number(row.carry_pct), 20);
       eq(Number(row.valuation_usd), 48000000);
     });
 

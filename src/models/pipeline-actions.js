@@ -26,6 +26,20 @@ async function finalizePipelineState(inviteId, investmentId, decision) {
   }
 }
 
+async function pipelineInvite(inviteId) {
+  const [invite] = await query(`
+    SELECT id, company_name, status, investment_id, min_investment_usd
+      FROM pipeline_invites WHERE id = $1
+  `, [inviteId]);
+  if (!invite) throw new Error('Pipeline deal not found');
+  return invite;
+}
+
+function withDealMinimum(sizingBasis, minimum) {
+  if (!(minimum > 0)) return sizingBasis;
+  return { ...(sizingBasis || {}), deal_minimum_usd: minimum };
+}
+
 export async function sealPipelineDecision(fields) {
   const {
     inviteId, dealEvaluationId, companyName, decision,
@@ -34,6 +48,14 @@ export async function sealPipelineDecision(fields) {
   if (!['invest', 'pass'].includes(decision)) throw new Error('Decision must be invest or pass');
   if (decision === 'invest' && (!(chosenSize > 0) || !thesisId)) {
     throw new Error('An invest decision requires a positive chosen size and thesis');
+  }
+  const invite = await pipelineInvite(inviteId);
+  const dealMinimum = Number(invite.min_investment_usd || 0);
+  if (decision === 'invest' && dealMinimum > 0 && Number(chosenSize) < dealMinimum) {
+    throw new Error(
+      `Chosen size ($${Number(chosenSize).toLocaleString('en-US')}) is below this deal's `
+      + `$${dealMinimum.toLocaleString('en-US')} minimum. Pass or enter at least the minimum.`,
+    );
   }
   const existing = await sealedDecision(inviteId, dealEvaluationId);
   if (existing) {
@@ -86,7 +108,9 @@ export async function sealPipelineDecision(fields) {
     confidence: fields.confidence,
     chosen_size: chosenSize,
   });
-  const sealed = await sealDecision(draft.id, { sizing_basis: fields.sizingBasis });
+  const sealed = await sealDecision(draft.id, {
+    sizing_basis: withDealMinimum(fields.sizingBasis, dealMinimum),
+  });
   await finalizePipelineState(inviteId, investmentId, decision);
   return { alreadySealed: false, decisionRecord: sealed, investmentId };
 }
@@ -109,38 +133,93 @@ export async function clearPipelineInvite(inviteId) {
   };
 }
 
-export async function reopenPassedPipelineDecision(inviteId) {
-  const rows = await query(`
-    WITH current_invite AS (
-      SELECT id, status FROM pipeline_invites WHERE id = $1
-    ), current_decision AS (
-      SELECT id, decision FROM decision_records
-       WHERE pipeline_invite_id = $1 AND sealed = TRUE
-       ORDER BY sealed_at DESC NULLS LAST, id DESC LIMIT 1
-    ), reopened AS (
-      UPDATE decision_records AS decision
-         SET sealed = FALSE, updated_at = NOW()
-        FROM current_decision
-       WHERE decision.id = current_decision.id AND current_decision.decision = 'pass'
-      RETURNING decision.id
-    ), updated_invite AS (
-      UPDATE pipeline_invites AS invite
-         SET status = 'invite', updated_at = NOW()
-        FROM current_invite
-       WHERE invite.id = current_invite.id AND EXISTS (SELECT 1 FROM reopened)
-      RETURNING invite.id, current_invite.status AS old_status
-    ), logged AS (
-      INSERT INTO pipeline_events (invite_id, event_type, old_value, new_value, notes)
-      SELECT id, 'status_change', old_status, 'invite',
-             'Reopened prior pass for deal sizing; original decision record and sealed timestamp retained'
-        FROM updated_invite RETURNING id
-    )
-    SELECT updated_invite.id AS invite_id, reopened.id AS decision_record_id
-      FROM updated_invite CROSS JOIN reopened
-  `, [inviteId]);
-  if (rows.length !== 1) throw new Error('Only a sealed pass decision can be reopened for sizing');
-  return rows[0];
+async function assertDisposableClosingInvestment(investmentId) {
+  const [investment] = await query(`
+    SELECT id, status, source FROM investments WHERE id = $1
+  `, [investmentId]);
+  if (!investment || investment.status !== 'Closing' || investment.source !== 'pipeline_decision') {
+    throw new Error('Executed investments cannot be reconsidered from the pipeline');
+  }
+
+  const references = await query(`
+    SELECT table_name, column_name
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND (column_name = 'investment_id' OR column_name LIKE '%\\_investment\\_id' ESCAPE '\\')
+     ORDER BY table_name, column_name
+  `);
+  const disposableLinks = new Set([
+    'decision_records.investment_id',
+    'pipeline_invites.investment_id',
+    'investment_theses.investment_id',
+    'investment_source_identities.investment_id',
+  ]);
+  for (const ref of references) {
+    if (disposableLinks.has(`${ref.table_name}.${ref.column_name}`)) continue;
+    const table = `"${String(ref.table_name).replaceAll('"', '""')}"`;
+    const column = `"${String(ref.column_name).replaceAll('"', '""')}"`;
+    const [usage] = await query(`SELECT COUNT(*)::int AS count FROM ${table} WHERE ${column} = $1`, [investmentId]);
+    if (Number(usage?.count || 0) > 0) {
+      throw new Error('This investment has activity or economic records and cannot be reconsidered from the pipeline');
+    }
+  }
 }
+
+export async function reopenPipelineDecision(inviteId) {
+  const invite = await pipelineInvite(inviteId);
+  const [decision] = await query(`
+    SELECT * FROM decision_records
+     WHERE pipeline_invite_id = $1 AND sealed = TRUE
+     ORDER BY sealed_at DESC NULLS LAST, id DESC LIMIT 1
+  `, [inviteId]);
+  if (!decision) throw new Error('No sealed pipeline decision is available to reconsider');
+
+  let removedInvestmentId = null;
+  if (decision.decision === 'pass') {
+    if (invite.status !== 'passed' || invite.investment_id) {
+      throw new Error('Only a current pass decision can be reconsidered');
+    }
+  } else if (decision.decision === 'invest') {
+    if (invite.status !== 'committed' || !invite.investment_id) {
+      throw new Error('Only an unexecuted committed decision can be reconsidered');
+    }
+    if (Number(decision.investment_id) !== Number(invite.investment_id)) {
+      throw new Error('The committed position does not match the recorded decision');
+    }
+    await assertDisposableClosingInvestment(invite.investment_id);
+    removedInvestmentId = Number(invite.investment_id);
+  } else {
+    throw new Error('Unsupported pipeline decision');
+  }
+
+  await query('UPDATE decision_records SET sealed = FALSE, updated_at = NOW() WHERE id = $1', [decision.id]);
+  await query(`
+    UPDATE pipeline_invites
+       SET status = 'invite', investment_id = NULL, updated_at = NOW()
+     WHERE id = $1
+  `, [inviteId]);
+  if (removedInvestmentId) {
+    await query('DELETE FROM investments WHERE id = $1', [removedInvestmentId]);
+  }
+  await query(`
+    INSERT INTO pipeline_events (invite_id, event_type, old_value, new_value, notes)
+    VALUES ($1, 'status_change', $2, 'invite', $3)
+  `, [
+    inviteId,
+    invite.status,
+    removedInvestmentId
+      ? 'Reconsidered unexecuted commitment; removed the generated Closing placeholder and retained the prior decision record'
+      : 'Reconsidered prior pass; retained the original decision record and sealed timestamp',
+  ]);
+  return {
+    invite_id: Number(inviteId),
+    decision_record_id: Number(decision.id),
+    previous_decision: decision.decision,
+    removed_investment_id: removedInvestmentId,
+  };
+}
+
+export const reopenPassedPipelineDecision = reopenPipelineDecision;
 
 export async function markPipelineInvestmentExecuted({ inviteId, executionDate, actualAmount }) {
   const rows = await query(`

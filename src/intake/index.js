@@ -257,11 +257,13 @@ export async function intakePreview({ content, filename, mime }) {
     fields = {
       company_name: p.company_name ?? null,
       lead: p.lead ?? null,
+      co_investors: p.co_investors ?? null,
       round: p.round ?? null,
       market: p.market ?? null,
       allocation_usd: p.allocation_usd ?? null,
       min_investment_usd: p.min_investment_usd ?? null,
       carry_pct: p.carry_pct ?? null,
+      valuation_text: p.valuation_text ?? null,
       valuation_usd: p.valuation_usd ?? null,
       email_received_at: p.email_received_at ?? null,
     };
@@ -645,7 +647,7 @@ export async function intakeCommitBatch({ preview_ids, destination }) {
   let existingInvite = null;
   if (destination.kind === 'existing_pipeline_invite') {
     [existingInvite] = await query(
-      'SELECT id, company_name FROM pipeline_invites WHERE id = $1',
+      'SELECT * FROM pipeline_invites WHERE id = $1',
       [destination.invite_id],
     );
     if (!existingInvite) throw new Error(`intakeCommitBatch: pipeline invite not found: ${destination.invite_id}`);
@@ -663,12 +665,45 @@ export async function intakeCommitBatch({ preview_ids, destination }) {
   }
 
   return withAtomicWrite(async () => {
+    const promotableFields = [
+      'lead', 'co_investors', 'market', 'round', 'allocation_usd',
+      'min_investment_usd', 'carry_pct', 'valuation_text', 'valuation_usd',
+      'email_received_at',
+    ];
+    const extracted = { company_name: destination.company_name || existingInvite?.company_name };
+    for (const field of promotableFields) {
+      const values = pendingRows
+        .filter(row => row.preview?.type === 'pipeline_invite')
+        .map(row => row.preview?.fields?.[field])
+        .filter(value => value !== null && value !== undefined && value !== '');
+      const unique = [...new Map(values.map(value => [String(value), value])).values()];
+      if (unique.length === 1) extracted[field] = unique[0];
+    }
+
     const created = existingInvite
       ? { table: 'pipeline_invites', id: existingInvite.id, is_new: false }
-      : await insertPipelineInvite(null, {
+      : await insertPipelineInvite(extracted, {
         company_name: destination.company_name,
         intake_key: pendingRows[0].id,
       });
+
+    if (existingInvite) {
+      const assignments = [];
+      const params = [];
+      for (const field of promotableFields) {
+        if (existingInvite[field] != null || extracted[field] == null) continue;
+        params.push(extracted[field]);
+        assignments.push(`${field} = $${params.length}`);
+      }
+      if (assignments.length > 0) {
+        params.push(existingInvite.id);
+        await query(`
+          UPDATE pipeline_invites
+             SET ${assignments.join(', ')}, updated_at = NOW()
+           WHERE id = $${params.length}
+        `, params);
+      }
+    }
 
     const documents = [];
     for (const pending of pendingRows) {
