@@ -144,7 +144,8 @@ class PortfolioState:
 
     # Annual deployment pace — separate from risk_capital (total at-risk pool).
     # If annual_budget is set, the solver caps recommendation_high at
-    # (annual_budget - ytd_deployed_this_year). None disables the constraint.
+    # (annual_budget - ytd_deployed_this_year - unfunded_commitments).
+    # None disables the constraint.
     annual_budget: Optional[float] = None
     ytd_deployed_this_year: float = 0.0
 
@@ -154,7 +155,10 @@ class PortfolioState:
     def annual_budget_remaining(self) -> Optional[float]:
         if self.annual_budget is None:
             return None
-        return max(0.0, self.annual_budget - self.ytd_deployed_this_year)
+        return max(
+            0.0,
+            self.annual_budget - self.ytd_deployed_this_year - self.unfunded_commitments,
+        )
 
     def ruin_max_dollars(self, worst_case_loss_multiplier: float = 1.0) -> float:
         """Largest check such that, if it goes to zero (or worst case),

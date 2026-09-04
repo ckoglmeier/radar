@@ -150,7 +150,7 @@ export function buildPortfolioJson(config, dbState) {
     risk_capital,
     floor,
     deployed: dbState.ytdDeployed || 0,
-    unfunded_commitments: 0,
+    unfunded_commitments: dbState.unfundedCommitments ?? 0,
     cluster_exposures: dbState.clusterExposures || {},
     total_illiquid_pct_of_investable: dbState.illiquidPct || 0,
     single_position_cap_pct,

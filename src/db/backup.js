@@ -82,6 +82,7 @@ const INSERT_ORDER = [
   'user_settings',
   'lens_config',
   'lens_framework_versions',
+  'annual_deployment_plan_versions',
   'sync_runs',
   'investment_updates',
   'command_proposals',

@@ -85,6 +85,19 @@ try {
     }, 'dismiss-pin')).status, 'applied');
     assert.equal((await query(`SELECT COUNT(*)::int AS count FROM attention_dismissals WHERE signal_key = 'decide-42'`))[0].count, 1);
 
+    const deploymentPlan = await run('deployment_plan.save', {
+      budgetYear: 2026, annualBudget: 85000, changeNote: 'Annual plan fixture',
+    }, 'save-deployment-plan');
+    assert.equal(deploymentPlan.status, 'applied');
+    const [savedPlan] = await query(`
+      SELECT budget_year, annual_budget, version
+        FROM annual_deployment_plan_versions
+       WHERE budget_year = 2026
+    `);
+    assert.equal(savedPlan.budget_year, 2026);
+    assert.equal(Number(savedPlan.annual_budget), 85000);
+    assert.equal(savedPlan.version, 1);
+
     const frameworkState = await getFrameworkState(getActiveLens());
     const framework = structuredClone(frameworkState.framework);
     framework.manifest.description = 'Workspace command fixture';
@@ -96,7 +109,7 @@ try {
       framework, changeNote: 'Command test',
     }, 'save-framework', 'inline_confirmation')).status, 'applied');
   });
-  console.log('Workspace commands: updates, views, onboarding, pins, and framework passed');
+  console.log('Workspace commands: updates, views, onboarding, pins, deployment plan, and framework passed');
 } finally {
   await closeDb();
   rmSync(scratch, { recursive: true, force: true });

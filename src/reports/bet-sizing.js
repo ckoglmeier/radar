@@ -11,17 +11,11 @@ import {
   thesisToCluster, loadBetSizingConfig,
 } from '../utils/bet-sizing.js';
 import { getDistributions } from '../lenses/loader.js';
+import { annualDeploymentPlanReport } from './deployment-plan.js';
 
 export async function directYtdDeployed() {
-  const rows = await query(`
-    SELECT COALESCE(SUM(ABS(cf.amount)), 0) AS ytd
-    FROM cash_flows cf
-    JOIN investments i ON i.id = cf.investment_id
-    WHERE cf.type = 'investment'
-      AND cf.flow_date >= date_trunc('year', CURRENT_DATE)
-      AND i.asset_class = 'direct'
-  `);
-  return parseFloat(rows[0]?.ytd || 0);
+  const report = await annualDeploymentPlanReport();
+  return report.deployed_this_year;
 }
 
 export async function betSizeReport(company, opts = {}) {
@@ -57,7 +51,14 @@ export async function betSizeReport(company, opts = {}) {
   const cluster = thesisToCluster(row.primary_thesis);
 
   // Load config once; provides tier thresholds, check amounts, and risk capital.
-  const config = loadBetSizingConfig();
+  const configured = loadBetSizingConfig();
+  const deploymentPlan = await annualDeploymentPlanReport({
+    fallbackAnnualBudget: configured.annual_budget,
+  });
+  const config = {
+    ...configured,
+    annual_budget: deploymentPlan.annual_budget,
+  };
   const minCheck = parseInt(opts.minCheck || config.min_check || 0, 10);
   const maxCheck = config.max_check || Infinity;
 
@@ -118,7 +119,7 @@ export async function betSizeReport(company, opts = {}) {
     GROUP BY t.name
   `);
   // Year-to-date cash deployed (current calendar year). Drives annual_budget_remaining.
-  const ytdDeployedThisYear = await directYtdDeployed();
+  const ytdDeployedThisYear = deploymentPlan.deployed_this_year;
 
   const ytdDeployed = parseFloat(deployedRows[0]?.illiquid || 0);
   const clusterExposures = {};
@@ -143,6 +144,7 @@ export async function betSizeReport(company, opts = {}) {
   const portfolioJson = buildPortfolioJson(config, {
     ytdDeployed,
     ytdDeployedThisYear,
+    unfundedCommitments: deploymentPlan.unfunded_commitments,
     clusterExposures,
     illiquidPct,
   });

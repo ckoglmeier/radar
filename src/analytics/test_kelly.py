@@ -250,7 +250,8 @@ test("no annual_budget → binding not annual_budget_remaining",
 # $5k single_position_cap (5% of $100k), so annual_budget binds.
 port_tight = PortfolioState(
     risk_capital=100000, floor=0,
-    annual_budget=40000, ytd_deployed_this_year=36000,
+    annual_budget=40000, ytd_deployed_this_year=34000,
+    unfunded_commitments=2000,
 )
 res_tight = size_bet(bet_annual, port_tight)
 test("annual_budget lens present", res_tight.lenses.get("annual_budget_remaining"), 4000.0)

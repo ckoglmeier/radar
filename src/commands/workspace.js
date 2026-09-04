@@ -2,6 +2,11 @@ import { query, writeCapabilities } from '../db/index.js';
 import { dismissAttentionItem } from '../models/attention-dismissals.js';
 import { saveFrameworkVersion } from '../models/framework.js';
 import {
+  getAnnualDeploymentPlan,
+  saveAnnualDeploymentPlan,
+} from '../models/deployment-plans.js';
+import { loadBetSizingConfig } from '../utils/bet-sizing.js';
+import {
   createInvestmentUpdate,
   retryInvestmentUpdate,
   reviewInvestmentUpdate,
@@ -73,6 +78,50 @@ async function inspectMetricView(target) {
 }
 
 export const workspaceCommandDefinitions = [
+  definition({
+    name: 'deployment_plan.save',
+    title: 'Save annual deployment plan',
+    description: 'Save a new immutable version of the Direct investment budget for one calendar year.',
+    editableInputKeys: ['budgetYear', 'annualBudget', 'changeNote'],
+    inputSchema: schema({
+      budgetYear: { type: 'integer', minimum: 2000, maximum: 2100 },
+      annualBudget: { type: 'number', minimum: 0, maximum: 999999999999.99 },
+      changeNote: nullableText,
+    }, ['budgetYear', 'annualBudget']),
+    resolve: input => ({
+      type: 'annual_deployment_plan',
+      id: `direct:${input.budgetYear}`,
+      label: `${input.budgetYear} Direct deployment plan`,
+    }),
+    inspect: async (_target, input) => getAnnualDeploymentPlan(input.budgetYear, {
+      fallbackAnnualBudget: loadBetSizingConfig().annual_budget,
+    }),
+    preview: ({ target, input, current }) => ({
+      summary: `Set the ${input.budgetYear} Direct investment budget.`,
+      target,
+      before: [{ field: 'annual_budget', value: current.annual_budget }],
+      after: [{ field: 'annual_budget', value: input.annualBudget }],
+      derivedEffects: [
+        'Dashboard deployment capacity will update.',
+        'Future bet-sizing recommendations will respect available capacity after commitments.',
+        'Ask Radar budget answers will use this plan.',
+      ],
+      warnings: [],
+      requiredReason: false,
+    }),
+    preconditions: ({ current }) => ({
+      id: current.id,
+      version: current.version,
+      annual_budget: current.annual_budget,
+      source: current.source,
+    }),
+    apply: ({ input }) => saveAnnualDeploymentPlan(input),
+    affectedResources: ({ result }) => [{
+      type: 'annual_deployment_plan_version',
+      id: Number(result.id),
+      label: `${result.budget_year} Direct budget v${result.version}`,
+    }],
+  }),
   definition({
     name: 'framework.save',
     title: 'Save evaluation framework',

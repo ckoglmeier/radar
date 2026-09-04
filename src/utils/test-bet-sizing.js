@@ -505,10 +505,11 @@ try {
   test('annual_budget and ytd_deployed_this_year passed through', () => {
     const p = buildPortfolioJson(
       { risk_capital: 100000, floor: 60000, annual_budget: 40000 },
-      { ytdDeployedThisYear: 18000 }
+      { ytdDeployedThisYear: 18000, unfundedCommitments: 3000 }
     );
     eq(p.annual_budget, 40000);
     eq(p.ytd_deployed_this_year, 18000);
+    eq(p.unfunded_commitments, 3000);
   });
 
   test('annual_budget defaults to null when unset in config', () => {
