@@ -11,8 +11,21 @@ function numberOrNull(value) {
   return value == null ? null : Number(value);
 }
 
+function dateOnly(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  const date = String(value).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+}
+
 function reportDate(value) {
-  const date = value ? String(value).slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const date = value ? dateOnly(value) : new Date().toISOString().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new TypeError('asOf must be an ISO date');
   return date;
 }
@@ -79,7 +92,7 @@ export async function directReturnRegister(options = {}) {
     if (!flowsByPosition.has(investmentId)) flowsByPosition.set(investmentId, []);
     flowsByPosition.get(investmentId).push({
       id: Number(row.id),
-      date: String(row.flow_date).slice(0, 10),
+      date: dateOnly(row.flow_date),
       type: row.type,
       amount: Number(row.amount),
     });
@@ -157,7 +170,7 @@ export async function directReturnRegister(options = {}) {
       irrFlows.push(...openingFlows.map(flow => ({ date: flow.date, amount: flow.amount })));
     } else if (row.invest_date && positionBasis > 0) {
       openingFlowSources.position_basis_fallback += 1;
-      irrFlows.push({ date: String(row.invest_date).slice(0, 10), amount: -positionBasis });
+      irrFlows.push({ date: dateOnly(row.invest_date), amount: -positionBasis });
     } else {
       if (!row.invest_date) reasons.push('missing_investment_date');
       if (!(positionBasis > 0)) reasons.push('missing_invested_basis');
@@ -324,7 +337,7 @@ export async function positionReturnMetrics(options = {}) {
       company_name: row.company_name,
       asset_type: row.asset_class,
       status: row.status,
-      investment_date: row.invest_date ? String(row.invest_date).slice(0, 10) : null,
+      investment_date: dateOnly(row.invest_date),
       stage: row.stage_bucket,
       market: row.market,
       theses: Array.isArray(row.theses) ? row.theses : [],
@@ -333,7 +346,7 @@ export async function positionReturnMetrics(options = {}) {
       current_net_value: netValue,
       gross_moic: invested > 0 ? grossValue / invested : null,
       net_moic: invested > 0 ? netValue / invested : null,
-      mark_date: row.mark_date ? String(row.mark_date).slice(0, 10) : null,
+      mark_date: dateOnly(row.mark_date),
       mark_source: row.mark_source || (warnings.includes('MARK_AT_COST') ? 'cost_basis' : 'position_record'),
       economics: {
         carry_percent: carryPercent,

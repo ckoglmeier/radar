@@ -39,6 +39,9 @@ try {
       asOf: '2026-08-24', filters: { assetType: 'direct', stage: 'seed' }, limit: 2,
     });
     assert.deepEqual(report.positions.map(row => row.company_name), ['Beta', 'Alpha']);
+    assert.equal(report.positions[0].investment_date, '2023-01-01');
+    assert.equal(report.positions[1].investment_date, '2022-01-01');
+    assert.equal(report.positions[0].mark_date, '2026-06-30');
     assert.equal(report.positions[0].net_moic, 3);
     assert.equal(report.positions[0].current_gross_value, 300);
     assert.equal(report.positions[1].net_moic, 1.8);
