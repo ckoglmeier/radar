@@ -12,6 +12,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { query } from '../db/index.js';
 import { upsertInvestment } from '../models/investments.js';
+import { accessDocumentBytes } from '../models/documents.js';
 import { classifyArtifact, intakePreview, intakeCommit, intakeCommitBatch, withTx } from './index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -365,10 +366,12 @@ async function run() {
       ? committedReceipt.content
       : Buffer.from(committedReceipt.content);
     eq(cleared.length, 0, 'receipt clears committed staging bytes');
-    const [storedDocument] = await query(`SELECT content FROM documents WHERE id = $1`, [first.document_id]);
-    const durableContent = Buffer.isBuffer(storedDocument.content)
-      ? storedDocument.content
-      : Buffer.from(storedDocument.content);
+    const storedDocument = await accessDocumentBytes({
+      documentId: first.document_id,
+      purpose: 'download',
+      executionMode: 'desktop',
+    });
+    const durableContent = Buffer.from(storedDocument.content);
     eq(durableContent.toString(), content.toString(), 'durable document retains original bytes');
 
     const second = await intakeCommit({ preview_id: preview.preview_id, overrides: {} });

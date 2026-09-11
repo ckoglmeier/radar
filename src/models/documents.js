@@ -2,12 +2,13 @@
 // See docs/INTAKE_BUILD_PLAN.md ("Commit contract & artifact lifecycle" and
 // "Provenance attachment matrix") in radar-app for the authoritative spec.
 //
-// Content is stored as raw BYTEA (verified byte-identical round-trip on the
-// PGlite driver path — see test-documents.js). The public API here takes
-// and returns Buffers regardless of storage encoding.
+// Content is stored as BYTEA: initially raw, then optionally as a verified,
+// lossless single-file ZIP after processing. The public API here takes and
+// returns the original Buffer regardless of storage encoding.
 
 import { randomUUID, createHash } from 'crypto';
 import { isPgliteActive, query } from '../db/index.js';
+import { createDocumentArchive, openDocumentArchive } from './document-archive.js';
 
 export const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB cap (documents table; hosted intake's transport cap is separate, enforced in the app layer)
 
@@ -35,6 +36,9 @@ const BYTE_ACCESS_PURPOSES = new Set([
   'support',
 ]);
 const EXECUTION_MODES = new Set(['desktop', 'hosted']);
+const CONTENT_ENCODING_IDENTITY = 'identity';
+const CONTENT_ENCODING_ZIP = 'zip-deflate-v1';
+export const DEFAULT_COMPACTION_MIN_SAVINGS_RATIO = 0.10;
 
 function toBuffer(content) {
   return Buffer.isBuffer(content) ? content : Buffer.from(content);
@@ -111,14 +115,15 @@ export async function createDocument({
   const rows = await query(`
     INSERT INTO documents
       (entity_type, entity_id, filename, mime, sha256, source, size_bytes,
-       content, confidentiality, processing_policy, sync_policy)
-    VALUES ($1, $2::text, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       content, stored_size_bytes, confidentiality, processing_policy, sync_policy)
+    VALUES ($1, $2::text, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
     RETURNING id, entity_type, entity_id, filename, mime, sha256, source,
-              size_bytes, confidentiality, processing_policy, sync_policy,
-              created_at
+              size_bytes, stored_size_bytes, content_encoding, archive_sha256,
+              compaction_checked_at, compacted_at, confidentiality,
+              processing_policy, sync_policy, created_at
   `, [
     entity_type, entity_id, filename, mime ?? null, computedSha, source,
-    buf.length, buf, confidentiality, processing_policy, sync_policy,
+    buf.length, buf, buf.length, confidentiality, processing_policy, sync_policy,
   ]);
   return rows[0];
 }
@@ -126,8 +131,9 @@ export async function createDocument({
 // Metadata only — never returns content.
 export async function listDocuments(entity_type, entity_id) {
   return query(`
-    SELECT id, filename, mime, sha256, source, size_bytes, confidentiality,
-           processing_policy, sync_policy, created_at
+    SELECT id, filename, mime, sha256, source, size_bytes, stored_size_bytes,
+           content_encoding, archive_sha256, compaction_checked_at, compacted_at,
+           confidentiality, processing_policy, sync_policy, created_at
     FROM documents
     WHERE entity_type = $1 AND entity_id = $2::text
     ORDER BY created_at DESC, id DESC
@@ -147,8 +153,9 @@ export async function accessDocumentBytes({ documentId, purpose, executionMode }
 
   const rows = await query(`
     SELECT id, entity_type, entity_id, filename, mime, sha256, source,
-           size_bytes, confidentiality, processing_policy, sync_policy,
-           created_at
+           size_bytes, stored_size_bytes, content_encoding, archive_sha256,
+           compaction_checked_at, compacted_at, confidentiality,
+           processing_policy, sync_policy, created_at
       FROM documents
      WHERE id = $1
   `, [documentId]);
@@ -173,16 +180,162 @@ export async function accessDocumentBytes({ documentId, purpose, executionMode }
     throw documentPolicyDenied('document policy denies support access to tax_sensitive bytes');
   }
 
-  const contentRows = await query(`SELECT content FROM documents WHERE id = $1`, [documentId]);
-  return { ...metadata, content: contentRows[0].content };
+  const [stored] = await query(`
+    SELECT content, content_encoding, archive_sha256, stored_size_bytes
+      FROM documents
+     WHERE id = $1
+  `, [documentId]);
+  if (!stored) return null;
+
+  const persisted = toBuffer(stored.content);
+  if (Number(stored.stored_size_bytes) !== persisted.length) {
+    throw new Error(`document ${documentId} stored-size verification failed`);
+  }
+
+  let content;
+  if (stored.content_encoding === CONTENT_ENCODING_IDENTITY) {
+    content = persisted;
+  } else if (stored.content_encoding === CONTENT_ENCODING_ZIP) {
+    const archiveSha = createHash('sha256').update(persisted).digest('hex');
+    if (!stored.archive_sha256 || archiveSha !== stored.archive_sha256) {
+      throw new Error(`document ${documentId} archive sha256 verification failed`);
+    }
+    content = openDocumentArchive(persisted);
+  } else {
+    throw new Error(`document ${documentId} has unsupported content encoding: ${stored.content_encoding}`);
+  }
+
+  if (content.length !== Number(metadata.size_bytes)
+    || createHash('sha256').update(content).digest('hex') !== metadata.sha256) {
+    throw new Error(`document ${documentId} original sha256 or size verification failed`);
+  }
+
+  // A processing read is the lifecycle signal that the canonical upload has
+  // been consumed. Compaction is best-effort and never blocks that consumer;
+  // compactDocument remains public so maintenance jobs can retry explicitly.
+  if (stored.content_encoding === CONTENT_ENCODING_IDENTITY
+    && metadata.compaction_checked_at == null
+    && ['model', 'local_processing'].includes(purpose)) {
+    try {
+      await compactDocument(documentId, { originalContent: content });
+    } catch {
+      // Preserve the verified original and allow the processing operation to
+      // continue. A later maintenance pass may retry the compaction.
+    }
+  }
+
+  return { ...metadata, content };
+}
+
+// Replace raw evidence bytes with a verified, lossless single-file ZIP only
+// when doing so clears the configured savings threshold. The original hash and
+// byte count remain canonical; concurrent attempts are resolved atomically by
+// the UPDATE predicate.
+export async function compactDocument(documentId, {
+  minSavingsRatio = DEFAULT_COMPACTION_MIN_SAVINGS_RATIO,
+  originalContent = null,
+  forceRecheck = false,
+} = {}) {
+  if (!Number.isFinite(minSavingsRatio) || minSavingsRatio < 0 || minSavingsRatio >= 1) {
+    throw new TypeError('minSavingsRatio must be at least 0 and less than 1');
+  }
+
+  const [row] = await query(`
+    SELECT id, filename, sha256, size_bytes, content, content_encoding,
+           archive_sha256, stored_size_bytes, compaction_checked_at, compacted_at
+      FROM documents
+     WHERE id = $1
+  `, [documentId]);
+  if (!row) return null;
+  if (row.content_encoding !== CONTENT_ENCODING_IDENTITY) {
+    return {
+      document_id: row.id,
+      status: 'already_compacted',
+      original_size_bytes: Number(row.size_bytes),
+      stored_size_bytes: Number(row.stored_size_bytes),
+    };
+  }
+  if (row.compaction_checked_at && !forceRecheck) {
+    return {
+      document_id: row.id,
+      status: 'previously_skipped',
+      original_size_bytes: Number(row.size_bytes),
+      stored_size_bytes: Number(row.stored_size_bytes),
+    };
+  }
+
+  const original = originalContent == null ? toBuffer(row.content) : toBuffer(originalContent);
+  if (original.length !== Number(row.size_bytes)
+    || createHash('sha256').update(original).digest('hex') !== row.sha256) {
+    throw new Error(`document ${documentId} cannot be compacted: original verification failed`);
+  }
+
+  const archive = createDocumentArchive(original, row.filename);
+  const restored = openDocumentArchive(archive);
+  if (restored.length !== original.length
+    || createHash('sha256').update(restored).digest('hex') !== row.sha256) {
+    throw new Error(`document ${documentId} cannot be compacted: ZIP verification failed`);
+  }
+
+  const savingsBytes = original.length - archive.length;
+  const savingsRatio = original.length === 0 ? 0 : savingsBytes / original.length;
+  if (savingsBytes <= 0 || savingsRatio < minSavingsRatio) {
+    await query(`
+      UPDATE documents
+         SET compaction_checked_at = NOW(), stored_size_bytes = octet_length(content)
+       WHERE id = $1 AND content_encoding = $2
+    `, [documentId, CONTENT_ENCODING_IDENTITY]);
+    return {
+      document_id: row.id,
+      status: 'skipped',
+      original_size_bytes: original.length,
+      stored_size_bytes: original.length,
+      candidate_size_bytes: archive.length,
+      savings_ratio: savingsRatio,
+    };
+  }
+
+  const archiveSha256 = createHash('sha256').update(archive).digest('hex');
+  const updated = await query(`
+    UPDATE documents
+       SET content = $2,
+           content_encoding = $3,
+           archive_sha256 = $4,
+           stored_size_bytes = $5,
+           compaction_checked_at = NOW(),
+           compacted_at = NOW()
+     WHERE id = $1 AND content_encoding = $6
+     RETURNING id
+  `, [
+    documentId, archive, CONTENT_ENCODING_ZIP, archiveSha256, archive.length,
+    CONTENT_ENCODING_IDENTITY,
+  ]);
+  if (updated.length === 0) {
+    return {
+      document_id: row.id,
+      status: 'concurrent_update',
+      original_size_bytes: original.length,
+      stored_size_bytes: original.length,
+    };
+  }
+  return {
+    document_id: row.id,
+    status: 'compacted',
+    original_size_bytes: original.length,
+    stored_size_bytes: archive.length,
+    savings_bytes: savingsBytes,
+    savings_ratio: savingsRatio,
+    archive_sha256: archiveSha256,
+  };
 }
 
 // Duplicate detection for intake — metadata rows matching a content hash.
 export async function findBySha(sha256) {
   return query(`
     SELECT id, entity_type, entity_id, filename, mime, sha256, source,
-           size_bytes, confidentiality, processing_policy, sync_policy,
-           created_at
+           size_bytes, stored_size_bytes, content_encoding, archive_sha256,
+           compaction_checked_at, compacted_at, confidentiality,
+           processing_policy, sync_policy, created_at
     FROM documents
     WHERE sha256 = $1
     ORDER BY created_at DESC, id DESC

@@ -12,6 +12,7 @@ import {
   createDocument,
   listDocuments,
   accessDocumentBytes,
+  compactDocument,
   findBySha,
   orphanReport,
   createPendingIntake,
@@ -209,6 +210,124 @@ async function run() {
           content: Buffer.from('actual content'),
         }),
         /sha256 mismatch/
+      );
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('processing access compacts compressible evidence and restores exact original bytes', async () => {
+    const company = `Test Documents Compaction ${stamp}-11`;
+    try {
+      const investment = await upsertInvestment({
+        ...BASE_INVESTMENT,
+        company_name: company,
+        invest_date: '2026-07-22',
+      });
+      const content = Buffer.from('CureTrust evidence line\n'.repeat(4000));
+      const originalSha = createHash('sha256').update(content).digest('hex');
+      const doc = await createDocument({
+        entity_type: 'investment',
+        entity_id: investment.id,
+        filename: 'curetrust-evidence.txt',
+        mime: 'text/plain',
+        content,
+      });
+
+      const firstRead = await accessDocumentBytes({
+        documentId: doc.id,
+        purpose: 'model',
+        executionMode: 'desktop',
+      });
+      eq(createHash('sha256').update(Buffer.from(firstRead.content)).digest('hex'), originalSha);
+
+      const [stored] = await query(`
+        SELECT content, content_encoding, archive_sha256, size_bytes,
+               stored_size_bytes, compaction_checked_at, compacted_at
+          FROM documents WHERE id = $1
+      `, [doc.id]);
+      eq(stored.content_encoding, 'zip-deflate-v1');
+      ok(stored.archive_sha256, 'archive hash recorded');
+      ok(stored.compaction_checked_at, 'compaction attempt timestamp recorded');
+      ok(stored.compacted_at, 'successful compaction timestamp recorded');
+      eq(Number(stored.size_bytes), content.length, 'canonical size remains the original size');
+      ok(Number(stored.stored_size_bytes) < content.length * 0.9, 'stored payload clears the 10% savings threshold');
+      eq(Buffer.from(stored.content).subarray(0, 2).toString(), 'PK', 'stored payload is a ZIP file');
+
+      const restored = await accessDocumentBytes({
+        documentId: doc.id,
+        purpose: 'download',
+        executionMode: 'desktop',
+      });
+      eq(Buffer.compare(Buffer.from(restored.content), content), 0, 'download restores byte-identical evidence');
+
+      const repeated = await compactDocument(doc.id);
+      eq(repeated.status, 'already_compacted', 'repeat compaction does not rewrite the archive');
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('incompressible evidence stays raw when ZIP savings are below threshold', async () => {
+    const company = `Test Documents Compaction Skip ${stamp}-12`;
+    try {
+      const investment = await upsertInvestment({
+        ...BASE_INVESTMENT,
+        company_name: company,
+        invest_date: '2026-07-23',
+      });
+      const content = randomBytes(8192);
+      const doc = await createDocument({
+        entity_type: 'investment',
+        entity_id: investment.id,
+        filename: 'already-compressed.bin',
+        mime: 'application/octet-stream',
+        content,
+      });
+
+      const result = await compactDocument(doc.id);
+      eq(result.status, 'skipped');
+      ok(result.savings_ratio < 0.10, 'candidate did not clear the savings threshold');
+      const [stored] = await query(`
+        SELECT content_encoding, stored_size_bytes, compaction_checked_at, compacted_at
+          FROM documents WHERE id = $1
+      `, [doc.id]);
+      eq(stored.content_encoding, 'identity');
+      eq(Number(stored.stored_size_bytes), content.length);
+      ok(stored.compaction_checked_at, 'skip is recorded to avoid repeated compression work');
+      eq(stored.compacted_at, null);
+      eq((await compactDocument(doc.id)).status, 'previously_skipped');
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
+  await test('archive corruption is rejected before evidence bytes are returned', async () => {
+    const company = `Test Documents Compaction Integrity ${stamp}-13`;
+    try {
+      const investment = await upsertInvestment({
+        ...BASE_INVESTMENT,
+        company_name: company,
+        invest_date: '2026-07-24',
+      });
+      const content = Buffer.from('integrity fixture\n'.repeat(2000));
+      const doc = await createDocument({
+        entity_type: 'investment',
+        entity_id: investment.id,
+        filename: 'integrity.txt',
+        mime: 'text/plain',
+        content,
+      });
+      eq((await compactDocument(doc.id)).status, 'compacted');
+
+      const [stored] = await query(`SELECT content FROM documents WHERE id = $1`, [doc.id]);
+      const corrupted = Buffer.from(stored.content);
+      corrupted[Math.floor(corrupted.length / 2)] ^= 0xff;
+      await query(`UPDATE documents SET content = $2 WHERE id = $1`, [doc.id, corrupted]);
+
+      await expectRejects(
+        () => accessDocumentBytes({ documentId: doc.id, purpose: 'download', executionMode: 'desktop' }),
+        /archive sha256 verification failed/
       );
     } finally {
       await cleanupCompany(company);
