@@ -188,7 +188,10 @@ export async function accessDocumentBytes({ documentId, purpose, executionMode }
   if (!stored) return null;
 
   const persisted = toBuffer(stored.content);
-  if (Number(stored.stored_size_bytes) !== persisted.length) {
+  const recordedStoredSize = stored.stored_size_bytes == null
+    ? persisted.length
+    : Number(stored.stored_size_bytes);
+  if (recordedStoredSize !== persisted.length) {
     throw new Error(`document ${documentId} stored-size verification failed`);
   }
 

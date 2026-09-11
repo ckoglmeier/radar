@@ -216,6 +216,35 @@ async function run() {
     }
   });
 
+  await test('legacy direct inserts may omit stored-size metadata', async () => {
+    const company = `Test Documents Legacy Writer ${stamp}-14`;
+    try {
+      const investment = await upsertInvestment({
+        ...BASE_INVESTMENT,
+        company_name: company,
+        invest_date: '2026-07-25',
+      });
+      const content = Buffer.from('legacy direct writer fixture');
+      const sha256 = createHash('sha256').update(content).digest('hex');
+      const [document] = await query(`
+        INSERT INTO documents
+          (entity_type, entity_id, filename, mime, sha256, source, size_bytes, content)
+        VALUES ('investment', $1::text, 'legacy.txt', 'text/plain', $2, 'manual-upload', $3, $4)
+        RETURNING id, stored_size_bytes
+      `, [investment.id, sha256, content.length, content]);
+      eq(document.stored_size_bytes, null);
+
+      const restored = await accessDocumentBytes({
+        documentId: document.id,
+        purpose: 'download',
+        executionMode: 'desktop',
+      });
+      eq(Buffer.compare(Buffer.from(restored.content), content), 0);
+    } finally {
+      await cleanupCompany(company);
+    }
+  });
+
   await test('processing access compacts compressible evidence and restores exact original bytes', async () => {
     const company = `Test Documents Compaction ${stamp}-11`;
     try {

@@ -24,8 +24,5 @@ UPDATE documents
    SET stored_size_bytes = octet_length(content)
  WHERE stored_size_bytes IS NULL;
 
-ALTER TABLE documents
-  ALTER COLUMN stored_size_bytes SET NOT NULL;
-
 CREATE INDEX IF NOT EXISTS idx_documents_compaction_candidates
   ON documents(content_encoding, compaction_checked_at);
