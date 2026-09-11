@@ -16,7 +16,7 @@ const REQUIRED_BANDS = ['44+', '39-43', '30-38', '<30'];
  * Validate a distributions value. Rejects the whole write on any violation
  * (no partial band updates). Throws with a specific message.
  */
-function validateDistributions(value) {
+export function validateDistributions(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('distributions must be an object');
   }
@@ -45,9 +45,17 @@ function validateDistributions(value) {
         `band ${band}: outcomes.length (${outcomes.length}) !== probs.length (${probs.length})`
       );
     }
+    if (outcomes.length < 1 || outcomes.length > 100) {
+      throw new Error(`band ${band}: provide between 1 and 100 outcomes`);
+    }
+    for (const outcome of outcomes) {
+      if (typeof outcome !== 'number' || !Number.isFinite(outcome) || outcome < 0) {
+        throw new Error(`band ${band}: return multiples must be finite numbers >= 0`);
+      }
+    }
     let sum = 0;
     for (const p of probs) {
-      if (typeof p !== 'number' || Number.isNaN(p) || p < 0) {
+      if (typeof p !== 'number' || !Number.isFinite(p) || p < 0 || p > 1) {
         throw new Error(`band ${band}: probs must all be numbers >= 0, got ${JSON.stringify(p)}`);
       }
       sum += p;

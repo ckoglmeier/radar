@@ -24,6 +24,12 @@ let _activeLensDir = null;
 // picks it up without threading it through call sites. CLI never sets this.
 const lensStorage = new AsyncLocalStorage();
 
+// Only an explicitly hydrated workspace may provide capital settings here.
+// Do not resolve a filesystem lens or global fallback for this lookup.
+export function getHydratedSizingConfig() {
+  return lensStorage.getStore()?.sizingConfig ?? null;
+}
+
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf-8'));
 }

@@ -75,12 +75,14 @@ export async function getUserSettings(userId = DEFAULT_USER_ID) {
 
 export async function updateUserSettings(userId = DEFAULT_USER_ID, fields = {}) {
   const id = normalizeUserId(userId);
-  const { clauses, params, nextIndex } = buildAssignments(fields);
+  const { clauses, params } = buildAssignments(fields);
   if (clauses.length === 0) throw new Error('no user settings fields to update');
+  const columns = clauses.map(clause => clause.split(' = ')[0]);
+  const values = params.map((_, index) => `$${index + 2}`);
 
   const rows = await query(`
-    INSERT INTO user_settings (user_id)
-    VALUES ($1)
+    INSERT INTO user_settings (user_id, ${columns.join(', ')})
+    VALUES ($1, ${values.join(', ')})
     ON CONFLICT (user_id) DO UPDATE SET
       ${clauses.join(', ')},
       updated_at = NOW()

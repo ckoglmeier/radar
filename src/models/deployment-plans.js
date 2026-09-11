@@ -30,7 +30,8 @@ export async function getAnnualDeploymentPlan(budgetYear = new Date().getFullYea
   `, [year]);
   if (saved) return { ...saved, source: 'saved_plan' };
 
-  const fallback = Number(fallbackAnnualBudget);
+  const fallback = fallbackAnnualBudget == null || String(fallbackAnnualBudget).trim() === ''
+    ? NaN : Number(fallbackAnnualBudget);
   return {
     id: null,
     budget_year: year,

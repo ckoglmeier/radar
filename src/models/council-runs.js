@@ -35,9 +35,11 @@ export function councilRequestKey({
   policyVersion = '',
   runType = 'initial',
   nonce = '',
+  reviewMode = 'personalized',
 }) {
   const inviteId = assertPositiveInteger(pipelineInviteId, 'pipelineInviteId');
   assertRunType(runType);
+  if (!['personalized', 'ad_hoc'].includes(reviewMode)) throw new Error('Invalid review mode');
   return createHash('sha256').update(JSON.stringify({
     workspace,
     pipelineInviteId: inviteId,
@@ -46,6 +48,7 @@ export function councilRequestKey({
     policyVersion,
     runType,
     nonce,
+    ...(reviewMode === 'ad_hoc' ? { reviewMode } : {}),
   })).digest('hex');
 }
 
@@ -110,10 +113,12 @@ export async function createCouncilRun({
   previousEvaluationId = null,
   factsConfirmedAt = null,
   modelAuthorizedAt = null,
+  reviewMode = 'personalized',
 }, deps = {}) {
   const query = deps.query || defaultQuery;
   const inviteId = assertPositiveInteger(pipelineInviteId, 'pipelineInviteId');
   const type = assertRunType(runType);
+  if (!['personalized', 'ad_hoc'].includes(reviewMode)) throw new Error('Invalid review mode');
   if (!String(requestKey || '').trim()) {
     throw new Error('requestKey is required');
   }
@@ -123,7 +128,10 @@ export async function createCouncilRun({
       `SELECT * FROM council_runs WHERE request_key = $1 LIMIT 1`,
       [requestKey],
     );
-    if (existing[0]) return { run: existing[0], deduplicated: true };
+    if (existing[0]) {
+      if ((existing[0].review_mode || 'personalized') !== reviewMode) throw new Error('Request key belongs to a different review mode');
+      return { run: existing[0], deduplicated: true };
+    }
 
     const active = await query(
       `SELECT * FROM council_runs
@@ -132,14 +140,17 @@ export async function createCouncilRun({
        LIMIT 1`,
       [inviteId, ACTIVE_STATUSES],
     );
-    if (active[0]) return { run: active[0], deduplicated: true };
+    if (active[0]) {
+      if ((active[0].review_mode || 'personalized') !== reviewMode) throw new Error('A different review mode is already running for this pitch');
+      return { run: active[0], deduplicated: true };
+    }
 
     const [run] = await query(
       `INSERT INTO council_runs
          (pipeline_invite_id, previous_evaluation_id, parent_run_id,
           request_key, run_type, status, stage, attempt_number,
-          facts_confirmed_at, model_authorized_at)
-       VALUES ($1, $2, $3, $4, $5, 'queued', 'queued', 0, $6, $7)
+          facts_confirmed_at, model_authorized_at, review_mode)
+       VALUES ($1, $2, $3, $4, $5, 'queued', 'queued', 0, $6, $7, $8)
        RETURNING *`,
       [
         inviteId,
@@ -149,6 +160,7 @@ export async function createCouncilRun({
         type,
         factsConfirmedAt,
         modelAuthorizedAt,
+        reviewMode,
       ],
     );
     await appendCouncilRunEvent({

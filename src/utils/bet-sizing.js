@@ -9,13 +9,21 @@
  */
 
 import { readFileSync } from 'fs';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { validateWorkspaceSizing } from '../models/workspace-sizing.js';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { runAnalytics } from './analytics.js';
-import { getDistributions, getThesisClusters, getRoundParams } from '../lenses/loader.js';
+import { getDistributions, getThesisClusters, getRoundParams, getHydratedSizingConfig } from '../lenses/loader.js';
 
 const __dirname = dirname(fileURLToPath(String(import.meta.url)));
+const workspaceSizing = new AsyncLocalStorage();
+
+export function withWorkspaceSizing(config, fn) {
+  const validated = validateWorkspaceSizing(config);
+  return workspaceSizing.run(validated, fn);
+}
 
 // ---------------------------------------------------------------------------
 // Score → distribution + tier
@@ -182,6 +190,8 @@ export function runKelly(betJson, portfolioJson) {
 // ---------------------------------------------------------------------------
 
 export function loadBetSizingConfig() {
+  const scoped = workspaceSizing.getStore() || getHydratedSizingConfig();
+  if (scoped) return structuredClone(scoped);
   const configPath = join(__dirname, '../config/bet-sizing.json');
   try {
     return JSON.parse(readFileSync(configPath, 'utf-8'));

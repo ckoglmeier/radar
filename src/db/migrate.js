@@ -115,7 +115,8 @@ function splitStatements(sql) {
   return statements;
 }
 
-export async function runMigrations({ beforeStatement = null } = {}) {
+export async function runMigrations({ beforeStatement = null, seedLegacyTheses = true } = {}) {
+  if (typeof seedLegacyTheses !== 'boolean') throw new Error('seedLegacyTheses must be boolean');
   await ensureMigrationsTable();
   const applied = await getAppliedVersions();
   const pending = getPendingMigrations(applied);
@@ -131,6 +132,12 @@ export async function runMigrations({ beforeStatement = null } = {}) {
 
     for (let i = 0; i < statements.length; i++) {
       try {
+        // Migration 001 mixed schema with a personal starter-data insert. Keep
+        // historical SQL unchanged, but allow public bootstrap to omit that
+        // one insert. Never delete or modify theses in an existing workspace.
+        const statementBody = statements[i].replace(/^\s*--.*$/gm, '').trim();
+        if (!seedLegacyTheses && migration.version === 1
+            && /^INSERT INTO theses \(name, description\) VALUES\s/.test(statementBody)) continue;
         if (beforeStatement) {
           await beforeStatement({
             version: migration.version,

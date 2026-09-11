@@ -18,6 +18,18 @@ try {
   await withTenant(`file:${join(scratch, 'db')}`, async () => {
     await runMigrations();
 
+    for (const missing of [null, undefined, '']) {
+      const unset = await getAnnualDeploymentPlan(2026, { fallbackAnnualBudget: missing });
+      assert.equal(unset.annual_budget, null);
+      assert.equal(unset.source, 'not_configured');
+      const report = await annualDeploymentPlanReport({ budgetYear: 2026, fallbackAnnualBudget: missing === undefined ? null : missing });
+      assert.equal(report.annual_budget, null);
+      assert.equal(report.available_after_commitments, null);
+    }
+    const zero = await getAnnualDeploymentPlan(2026, { fallbackAnnualBudget: 0 });
+    assert.equal(zero.annual_budget, 0);
+    assert.equal(zero.source, 'legacy_config');
+
     const fallback = await getAnnualDeploymentPlan(2026, { fallbackAnnualBudget: 85000 });
     assert.equal(fallback.source, 'legacy_config');
     assert.equal(fallback.annual_budget, 85000);

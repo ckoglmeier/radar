@@ -133,7 +133,7 @@ export const intakeCouncilCommandDefinitions = [
     title: 'Add documents to one pipeline deal',
     description: 'Atomically commit reviewed staged documents to one existing or new pipeline deal.',
     interactionPolicy: 'confirm_inline',
-    editableInputKeys: ['destination', 'startCouncil'],
+    editableInputKeys: ['destination', 'startCouncil', 'reviewMode'],
     inputSchema: schema({
       previewIds: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: uuid },
       destination: {
@@ -149,6 +149,7 @@ export const intakeCouncilCommandDefinitions = [
         ],
       },
       startCouncil: { type: 'boolean' },
+      reviewMode: { type: 'string', enum: ['personalized', 'ad_hoc'] },
     }, ['previewIds', 'destination', 'startCouncil']),
     resolve: pendingBatchTarget,
     inspect: inspectPendingBatch,
@@ -176,6 +177,7 @@ export const intakeCouncilCommandDefinitions = [
       if (input.startCouncil) {
         result.scoring = await queueCouncilRun({
           inviteId: Number(result.created.id),
+          reviewMode: input.reviewMode || 'personalized',
           runType: 'initial',
           fresh: false,
           executionId: idempotencyKey,
@@ -195,11 +197,12 @@ export const intakeCouncilCommandDefinitions = [
     description: 'Commit an already-reviewed staged artifact to its selected Radar record.',
     interactionPolicy: 'confirm_inline',
     undoPolicy: 'compensating_event',
-    editableInputKeys: ['overrides', 'startCouncil'],
+    editableInputKeys: ['overrides', 'startCouncil', 'reviewMode'],
     inputSchema: schema({
       previewId: uuid,
       overrides: { type: 'object', additionalProperties: true },
       startCouncil: { type: 'boolean' },
+      reviewMode: { type: 'string', enum: ['personalized', 'ad_hoc'] },
     }, ['previewId', 'overrides']),
     resolve: input => pendingTarget(input.previewId),
     inspect: inspectPending,
@@ -216,6 +219,7 @@ export const intakeCouncilCommandDefinitions = [
       if (input.startCouncil && result.created?.table === 'pipeline_invites' && result.created?.is_new === true) {
         result.scoring = await queueCouncilRun({
           inviteId: Number(result.created.id), runType: 'initial', fresh: false,
+          reviewMode: input.reviewMode || 'personalized',
           executionId: idempotencyKey,
         });
       }
@@ -267,11 +271,12 @@ export const intakeCouncilCommandDefinitions = [
     name: 'council.start',
     title: 'Start Council analysis',
     description: 'Queue a durable Council run for the selected pipeline deal.',
-    editableInputKeys: ['fresh', 'runType'],
+    editableInputKeys: ['fresh', 'runType', 'reviewMode'],
     inputSchema: schema({
       inviteId: { type: 'integer', minimum: 1 },
       fresh: { type: 'boolean' },
       runType: { type: 'string', enum: [...COUNCIL_RUN_TYPES] },
+      reviewMode: { type: 'string', enum: ['personalized', 'ad_hoc'] },
     }, ['inviteId', 'fresh', 'runType']),
     resolve: input => inviteTarget(input.inviteId),
     inspect: inspectInvite,
@@ -282,13 +287,14 @@ export const intakeCouncilCommandDefinitions = [
       return {
         summary: `Queue ${input.runType.replaceAll('_', ' ')} Council analysis for ${target.label}.`, target,
         before: [{ field: 'latest_run', value: current.run?.status || null }],
-        after: [{ field: 'run_status', value: 'queued' }],
+        after: [{ field: 'run_status', value: 'queued' }, { field: 'review_mode', value: input.reviewMode || 'personalized' }],
         derivedEffects: ['Radar Desktop will run the configured models in the background.'], warnings: [], requiredReason: false,
       };
     },
     preconditions: ({ current }) => current,
     apply: ({ target, input, idempotencyKey }) => queueCouncilRun({
       inviteId: target.id, runType: input.runType, fresh: input.fresh, executionId: idempotencyKey,
+      reviewMode: input.reviewMode || 'personalized',
     }),
     affectedResources: ({ target, result }) => [target, ...(result.run ? [{ type: 'council_run', id: Number(result.run.id), label: target.label }] : [])],
   }),

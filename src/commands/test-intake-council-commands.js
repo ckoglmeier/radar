@@ -94,12 +94,14 @@ try {
       previewIds: [batchA.preview_id, batchB.preview_id],
       destination: { kind: 'new_pipeline_invite', companyName: 'Atomic Batch Co' },
       startCouncil: true,
+      reviewMode: 'ad_hoc',
     };
     assert.equal((await run('intake.commit_batch', batchInput, 'atomic-batch')).status, 'confirmation_required');
     assert.equal(Number((await query(`SELECT COUNT(*)::int AS count FROM pipeline_invites WHERE company_name = 'Atomic Batch Co'`))[0].count), 0);
     const batchApplied = await run('intake.commit_batch', batchInput, 'atomic-batch', 'inline_confirmation');
     assert.equal(batchApplied.status, 'applied');
     const [batchInvite] = await query(`SELECT id FROM pipeline_invites WHERE company_name = 'Atomic Batch Co'`);
+    assert.equal((await query('SELECT review_mode FROM council_runs WHERE pipeline_invite_id = $1', [batchInvite.id]))[0].review_mode, 'ad_hoc');
     assert.equal(Number((await query(`
       SELECT COUNT(*)::int AS count FROM documents
        WHERE entity_type = 'pipeline_invite' AND entity_id = $1::text
@@ -169,6 +171,13 @@ try {
     }, 'start-council')).status, 'applied');
     const [initialRun] = await query('SELECT * FROM council_runs WHERE pipeline_invite_id = $1', [invite.id]);
     assert.equal(initialRun.status, 'queued');
+    assert.equal(initialRun.review_mode, 'personalized');
+    const [adHocInvite] = await query("INSERT INTO pipeline_invites (deal_slug, company_name, status) VALUES ('command-ad-hoc', 'Synthetic Ad Hoc', 'invite') RETURNING id");
+    assert.equal((await run('council.start', { inviteId: Number(adHocInvite.id), fresh: false, runType: 'initial', reviewMode: 'ad_hoc' }, 'start-ad-hoc')).status, 'applied');
+    const [adHocRun] = await query('SELECT * FROM council_runs WHERE pipeline_invite_id = $1', [adHocInvite.id]);
+    assert.equal(adHocRun.review_mode, 'ad_hoc');
+    assert.equal(adHocRun.status, 'queued');
+    await run('council.cancel', { inviteId: Number(adHocInvite.id) }, 'cancel-ad-hoc');
     assert.equal((await run('council.cancel', { inviteId: Number(invite.id) }, 'cancel-council')).status, 'applied');
     assert.equal((await query('SELECT status FROM council_runs WHERE id = $1', [initialRun.id]))[0].status, 'cancelled');
 

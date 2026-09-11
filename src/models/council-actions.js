@@ -32,10 +32,15 @@ export async function queueCouncilRun({
   runType = 'initial',
   fresh = runType !== 'initial',
   executionId = null,
+  reviewMode = 'personalized',
   policyId = process.env.RADAR_COUNCIL_POLICY || 'balanced',
 }) {
+  if (!['personalized', 'ad_hoc'].includes(reviewMode)) throw new Error('Invalid review mode');
   const active = await activeCouncilRun(inviteId);
-  if (active) return { status: active.status, run: active };
+  if (active) {
+    if (active.review_mode !== reviewMode) throw new Error('A different review mode is already running for this pitch');
+    return { status: active.status, run: active };
+  }
   const [evaluations, invites, sourceRows, completedRuns] = await Promise.all([
     query(`
       SELECT de.id FROM deal_evaluations de
@@ -59,12 +64,14 @@ export async function queueCouncilRun({
   ]);
   const invite = invites[0];
   if (!invite) throw new Error(`Pipeline invite ${inviteId} was not found`);
-  if (evaluations[0] && !fresh) return { status: 'already_scored', evaluation_id: evaluations[0].id };
+  if (reviewMode === 'personalized' && evaluations[0] && !fresh) return { status: 'already_scored', evaluation_id: evaluations[0].id };
 
   const sourceHash = documentSetHash(sourceRows);
   const request = {
+    reviewMode,
     pipelineInviteId: inviteId,
     requestKey: councilRequestKey({
+      reviewMode,
       pipelineInviteId: inviteId, sourceHash, modelPolicy: policyId,
       policyVersion: COUNCIL_POLICY_VERSION, runType,
       nonce: fresh ? (executionId || randomUUID()) : '',
@@ -80,6 +87,7 @@ export async function queueCouncilRun({
     created = await createCouncilRun({
       ...request,
       requestKey: councilRequestKey({
+        reviewMode,
         pipelineInviteId: inviteId, sourceHash, modelPolicy: policyId,
         policyVersion: COUNCIL_POLICY_VERSION, runType,
         nonce: executionId || randomUUID(),

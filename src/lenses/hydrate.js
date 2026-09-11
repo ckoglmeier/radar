@@ -10,6 +10,7 @@
  */
 
 import { query } from '../db/index.js';
+import { getWorkspaceSizing, validateWorkspaceSizing } from '../models/workspace-sizing.js';
 import { applyFrameworkVersion, getActiveFrameworkVersion } from '../models/framework.js';
 
 /**
@@ -102,9 +103,11 @@ export async function loadCloudLens(files) {
   }
 
   const framework = await getActiveFrameworkVersion();
-  return assembleLens({
+  const sizing = await getWorkspaceSizing();
+  const lens = assembleLens({
     files: applyFrameworkVersion(files, framework),
     theses,
     distributions,
   });
+  return sizing ? { ...lens, sizingConfig: validateWorkspaceSizing(sizing.config), sizingVersion: sizing.version } : lens;
 }
