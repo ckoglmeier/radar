@@ -24,7 +24,8 @@ export async function ensureMigrationsTable() {
 }
 
 async function getAppliedVersions() {
-  const rows = await query(`SELECT version FROM schema_migrations ORDER BY version`);
+  const rows = await query(`SELECT version, name FROM schema_migrations ORDER BY version`);
+  assertAppliedMigrationNames(rows);
   return new Set(rows.map(r => r.version));
 }
 
@@ -34,8 +35,11 @@ function getPendingMigrations(applied) {
     .sort();
 
   const migrations = [];
+  const versions = new Set();
   for (const file of files) {
     const version = parseInt(file.slice(0, 3), 10);
+    if (versions.has(version)) throw new Error(`Duplicate migration version ${version}; upgrade stopped.`);
+    versions.add(version);
     if (applied.has(version)) continue;
     migrations.push({
       version,
@@ -48,6 +52,23 @@ function getPendingMigrations(applied) {
 
 function migrationDefinitions() {
   return getPendingMigrations(new Set()).map(({ version, name }) => ({ version, name }));
+}
+
+function assertAppliedMigrationNames(rows) {
+  const definitions = new Map(migrationDefinitions().map(item => [item.version, item.name]));
+  // Both names shipped internally. Forward migrations 074–077 reconcile their
+  // schemas without rewriting either historical ledger or touching user rows.
+  const legacyNames = new Map([
+    [72, '072_document_compaction'],
+    [73, '073_document_compaction_legacy_writers'],
+  ]);
+  for (const row of rows) {
+    const version = Number(row.version);
+    const expected = definitions.get(version);
+    if (expected && row.name !== expected && row.name !== legacyNames.get(version)) {
+      throw new Error(`Migration ${version} has an unexpected identity; upgrade stopped before applying changes.`);
+    }
+  }
 }
 
 /**
@@ -69,6 +90,7 @@ export async function inspectPendingMigrations() {
     ? await query(`SELECT version, name FROM schema_migrations ORDER BY version`)
     : [];
   const appliedVersions = new Set(appliedRows.map(row => Number(row.version)));
+  assertAppliedMigrationNames(appliedRows);
   const available = migrationDefinitions();
   return {
     schema_version: 1,

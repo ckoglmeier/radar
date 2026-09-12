@@ -610,6 +610,15 @@ export async function intakeCommit({ preview_id, overrides = {} }) {
     return { created, document_id };
   });
 
+  // Preview/classification has finished using the raw upload. Compaction is a
+  // best-effort storage optimization outside the commit boundary: a ZIP
+  // failure must never roll back an otherwise durable intake operation.
+  try {
+    await DocumentStore.compact(result.document_id);
+  } catch {
+    // Keep the verified raw payload; a later processing read can retry.
+  }
+
   return { ...result, idempotent_replay: false };
 }
 
@@ -664,7 +673,7 @@ export async function intakeCommitBatch({ preview_ids, destination }) {
     throw new Error(`intakeCommitBatch: unsupported destination: ${destination.kind}`);
   }
 
-  return withAtomicWrite(async () => {
+  const result = await withAtomicWrite(async () => {
     const promotableFields = [
       'lead', 'co_investors', 'market', 'round', 'allocation_usd',
       'min_investment_usd', 'carry_pct', 'valuation_text', 'valuation_usd',
@@ -723,6 +732,15 @@ export async function intakeCommitBatch({ preview_ids, destination }) {
 
     return { created, documents, idempotent_replay: false };
   });
+
+  for (const document of result.documents) {
+    try {
+      await DocumentStore.compact(document.id);
+    } catch {
+      // Keep the verified raw payload; a later processing read can retry.
+    }
+  }
+  return result;
 }
 
 /**

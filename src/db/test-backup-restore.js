@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { backupDatabase, createDatabaseBackupPayload, restoreDatabase } from './backup.js';
 import { closeDb, query, withTenant } from './index.js';
 import { runMigrations } from './migrate.js';
-import { accessDocumentBytes, createDocument } from '../models/documents.js';
+import { accessDocumentBytes, compactDocument, createDocument } from '../models/documents.js';
 import { createInvestmentUpdate } from '../models/investment-updates.js';
 import { createCommandProposal } from '../models/command-proposals.js';
 import { createCommandReceipt, markCommandReceiptUndone } from '../models/command-receipts.js';
@@ -31,6 +31,7 @@ const sourceUrl = `file:${join(scratch, 'source')}`;
 const targetUrl = `file:${join(scratch, 'target')}`;
 const backupDir = join(scratch, 'backups');
 const bytes = Buffer.from([0, 1, 2, 127, 128, 254, 255]);
+const compactableBytes = Buffer.from('backup-compaction-fixture\n'.repeat(2000));
 const entityKey = '11111111-1111-4111-8111-111111111111';
 const positionKey = '22222222-2222-4222-8222-222222222222';
 
@@ -232,6 +233,15 @@ try {
       sha256: createHash('sha256').update(bytes).digest('hex'),
       content: bytes,
     });
+    const compactableDocument = await createDocument({
+      entity_type: 'pipeline_invite',
+      entity_id: invite.id,
+      filename: 'fixture.txt',
+      mime: 'text/plain',
+      sha256: createHash('sha256').update(compactableBytes).digest('hex'),
+      content: compactableBytes,
+    });
+    assert.equal((await compactDocument(compactableDocument.id)).status, 'compacted');
     const fund = await createFund({
       legalName: 'Backup Fund I, LP',
       commitmentDate: '2024-06-01',
@@ -390,13 +400,25 @@ try {
     assert.ok(restoredReceipt.undone_at, 'receipt Undo timestamp restored');
     assert.equal(restoredReceipt.undo_receipt_id, undoReceiptId);
     assert.equal(restoredUndoReceipt.parent_receipt_id, firstReceiptId);
-    const [docMeta] = await query(`SELECT id FROM documents WHERE filename = 'fixture.bin'`);
+    const [binaryDocMeta] = await query(`SELECT id FROM documents WHERE filename = 'fixture.bin'`);
+    const restoredBinaryDocument = await accessDocumentBytes({
+      documentId: binaryDocMeta.id,
+      purpose: 'backup',
+      executionMode: 'desktop',
+    });
+    assert.deepEqual(Buffer.from(restoredBinaryDocument.content), bytes);
+    const [docMeta] = await query(`
+      SELECT id, content_encoding, stored_size_bytes, size_bytes
+        FROM documents WHERE filename = 'fixture.txt'
+    `);
+    assert.equal(docMeta.content_encoding, 'zip-deflate-v1');
+    assert.ok(Number(docMeta.stored_size_bytes) < Number(docMeta.size_bytes));
     const restoredDocument = await accessDocumentBytes({
       documentId: docMeta.id,
       purpose: 'backup',
       executionMode: 'desktop',
     });
-    assert.deepEqual(Buffer.from(restoredDocument.content), bytes);
+    assert.deepEqual(Buffer.from(restoredDocument.content), compactableBytes);
     const [restoredRun] = await query(
       `SELECT source_manifest, source_coverage, evidence_contract_version,
               evaluation_id

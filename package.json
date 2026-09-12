@@ -21,6 +21,7 @@
     "radar": "./src/cli.js"
   },
   "scripts": {
+    "test:migration-identity": "node src/db/test-migration-identity.js",
     "radar": "node src/cli.js",
     "test:data-dir": "node src/config/test-data-dir.js",
     "test:backup-restore": "node src/db/test-pre-migration.js && node src/db/test-backup-restore.js && node src/db/test-direct-lifecycle-backup.js",
