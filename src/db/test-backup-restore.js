@@ -208,6 +208,8 @@ try {
       [invite.id, run.id],
     );
     evaluationId = evaluation.id;
+    await query(`INSERT INTO live_assessment_sessions(evaluation_id, revision, assessment) VALUES($1,1,$2::jsonb)`, [evaluation.id, JSON.stringify({revision:1,summary:'Original assumption remains uncertain.'})]);
+    await query(`INSERT INTO live_assessment_turns(id,evaluation_id,base_revision,question,sources,status,response) VALUES('e85bd463-f90b-40db-99e7-f8a8e5235daf',$1,0,'Who owns the budget?','[]','complete',$2::jsonb)`, [evaluation.id, JSON.stringify({answer:'Founder reports operations.',assessment:{revision:1}})]);
     await query(
       `UPDATE council_runs SET evaluation_id = $1 WHERE id = $2`,
       [evaluation.id, run.id],
@@ -342,6 +344,10 @@ try {
     );
     const result = await restoreDatabase({ content: backupContent });
     assert.ok(result.totalRows > 0);
+    const [working] = await query('SELECT assessment FROM live_assessment_sessions WHERE evaluation_id=$1',[evaluationId]);
+    assert.equal(working.assessment.summary,'Original assumption remains uncertain.');
+    const [turn] = await query('SELECT response FROM live_assessment_turns WHERE evaluation_id=$1',[evaluationId]);
+    assert.equal(turn.response.answer,'Founder reports operations.');
 
     const invites = await query(
       `SELECT id, deal_slug, company_name FROM pipeline_invites ORDER BY id`,

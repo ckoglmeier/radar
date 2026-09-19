@@ -64,6 +64,8 @@ const INSERT_ORDER = [
   'council_run_dispatch',
   'deal_evaluations',
   'council_followup_questions',
+  'live_assessment_sessions',
+  'live_assessment_turns',
   'decision_records',
   'rooms',
   'room_holdings',
