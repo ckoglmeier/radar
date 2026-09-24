@@ -66,6 +66,8 @@ const INSERT_ORDER = [
   'council_followup_questions',
   'live_assessment_sessions',
   'live_assessment_turns',
+  'radar_assessment_drafts',
+  'radar_assessment_updates',
   'decision_records',
   'rooms',
   'room_holdings',
