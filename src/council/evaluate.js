@@ -10,7 +10,7 @@
 // it is fully unit-testable with a fake. The CLI (C1) constructs the real
 // AgentSdkProvider + api_key fallback factory and passes them in.
 
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -77,6 +77,7 @@ function loadRolePrompt(stage) {
 export const COUNCIL_POLICY_VERSION = EVIDENCE_POLICY_VERSION;
 const EXPLICIT_PIPELINE_VERSION = 'sonnet-seeded-research-v1';
 const RESEARCH_PLAN_SEED_VERSION = 'baseline-v1';
+const STAGE_CHECKPOINT_VERSION = 'validated-stage-v1';
 const inFlightRuns = new Map();
 
 function hash(value) {
@@ -84,6 +85,85 @@ function hash(value) {
     ? value
     : JSON.stringify(value);
   return createHash('sha256').update(content).digest('hex');
+}
+
+function stageCheckpointStore(dealLogDir, runKey, runtime, retryInterruptedStages) {
+  const directory = join(dealLogDir, '.council-checkpoints', runKey);
+  const write = (path, receipt) => {
+    mkdirSync(directory, { recursive: true });
+    const temporary = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    writeFileSync(temporary, JSON.stringify(receipt), { encoding: 'utf8', flag: 'wx' });
+    renameSync(temporary, path);
+  };
+  const uncertainty = [];
+  return {
+    uncertainty,
+    async run(stage, request, execute, validate = data => data) {
+      const path = join(directory, `${stage}.json`);
+      const fingerprint = hash({
+        version: STAGE_CHECKPOINT_VERSION,
+        runKey,
+        request,
+        authMode: runtime.currentMode,
+        fallbackEnabled: runtime.fallbackEnabled,
+        providerPolicy: runtime.primary.modelPolicy || null,
+        providerConnection: runtime.primary.connection || null,
+      });
+      const previous = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
+      const history = previous
+        ? [...(previous.history || []), {
+          fingerprint: previous.fingerprint,
+          status: previous.status,
+          error: previous.error || null,
+          at: previous.failedAt || previous.startedAt || previous.acceptedAt || null,
+        }]
+        : [];
+      if (previous?.history) {
+        for (const item of previous.history) {
+          if (item.status === 'failed' || item.status === 'dispatched') {
+            uncertainty.push({ stage, status: item.status, error: item.error || null });
+          }
+        }
+      }
+      if (previous && previous.fingerprint === fingerprint) {
+        if (previous.status === 'accepted') {
+          try {
+            const saved = previous.value;
+            const outcome = saved.outcome || saved;
+            outcome.data = validate(outcome.data) || outcome.data;
+            return {
+              ...saved,
+              outcome: { ...outcome, reusedCheckpoint: true },
+              rejectedAttempts: (saved.rejectedAttempts || []).map(item => ({ ...item, reusedCheckpoint: true })),
+            };
+          } catch (error) {
+            throw new Error(`Council ${stage} checkpoint failed validation: ${error.message}`);
+          }
+        }
+      }
+      if (previous && (previous.status === 'failed' || previous.status === 'dispatched')) {
+        uncertainty.push({ stage, status: previous.status, error: previous.error || null });
+        if (!retryInterruptedStages) {
+          throw new Error(`Council ${stage} has a ${previous.status} dispatch receipt; explicit retry is required because prior model cost may be unknown`);
+        }
+      }
+      write(path, { version: STAGE_CHECKPOINT_VERSION, fingerprint, status: 'dispatched', history, startedAt: new Date().toISOString() });
+      try {
+        const value = await execute();
+        const outcome = value.outcome || value;
+        outcome.data = validate(outcome.data) || outcome.data;
+        write(path, { version: STAGE_CHECKPOINT_VERSION, fingerprint, status: 'accepted', history, value, acceptedAt: new Date().toISOString() });
+        return value.outcome ? value : { outcome: value, rejectedAttempts: [] };
+      } catch (error) {
+        write(path, {
+          version: STAGE_CHECKPOINT_VERSION, fingerprint, status: 'failed', history,
+          error: { message: error.message, code: error.code || null },
+          failedAt: new Date().toISOString(),
+        });
+        throw error;
+      }
+    },
+  };
 }
 
 function structured(result, stage) {
@@ -1194,6 +1274,7 @@ function aggregateStageUsage(stages) {
     }
     return {
       stage: stage.stage,
+      reusedCheckpoint: Boolean(stage.reusedCheckpoint),
       model: stage.result.model || null,
       numTurns: Number(stage.result.numTurns || 0),
       usage: {
@@ -1252,6 +1333,8 @@ export async function councilEvaluate(deal, opts = {}) {
     researchSnapshot,
     sourceManifest = [],
     sourceCoverage = null,
+    stageCheckpoints = false,
+    retryInterruptedStages = false,
     evidenceContractVersion = EVIDENCE_CONTRACT_VERSION,
     directContextBudgetTokens,
     stageTimeoutMs = Number(env.RADAR_COUNCIL_STAGE_TIMEOUT_MS || 20 * 60 * 1_000),
@@ -1404,6 +1487,14 @@ export async function councilEvaluate(deal, opts = {}) {
       env,
       stageTimeoutMs,
     };
+    const checkpoints = stageCheckpoints
+      ? stageCheckpointStore(dealLogDir, provenance.runKey, runtime, retryInterruptedStages)
+      : null;
+    const checkpointed = async (stage, request, execute, validate) => {
+      if (checkpoints) return checkpoints.run(stage, request, execute, validate);
+      const value = await execute();
+      return value.outcome ? value : { outcome: value, rejectedAttempts: [] };
+    };
 
     const notifyStage = async stage => {
       if (onStage) await onStage(stage);
@@ -1454,7 +1545,8 @@ export async function councilEvaluate(deal, opts = {}) {
     if (!researchSnapshot && evidenceStrategy === 'chunk_all') {
       await notifyStage('room_evidence');
       for (const [index, batch] of roomBatches.entries()) {
-        roomRuns.push(await runStage(`room_evidence_${index + 1}`, {
+        const roomStage = `room_evidence_${index + 1}`;
+        const roomRequest = {
           prompt: ROOM_EVIDENCE_PROMPT,
           systemPrompt: loadRolePrompt('research'),
           context: roomBatchContext(batch),
@@ -1462,7 +1554,14 @@ export async function councilEvaluate(deal, opts = {}) {
           tools: [],
           outputFormat: { type: 'json_schema', schema: ROOM_EVIDENCE_SCHEMA },
           maxTurns: turnPolicy.research,
-        }, runtime));
+        };
+        const roomRun = await checkpointed(roomStage, roomRequest,
+          () => runStage(roomStage, roomRequest, runtime), data => {
+            if (!data || !Array.isArray(data.facts) || !Array.isArray(data.contradictions)
+              || !Array.isArray(data.missing_evidence)) throw new Error('invalid room evidence');
+            return data;
+          });
+        roomRuns.push(roomRun.outcome);
       }
       roomLedger = mergeRoomLedgers(roomRuns.map(run => run.data));
     } else if (researchSnapshot?.room_evidence) {
@@ -1477,14 +1576,17 @@ export async function councilEvaluate(deal, opts = {}) {
       : researchContext;
 
     await notifyStage('research');
+    const researchRequest = stageRequest('research', {
+      model: policy.research,
+      context: `${preparedResearchContext}\n\nRADAR RESEARCH PLAN\n${JSON.stringify(plannerSnapshot || baselineResearchPlan)}`,
+      schema: RESEARCH_SCHEMA,
+      maxTurns: turnPolicy.research,
+    });
     const research = researchSnapshot
       ? frozenResearchStage(researchSnapshot)
-      : await runStage('research', stageRequest('research', {
-        model: policy.research,
-        context: `${preparedResearchContext}\n\nRADAR RESEARCH PLAN\n${JSON.stringify(plannerSnapshot || baselineResearchPlan)}`,
-        schema: RESEARCH_SCHEMA,
-        maxTurns: turnPolicy.research,
-      }), runtime);
+      : (await checkpointed('research', researchRequest,
+        () => runStage('research', researchRequest, runtime),
+        data => frozenResearchStage(data).data)).outcome;
     const researchPlan = plannerSnapshot || mergeResearchPlan(baselineResearchPlan, {
       deal_identity: baselineResearchPlan.deal_identity,
       decision_frame: baselineResearchPlan.decision_frame,
@@ -1506,26 +1608,31 @@ export async function councilEvaluate(deal, opts = {}) {
     const graderContext = `${graderBaseContext}\n\nFROZEN RESEARCH PACKET\n${frozenResearch}`;
 
     await notifyStage('bull_bear');
-    const [bullRun, bearRun] = await Promise.all([
-      runValidatedStage('bull', stageRequest('bull', {
+    const bullRequest = stageRequest('bull', {
         model: policy.bull,
         context: graderContext,
         schema: GRADER_SCHEMA,
         maxTurns: turnPolicy.judgment,
-      }), runtime, data => {
-        scoreCouncilChoices(data.dimension_scores, lens.rubric);
-        return data;
-      }),
-      runValidatedStage('bear', stageRequest('bear', {
+      });
+    const bearRequest = stageRequest('bear', {
         model: policy.bear,
         context: graderContext,
         schema: GRADER_SCHEMA,
         maxTurns: turnPolicy.judgment,
-      }), runtime, data => {
+      });
+    const validateGrader = data => {
         scoreCouncilChoices(data.dimension_scores, lens.rubric);
         return data;
-      }),
+      };
+    const debateResults = await Promise.allSettled([
+      checkpointed('bull', bullRequest,
+        () => runValidatedStage('bull', bullRequest, runtime, validateGrader), validateGrader),
+      checkpointed('bear', bearRequest,
+        () => runValidatedStage('bear', bearRequest, runtime, validateGrader), validateGrader),
     ]);
+    const failedDebate = debateResults.find(result => result.status === 'rejected');
+    if (failedDebate) throw failedDebate.reason;
+    const [bullRun, bearRun] = debateResults.map(result => result.value);
     const bull = bullRun.outcome;
     const bear = bearRun.outcome;
     const rejectedAttempts = [
@@ -1545,12 +1652,15 @@ export async function councilEvaluate(deal, opts = {}) {
       JSON.stringify(bear.data),
     ].join('\n\n');
     await notifyStage('calibrator');
-    const calibratorRun = await runValidatedStage('calibrator', stageRequest('calibrator', {
+    const calibratorRequest = stageRequest('calibrator', {
       model: policy.calibrator,
       context: calibratorContext,
       schema: CALIBRATOR_SCHEMA,
       maxTurns: turnPolicy.judgment,
-    }), runtime, data => enrichCalibratorData(data, lens.rubric, deal.stage || deal.round));
+    });
+    const validateCalibrator = data => enrichCalibratorData(data, lens.rubric, deal.stage || deal.round);
+    const calibratorRun = await checkpointed('calibrator', calibratorRequest,
+      () => runValidatedStage('calibrator', calibratorRequest, runtime, validateCalibrator), validateCalibrator);
     const calibrator = calibratorRun.outcome;
     rejectedAttempts.push(...calibratorRun.rejectedAttempts);
     const canonical = scoreCouncilChoices(calibrator.data.dimension_scores, lens.rubric);
@@ -1568,12 +1678,18 @@ export async function councilEvaluate(deal, opts = {}) {
       JSON.stringify(canonical),
     ].join('\n\n');
     await notifyStage('cfo');
-    const cfo = await runStage('cfo', stageRequest('cfo', {
+    const cfoRequest = stageRequest('cfo', {
       model: policy.cfo,
       context: cfoContext,
       schema: CFO_SCHEMA,
       maxTurns: turnPolicy.judgment,
-    }), runtime);
+    });
+    const cfo = (await checkpointed('cfo', cfoRequest,
+      () => runStage('cfo', cfoRequest, runtime), data => {
+        if (!data || !['Deploy', 'Defer', 'Pass'].includes(data.verdict)
+          || typeof data.reason !== 'string') throw new Error('invalid CFO response');
+        return data;
+      })).outcome;
 
     await notifyStage('finalizing');
     const artifact = renderArtifact({
@@ -1592,6 +1708,9 @@ export async function councilEvaluate(deal, opts = {}) {
 
     const stages = [planner, ...roomRuns, research, bull, bear, calibrator, cfo];
     const usage = aggregateStageUsage([...rejectedAttempts, ...stages]);
+    const newlyIncurredUsage = aggregateStageUsage(
+      [...rejectedAttempts, ...stages].filter(stage => !stage.reusedCheckpoint),
+    );
     const sessionIds = stages.map(stage => stage.result.sessionId).filter(Boolean);
     const result = {
       text: `Council complete: ${artifact.scores.canonical.totalScore}/50 · ${artifact.scores.canonical.verdict}`,
@@ -1601,11 +1720,15 @@ export async function councilEvaluate(deal, opts = {}) {
       apiKeySource: calibrator.result.apiKeySource || null,
       usage: usage.total,
       stageMetrics: usage.perStage,
+      currentRunUsage: newlyIncurredUsage.total,
+      checkpointUncertainty: checkpoints?.uncertainty || [],
     };
     return {
       result,
       usage: usage.total,
       stageMetrics: usage.perStage,
+      currentRunUsage: newlyIncurredUsage.total,
+      checkpointUncertainty: checkpoints?.uncertainty || [],
       usedFallback: stages.some(stage => stage.usedFallback),
       primaryErrorKind: stages.find(stage => stage.primaryErrorKind)?.primaryErrorKind,
       calibrationMaturity: calibration.maturity,

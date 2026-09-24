@@ -6,7 +6,7 @@
 // getCalibration() needs a DB, so run under a scratch PGlite (test:local).
 // Run: DATABASE_URL=file:./.radar-test-local node src/council/test-evaluate.js
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -661,6 +661,56 @@ test('councilEvaluate: concurrent identical clicks share one in-flight run', asy
     eq(fake.calls.length, 5, 'only one set of stages ran');
     ok(first.reusedInFlight || second.reusedInFlight, 'one click joined the active run');
     eq(readdirSync(dealLogDir).filter(file => file.endsWith('.md')).length, 1, 'one artifact written');
+  }));
+
+test('councilEvaluate: accepted sibling survives failed debate and explicit retry', async () =>
+  withTempDir(async dealLogDir => {
+    const fake = fakeProvider({ delay: 5 });
+    const original = fake.runSession.bind(fake);
+    let failBear = true;
+    fake.runSession = async request => {
+      if (failBear && request.prompt.startsWith('STAGE: bear')) {
+        failBear = false;
+        throw new Error('injected bear transport failure');
+      }
+      return original(request);
+    };
+    const options = { provider: fake, env: {}, dealLogDir, findExisting: async () => [], stageCheckpoints: true };
+    await throwsAsync(() => councilEvaluate({ company: 'Recovery Co' }, options), 'Agent SDK session failed');
+    await throwsAsync(() => councilEvaluate({ company: 'Recovery Co' }, options), 'explicit retry');
+    const out = await councilEvaluate({ company: 'Recovery Co' }, {
+      ...options, retryInterruptedStages: true,
+    });
+    eq(fake.calls.filter(call => call.prompt.startsWith('STAGE: research')).length, 1);
+    eq(fake.calls.filter(call => call.prompt.startsWith('STAGE: bull')).length, 1);
+    eq(fake.calls.filter(call => call.prompt.startsWith('STAGE: bear')).length, 1);
+    eq(out.currentRunUsage.totalCostUsd, 0.03, 'only Bear, Calibrator, and CFO incurred this run');
+    eq(out.usage.totalCostUsd, 0.05, 'complete Council still includes prior accepted stage cost');
+    eq(out.checkpointUncertainty[0].stage, 'bear');
+  }));
+
+test('councilEvaluate: dependency changes and explicit fresh execution do not reuse stage outputs', async () =>
+  withTempDir(async dealLogDir => {
+    const fake = fakeProvider();
+    const options = { provider: fake, env: {}, dealLogDir, findExisting: async () => [], stageCheckpoints: true };
+    await councilEvaluate({ company: 'Change Co' }, options);
+    await councilEvaluate({ company: 'Change Co', notes: 'New evidence' }, options);
+    await councilEvaluate({ company: 'Change Co' }, { ...options, executionId: 'fresh-run' });
+    eq(fake.calls.length, 15, 'three complete stage sets dispatched');
+  }));
+
+test('councilEvaluate: invalid accepted checkpoint is rejected before stage reuse', async () =>
+  withTempDir(async dealLogDir => {
+    const fake = fakeProvider();
+    const deal = { company: 'Tamper Co' };
+    const options = { provider: fake, env: {}, dealLogDir, findExisting: async () => [], stageCheckpoints: true };
+    const out = await councilEvaluate(deal, options);
+    const checkpoint = join(dealLogDir, '.council-checkpoints', out.provenance.runKey, 'bull.json');
+    const receipt = JSON.parse(readFileSync(checkpoint, 'utf8'));
+    receipt.value.outcome.data.dimension_scores.pop();
+    writeFileSync(checkpoint, JSON.stringify(receipt));
+    await throwsAsync(() => councilEvaluate(deal, options), 'checkpoint failed validation');
+    eq(fake.calls.length, 5, 'invalid cache never triggered a silent paid rerun');
   }));
 
 test('councilEvaluate: changed deal input produces a new run fingerprint', async () => {

@@ -959,6 +959,7 @@ program
   .description('Run the investment council on a pipeline deal (headless; writes + ingests a deal-log)')
   .option('--dry-run', 'Assemble and preview the session without calling the model')
   .option('--deal-log-dir <path>', 'Where to write the deal-log artifact (default: $DEAL_LOG_DIR)')
+  .option('--retry-interrupted-stages', 'Retry stages with failed or uncertain dispatch receipts; prior model cost may be unknown')
   .action(async (slug, opts) => {
     try {
       const invite = await pipelineDetail(slug);
@@ -1008,6 +1009,8 @@ program
         provider,
         buildFallback,
         dealLogDir,
+        stageCheckpoints: true,
+        retryInterruptedStages: Boolean(opts.retryInterruptedStages),
         env: process.env,
         policyId: 'balanced',
       });
@@ -1017,6 +1020,10 @@ program
       }
       if (out.usedFallback) {
         console.log(chalk.yellow(`  ⚠ fell back to api_key after a ${out.primaryErrorKind} condition on the subscription`));
+      }
+      if (out.checkpointUncertainty?.length) {
+        const stages = [...new Set(out.checkpointUncertainty.map(receipt => receipt.stage))];
+        console.log(chalk.yellow(`  ⚠ Prior dispatch cost may be unknown for: ${stages.join(', ')}`));
       }
 
       const imp = await importDealLogs(dealLogDir, {
