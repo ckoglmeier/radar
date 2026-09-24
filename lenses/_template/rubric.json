@@ -79,8 +79,8 @@
           "scale": [1, 5],
           "anchors": {
             "1": "No revenue model articulated",
-            "3": "Model exists but unproven (stage-adjusted: Pre-Seed/Seed LOIs and pilots count)",
-            "5": "Revenue model is legible and early signals confirm it (stage-adjusted)"
+            "3": "A credible revenue model exists but remains commercially unproven. At Pre-Seed/Seed, a credible thesis, LOIs, pilots, or initial paying customers can support 3; these alone do not establish 5.",
+            "5": "A legible revenue model has stronger, stage-appropriate evidence supporting its commercial viability beyond a credible thesis or initial interest. At Pre-Seed/Seed, identify the confirming evidence beyond LOIs, pilots, or initial paying customers alone; do not require mature-company unit economics. At Series A, require actual revenue evidence supporting viability; at Series B+, require proven unit economics. If the model remains explicitly commercially unproven, use 3 rather than 5."
           }
         },
         {

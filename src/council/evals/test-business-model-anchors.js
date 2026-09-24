@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+const rubric = JSON.parse(readFileSync(new URL('../../../lenses/_template/rubric.json', import.meta.url)));
+const dimension = rubric.sections.flatMap(s => s.dimensions).find(d => d.name === 'Business model clarity');
+assert.match(dimension.anchors['3'], /credible thesis/);
+assert.match(dimension.anchors['3'], /alone do not establish 5/);
+assert.match(dimension.anchors['5'], /stronger, stage-appropriate evidence/);
+assert.match(dimension.anchors['5'], /do not require mature-company unit economics/);
+assert.match(dimension.anchors['5'], /commercially unproven, use 3 rather than 5/);
+assert.match(dimension.anchors['5'], /Series B\+, require proven unit economics/);
+console.log('Business model anchors: approved 3/5 distinction and stage-specific evidence requirements preserved');
