@@ -285,7 +285,7 @@ export async function createDatabaseBackupPayload({ includeLocalOnly = false } =
 
 function jsonClone(value, label) {
   try {
-    const serialized = JSON.stringify(value);
+    const serialized = JSON.stringify(value, (_key, child) => child);
     if (serialized === undefined) throw new Error();
     return JSON.parse(serialized);
   } catch {
@@ -345,7 +345,9 @@ export async function createPreMigrationSnapshot({
   };
 
   // Validate the complete snapshot without assuming a post-migration schema.
-  const roundTrip = JSON.parse(JSON.stringify(bundle));
+  // Avoid V8's fast-stringifier zone exhaustion for large mixed-Unicode
+  // database payloads. An identity replacer preserves the backup format.
+  const roundTrip = JSON.parse(JSON.stringify(bundle, (_key, value) => value));
   const roundTripDatabase = JSON.parse(roundTrip.database);
   if (roundTrip.format_version !== 1
       || roundTrip.kind !== 'radar-pre-migration-snapshot'
