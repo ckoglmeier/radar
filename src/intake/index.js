@@ -13,7 +13,7 @@ import {
   markPendingCommitted,
   updatePendingRefs,
   sweepExpiredPending,
-  MAX_SIZE_BYTES,
+  documentSizeLimit,
 } from '../models/documents.js';
 import { DocumentStore } from './document-store.js';
 import { parseInviteEmail } from '../sync/parsers/angellist-invite.js';
@@ -229,7 +229,7 @@ async function matchCompany(companyName, { withInvite, universe }) {
 export async function intakePreview({ content, filename, mime }) {
   const buf = Buffer.isBuffer(content) ? content : Buffer.from(content);
 
-  if (buf.length > MAX_SIZE_BYTES) {
+  if (buf.length > await documentSizeLimit()) {
     return { error: 'FILE_TOO_LARGE' };
   }
 
@@ -649,8 +649,9 @@ export async function intakeCommitBatch({ preview_ids, destination }) {
     throw new Error('intakeCommitBatch: the selected uploads contain duplicate files');
   }
   const totalBytes = pendingRows.reduce((sum, row) => sum + Number(row.size_bytes || 0), 0);
-  if (totalBytes > MAX_BATCH_SIZE_BYTES) {
-    throw new Error(`intakeCommitBatch: selected uploads exceed the ${MAX_BATCH_SIZE_BYTES} byte batch cap`);
+  const batchLimit = (await isPgliteActive()) ? 100 * 1024 * 1024 : MAX_BATCH_SIZE_BYTES;
+  if (totalBytes > batchLimit) {
+    throw new Error(`intakeCommitBatch: selected uploads exceed the ${batchLimit} byte batch cap`);
   }
 
   let existingInvite = null;

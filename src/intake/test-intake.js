@@ -12,7 +12,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { query } from '../db/index.js';
 import { upsertInvestment } from '../models/investments.js';
-import { accessDocumentBytes } from '../models/documents.js';
+import { accessDocumentBytes, documentSizeLimit } from '../models/documents.js';
 import { classifyArtifact, intakePreview, intakeCommit, intakeCommitBatch, withTx } from './index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -441,8 +441,8 @@ async function run() {
   // FILE_TOO_LARGE / UNSUPPORTED_MIME preview errors
   // -------------------------------------------------------------------
 
-  await test('intakePreview: FILE_TOO_LARGE for a >10MB artifact', async () => {
-    const big = Buffer.alloc(11 * 1024 * 1024, 1);
+  await test('intakePreview: FILE_TOO_LARGE above the driver-specific cap', async () => {
+    const big = Buffer.alloc((await documentSizeLimit()) + 1, 1);
     const preview = await intakePreview({ content: big, filename: 'big.bin', mime: 'application/octet-stream' });
     eq(preview.error, 'FILE_TOO_LARGE');
   });

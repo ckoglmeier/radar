@@ -11,6 +11,10 @@ import { isPgliteActive, query } from '../db/index.js';
 import { createDocumentArchive, openDocumentArchive } from './document-archive.js';
 
 export const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB cap (documents table; hosted intake's transport cap is separate, enforced in the app layer)
+export const LOCAL_MAX_SIZE_BYTES = 50 * 1024 * 1024;
+export async function documentSizeLimit() {
+  return (await isPgliteActive()) ? LOCAL_MAX_SIZE_BYTES : MAX_SIZE_BYTES;
+}
 
 // Attachment matrix (docs/INTAKE_BUILD_PLAN.md): the entity_type a document
 // attaches to, mapped to the table its entity_id refers to.
@@ -103,8 +107,9 @@ export async function createDocument({
   await assertEntityExists(entity_type, entity_id);
 
   const buf = toBuffer(content);
-  if (buf.length > MAX_SIZE_BYTES) {
-    throw new Error(`document exceeds ${MAX_SIZE_BYTES} byte cap: ${buf.length} bytes`);
+  const sizeLimit = await documentSizeLimit();
+  if (buf.length > sizeLimit) {
+    throw new Error(`document exceeds ${sizeLimit} byte cap: ${buf.length} bytes`);
   }
 
   const computedSha = createHash('sha256').update(buf).digest('hex');
@@ -366,6 +371,7 @@ export async function orphanReport() {
 
 export async function createPendingIntake({ filename, mime, sha256, content, preview, ttlHours = 24 }) {
   const buf = toBuffer(content);
+  if (buf.length > await documentSizeLimit()) throw new Error('FILE_TOO_LARGE');
   const id = randomUUID();
   const rows = await query(`
     INSERT INTO pending_intake (id, filename, mime, sha256, size_bytes, content, preview, expires_at)

@@ -10,6 +10,7 @@ import { query } from '../db/index.js';
 import { upsertInvestment } from './investments.js';
 import {
   createDocument,
+  documentSizeLimit,
   listDocuments,
   accessDocumentBytes,
   compactDocument,
@@ -168,7 +169,7 @@ async function run() {
     );
   });
 
-  await test('createDocument enforces the 10MB size cap', async () => {
+  await test('createDocument enforces the driver-specific size cap', async () => {
     const company = `Test Documents SizeCap ${stamp}-2`;
     try {
       const investment = await upsertInvestment({
@@ -176,7 +177,7 @@ async function run() {
         company_name: company,
         invest_date: '2026-07-13',
       });
-      const big = Buffer.alloc(11 * 1024 * 1024, 1);
+      const big = Buffer.alloc((await documentSizeLimit()) + 1, 1);
       await expectRejects(
         () => createDocument({
           entity_type: 'investment',
