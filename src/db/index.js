@@ -29,16 +29,31 @@ function pglitePathFromUrl(url) {
 // PGlite singleton (lazy async init)
 // ---------------------------------------------------------------------------
 
-const _pgliteInstances = new Map(); // dataDir → PGlite instance
+const _pgliteInstances = new Map(); // dataDir → initialization promise
 
 async function getPgliteInstance(dataDir) {
   if (_pgliteInstances.has(dataDir)) return _pgliteInstances.get(dataDir);
-  assertWorkspaceLease(dataDir);
-  const { PGlite } = await import('@electric-sql/pglite');
-  const db = new PGlite(dataDir);
-  await db.waitReady;
-  _pgliteInstances.set(dataDir, db);
-  return db;
+  // Publish the promise BEFORE yielding. Concurrent default/scoped requests
+  // must not open independent WASM databases over the same filesystem.
+  const initializing = (async () => {
+    assertWorkspaceLease(dataDir);
+    const { PGlite } = await import('@electric-sql/pglite');
+    const db = new PGlite(dataDir);
+    try {
+      await db.waitReady;
+      return db;
+    } catch (error) {
+      await db.close().catch(() => {});
+      throw error;
+    }
+  })();
+  _pgliteInstances.set(dataDir, initializing);
+  try {
+    return await initializing;
+  } catch (error) {
+    if (_pgliteInstances.get(dataDir) === initializing) _pgliteInstances.delete(dataDir);
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +161,10 @@ function getDefaultDriver() {
     throw new Error(MISSING_DATABASE_URL_MESSAGE);
   }
   if (!_defaultDriverPromise) {
-    _defaultDriverPromise = getDriver(DATABASE_URL);
+    _defaultDriverPromise = getDriver(DATABASE_URL).catch(error => {
+      _defaultDriverPromise = null;
+      throw error;
+    });
   }
   return _defaultDriverPromise;
 }
@@ -185,8 +203,8 @@ export async function withTenant(connectionString, fn) {
  * drivers have nothing to close. Safe to call when nothing is open.
  */
 export async function closeDb() {
-  for (const db of _pgliteInstances.values()) {
-    try { await db.close(); } catch { /* already closed */ }
+  for (const initializing of _pgliteInstances.values()) {
+    try { await (await initializing).close(); } catch { /* failed to open or already closed */ }
   }
   _pgliteInstances.clear();
   _defaultDriverPromise = null;
