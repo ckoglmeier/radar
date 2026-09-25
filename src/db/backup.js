@@ -68,6 +68,7 @@ const INSERT_ORDER = [
   'live_assessment_turns',
   'radar_assessment_drafts',
   'radar_assessment_updates',
+  'radar_browser_captures',
   'decision_records',
   'rooms',
   'room_holdings',
