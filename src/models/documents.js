@@ -390,14 +390,23 @@ export async function getPendingIntake(id) {
   return rows[0] || null;
 }
 
+// Conditional pending -> committed transition. Returns null when the row is
+// missing or no longer 'pending' (e.g. a concurrent commit already won), so
+// callers can abort instead of writing a second copy of the artifact.
 export async function markPendingCommitted(id, created_refs) {
   const rows = await query(`
     UPDATE pending_intake
     SET status = 'committed', created_refs = $2::jsonb, content = $3
-    WHERE id = $1
+    WHERE id = $1 AND status = 'pending'
     RETURNING *
   `, [id, JSON.stringify(created_refs), Buffer.alloc(0)]);
   return rows[0] || null;
+}
+
+export function alreadyCommittedError(id) {
+  const error = new Error(`staged upload is missing, expired, or already committed: ${id}`);
+  error.code = 'PENDING_ALREADY_COMMITTED';
+  return error;
 }
 
 // Records created_refs progressively while the row STAYS 'pending' (does not

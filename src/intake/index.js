@@ -11,6 +11,7 @@ import {
   createPendingIntake,
   getPendingIntake,
   markPendingCommitted,
+  alreadyCommittedError,
   updatePendingRefs,
   sweepExpiredPending,
   documentSizeLimit,
@@ -576,7 +577,12 @@ export async function intakeCommit({ preview_id, overrides = {} }) {
   const content = Buffer.isBuffer(pending.content) ? pending.content : Buffer.from(pending.content);
 
   const result = await withTx(async () => {
-    let refs = pending.created_refs || {};
+    // Re-read inside the transaction: on PGlite a concurrent commit of the
+    // same preview is serialized ahead of us and has already flipped status.
+    const current = await getPendingIntake(preview_id);
+    if (!current) throw new Error(`intakeCommit: no pending intake for preview_id=${preview_id} (missing or expired)`);
+    if (current.status === 'committed') return { replay: current.created_refs || {} };
+    let refs = current.created_refs || {};
     let created = refs.created ?? null;
 
     if (effectiveType !== 'document' && !created) {
@@ -605,10 +611,14 @@ export async function intakeCommit({ preview_id, overrides = {} }) {
       await updatePendingRefs(pending.id, refs);
     }
 
-    await markPendingCommitted(pending.id, refs);
+    if (!await markPendingCommitted(pending.id, refs)) throw alreadyCommittedError(pending.id);
 
     return { created, document_id };
   });
+
+  if (result.replay) {
+    return { created: result.replay.created ?? null, document_id: result.replay.document_id ?? null, idempotent_replay: true };
+  }
 
   // Preview/classification has finished using the raw upload. Compaction is a
   // best-effort storage optimization outside the commit boundary: a ZIP
@@ -635,46 +645,49 @@ export async function intakeCommitBatch({ preview_ids, destination }) {
     throw new Error('intakeCommitBatch: preview_ids must be unique');
   }
 
-  const pendingRows = [];
-  for (const previewId of preview_ids) {
-    const pending = await getPendingIntake(previewId);
-    if (!pending || pending.status !== 'pending') {
-      throw new Error(`intakeCommitBatch: staged upload is missing, expired, or already committed: ${previewId}`);
-    }
-    pendingRows.push(pending);
-  }
-
-  const hashes = pendingRows.map(row => row.sha256);
-  if (new Set(hashes).size !== hashes.length) {
-    throw new Error('intakeCommitBatch: the selected uploads contain duplicate files');
-  }
-  const totalBytes = pendingRows.reduce((sum, row) => sum + Number(row.size_bytes || 0), 0);
-  const batchLimit = (await isPgliteActive()) ? 100 * 1024 * 1024 : MAX_BATCH_SIZE_BYTES;
-  if (totalBytes > batchLimit) {
-    throw new Error(`intakeCommitBatch: selected uploads exceed the ${batchLimit} byte batch cap`);
-  }
-
-  let existingInvite = null;
-  if (destination.kind === 'existing_pipeline_invite') {
-    [existingInvite] = await query(
-      'SELECT * FROM pipeline_invites WHERE id = $1',
-      [destination.invite_id],
-    );
-    if (!existingInvite) throw new Error(`intakeCommitBatch: pipeline invite not found: ${destination.invite_id}`);
-    const duplicates = await query(`
-      SELECT sha256 FROM documents
-       WHERE entity_type = 'pipeline_invite'
-         AND entity_id = $1::text
-         AND sha256 = ANY($2::text[])
-    `, [existingInvite.id, hashes]);
-    if (duplicates.length > 0) {
-      throw new Error('intakeCommitBatch: a selected file is already attached to this deal');
-    }
-  } else if (destination.kind !== 'new_pipeline_invite') {
-    throw new Error(`intakeCommitBatch: unsupported destination: ${destination.kind}`);
-  }
-
+  // Every read that decides whether to write happens inside the serialized
+  // PGlite transaction, so two concurrent commits of the same preview cannot
+  // both see 'pending' and attach the artifact twice.
   const result = await withAtomicWrite(async () => {
+    const pendingRows = [];
+    for (const previewId of preview_ids) {
+      const pending = await getPendingIntake(previewId);
+      if (!pending || pending.status !== 'pending') {
+        throw new Error(`intakeCommitBatch: staged upload is missing, expired, or already committed: ${previewId}`);
+      }
+      pendingRows.push(pending);
+    }
+
+    const hashes = pendingRows.map(row => row.sha256);
+    if (new Set(hashes).size !== hashes.length) {
+      throw new Error('intakeCommitBatch: the selected uploads contain duplicate files');
+    }
+    const totalBytes = pendingRows.reduce((sum, row) => sum + Number(row.size_bytes || 0), 0);
+    const batchLimit = (await isPgliteActive()) ? 100 * 1024 * 1024 : MAX_BATCH_SIZE_BYTES;
+    if (totalBytes > batchLimit) {
+      throw new Error(`intakeCommitBatch: selected uploads exceed the ${batchLimit} byte batch cap`);
+    }
+
+    let existingInvite = null;
+    if (destination.kind === 'existing_pipeline_invite') {
+      [existingInvite] = await query(
+        'SELECT * FROM pipeline_invites WHERE id = $1',
+        [destination.invite_id],
+      );
+      if (!existingInvite) throw new Error(`intakeCommitBatch: pipeline invite not found: ${destination.invite_id}`);
+      const duplicates = await query(`
+        SELECT sha256 FROM documents
+         WHERE entity_type = 'pipeline_invite'
+           AND entity_id = $1::text
+           AND sha256 = ANY($2::text[])
+      `, [existingInvite.id, hashes]);
+      if (duplicates.length > 0) {
+        throw new Error('intakeCommitBatch: a selected file is already attached to this deal');
+      }
+    } else if (destination.kind !== 'new_pipeline_invite') {
+      throw new Error(`intakeCommitBatch: unsupported destination: ${destination.kind}`);
+    }
+
     const promotableFields = [
       'lead', 'co_investors', 'market', 'round', 'allocation_usd',
       'min_investment_usd', 'carry_pct', 'valuation_text', 'valuation_usd',
@@ -727,7 +740,9 @@ export async function intakeCommitBatch({ preview_ids, destination }) {
         content,
         source: 'intake',
       });
-      await markPendingCommitted(pending.id, { created, document_id: document.id });
+      if (!await markPendingCommitted(pending.id, { created, document_id: document.id })) {
+        throw new Error(`intakeCommitBatch: ${alreadyCommittedError(pending.id).message}`);
+      }
       documents.push({ id: document.id, filename: document.filename, sha256: document.sha256 });
     }
 
