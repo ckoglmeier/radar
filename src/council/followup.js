@@ -1,3 +1,4 @@
+import { aggregateStageUsage } from '../providers/session-usage.js';
 import { createHash } from 'crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
@@ -437,6 +438,7 @@ export async function councilFollowupEvaluate({
   provenance.sessionId = outcome.result.sessionId || null;
   provenance.modelPolicy = followupModelPolicy;
 
+  const followupUsage = aggregateStageUsage([{ stage: 'followup', result: outcome.result }]).total;
   return {
     result: {
       text: `Founder follow-up applied: ${artifact.canonical.totalScore}/50 · ${artifact.canonical.verdict}`,
@@ -444,9 +446,9 @@ export async function councilFollowupEvaluate({
       sessionId: outcome.result.sessionId || null,
       model: followupModel,
       apiKeySource: outcome.result.apiKeySource || null,
-      usage: outcome.result.usage || {},
+      usage: followupUsage,
     },
-    usage: outcome.result.usage || {},
+    usage: followupUsage,
     usedFallback: outcome.usedFallback,
     primaryErrorKind: outcome.primaryErrorKind,
     modelPolicy: followupModelPolicy,

@@ -85,7 +85,11 @@
  * @property {number} outputTokens
  * @property {number} cacheReadInputTokens
  * @property {number} cacheCreationInputTokens
- * @property {number} totalCostUsd
+ * @property {number|null} totalCostUsd  null = unknown (never coerced to 0)
+ * @property {number} [reasoningTokens]  subset of outputTokens; never add
+ * @property {number|null} [estimatedCostUsd]
+ * @property {number|null} [billedCostUsd]
+ * @property {Array<{tool: string, calls: number}>} [billableTools]
  * @property {Object<string, {inputTokens: number, outputTokens: number, cacheReadInputTokens: number, cacheCreationInputTokens: number, costUsd: number}>} [byModel]
  *   Per-model breakdown (the SDK reports `modelUsage`), so a run that fanned out
  *   across Haiku/Sonnet/Opus subagents can be attributed per tier.

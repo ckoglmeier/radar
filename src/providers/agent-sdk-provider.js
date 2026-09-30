@@ -102,7 +102,7 @@ function normalizeUsage(resultMsg) {
       outputTokens: mu.outputTokens ?? 0,
       cacheReadInputTokens: mu.cacheReadInputTokens ?? 0,
       cacheCreationInputTokens: mu.cacheCreationInputTokens ?? 0,
-      costUsd: mu.costUSD ?? mu.costUsd ?? 0,
+      costUsd: mu.costUSD ?? mu.costUsd ?? null,
     };
   }
   return {
@@ -110,7 +110,7 @@ function normalizeUsage(resultMsg) {
     outputTokens: usage.output_tokens ?? 0,
     cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
     cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
-    totalCostUsd: resultMsg.total_cost_usd ?? 0,
+    totalCostUsd: resultMsg.total_cost_usd ?? null,
     byModel: Object.keys(byModel).length ? byModel : undefined,
   };
 }

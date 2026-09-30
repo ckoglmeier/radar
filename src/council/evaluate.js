@@ -10,6 +10,7 @@
 // it is fully unit-testable with a fake. The CLI (C1) constructs the real
 // AgentSdkProvider + api_key fallback factory and passes them in.
 
+import { aggregateStageUsage } from '../providers/session-usage.js';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
@@ -1238,56 +1239,6 @@ export function buildCouncilAgents(models) {
         'against the GP tiers, round params, and the consensus score in your context.',
     },
   };
-}
-
-function aggregateStageUsage(stages) {
-  const total = {
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadInputTokens: 0,
-    cacheCreationInputTokens: 0,
-    totalCostUsd: 0,
-    byModel: {},
-  };
-  const perStage = stages.map(stage => {
-    const usage = stage.result.usage || {};
-    total.inputTokens += Number(usage.inputTokens || 0);
-    total.outputTokens += Number(usage.outputTokens || 0);
-    total.cacheReadInputTokens += Number(usage.cacheReadInputTokens || 0);
-    total.cacheCreationInputTokens += Number(usage.cacheCreationInputTokens || 0);
-    total.totalCostUsd += Number(usage.totalCostUsd || 0);
-    for (const [model, modelUsage] of Object.entries(usage.byModel || {})) {
-      if (!total.byModel[model]) {
-        total.byModel[model] = {
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadInputTokens: 0,
-          cacheCreationInputTokens: 0,
-          costUsd: 0,
-        };
-      }
-      total.byModel[model].inputTokens += Number(modelUsage.inputTokens || 0);
-      total.byModel[model].outputTokens += Number(modelUsage.outputTokens || 0);
-      total.byModel[model].cacheReadInputTokens += Number(modelUsage.cacheReadInputTokens || 0);
-      total.byModel[model].cacheCreationInputTokens += Number(modelUsage.cacheCreationInputTokens || 0);
-      total.byModel[model].costUsd += Number(modelUsage.costUsd || 0);
-    }
-    return {
-      stage: stage.stage,
-      reusedCheckpoint: Boolean(stage.reusedCheckpoint),
-      model: stage.result.model || null,
-      numTurns: Number(stage.result.numTurns || 0),
-      usage: {
-        inputTokens: Number(usage.inputTokens || 0),
-        outputTokens: Number(usage.outputTokens || 0),
-        cacheReadInputTokens: Number(usage.cacheReadInputTokens || 0),
-        cacheCreationInputTokens: Number(usage.cacheCreationInputTokens || 0),
-        totalCostUsd: Number(usage.totalCostUsd || 0),
-      },
-    };
-  });
-  if (Object.keys(total.byModel).length === 0) delete total.byModel;
-  return { total, perStage };
 }
 
 /**
