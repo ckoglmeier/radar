@@ -1,6 +1,6 @@
 {
   "name": "radar",
-  "version": "2.4.0-assessment-update.0",
+  "version": "2.4.0-assessment-update.1",
   "description": "Decision infrastructure for private market investors. Portfolio tracking, thesis management, deal pipeline, and bet sizing.",
   "type": "module",
   "license": "MIT",
