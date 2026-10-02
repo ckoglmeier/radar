@@ -17,10 +17,10 @@ A useful mental model: **the engine is open source; your judgment is config.** E
 
 ## Stage 1 — Prerequisites & install
 
-You need Node v20+ and Python 3.9+ (standard library only — no pip installs). A database is required but there are two options: a zero-setup local embedded database (no account, no external service) or a hosted PostgreSQL / [Neon](https://neon.tech) connection. See Stage 2 for both paths.
+You need Node 20.16+ (20.x) or 22.3+ and Python 3.9+ (standard library only — no pip installs). Use local PGlite for complete workflow support. Remote Neon HTTP has important write limitations; see [database capabilities](DATABASE_CAPABILITIES.md).
 
 ```bash
-node --version     # must be >= 20
+node --version     # 20.16+ (20.x) or 22.3+; not Node 21
 python3 --version  # must be >= 3.9
 
 git clone https://github.com/ckoglmeier/radar.git
@@ -29,13 +29,13 @@ npm install
 npm run setup-hooks
 ```
 
-`setup-hooks` activates the pre-commit gate: it blocks accidental commits of CSVs/PDFs/`.env` and runs the test suite before every commit. If you plan to commit your own changes, you want this on.
+`setup-hooks` activates staged-file checks and the fast synthetic regression group. Full CI runs the complete suite. These checks reduce accidental disclosure; they are not a comprehensive secret scanner.
 
 **Verify:**
 ```bash
 npm test
 ```
-All suites should pass with no configuration at all — tests are self-contained. (The suites that touch a database will need `DATABASE_URL` set; if you haven't done Stage 2 yet, any failure mentioning `DATABASE_URL` is expected and resolves after the next stage.)
+No database or provider configuration is needed for `npm test`: the runner creates disposable databases and ignores your database URL and dotenv configuration. Do not run legacy database test files directly against your configured workspace.
 
 ---
 
@@ -45,13 +45,13 @@ All suites should pass with no configuration at all — tests are self-contained
 cp .env.example .env
 # Choose one of the two DATABASE_URL options in .env:
 #   Easy/local:  DATABASE_URL=file:./radar.db       (embedded, zero external setup)
-#   Remote:      DATABASE_URL=postgresql://...       (Neon free tier or any Postgres)
+#   Limited remote: DATABASE_URL=postgresql://...    (Neon HTTP; not full workflow support)
 node src/cli.js db:setup
 ```
 
 **Local embedded** (`file:./radar.db`) uses PGlite — a WASM build of Postgres that persists to a local directory. No account, no network, no service to run. This is the fastest way to get started. The file is gitignored by default.
 
-**Remote** (`postgresql://...`) is the production-grade path. Neon's free tier is plenty for a personal portfolio; any Postgres connection string works.
+**Remote** (`postgresql://...`) uses the Neon HTTP adapter, not a generic PostgreSQL connection. Operations requiring `withAtomicWrite` fail closed with `ATOMIC_WRITE_UNAVAILABLE`. Do not choose this backend for complete command/intake workflows. See [database capabilities](DATABASE_CAPABILITIES.md).
 
 `db:setup` runs every migration in `src/db/migrations/` in order and is safe to re-run — applied migrations are tracked in a `schema_migrations` table. `db:migrate` does the same thing later, when you pull a version with new migrations.
 

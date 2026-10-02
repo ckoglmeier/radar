@@ -2,11 +2,21 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -24,3 +34,9 @@ jobs:
 
       - name: Run tests (PGlite — no secrets required)
         run: npm run test:local
+
+      - name: Verify distributable package
+        run: npm run test:package
+
+      - name: Live assessment contract
+        run: npm run test:live-assessment

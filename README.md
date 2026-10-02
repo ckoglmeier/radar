@@ -43,9 +43,9 @@ Lenses are portable and shareable — export yours with `lens export`, install s
 
 ### Prerequisites
 
-- Node.js v20+
+- Node.js 20.16+ (20.x) or 22.3+; Node 21 is not supported by the PDF dependency
 - Python 3.9+ (analytics sidecar — Kelly solver, rubric validation; stdlib only, no pip installs)
-- A database — zero-setup local embedded database (`DATABASE_URL=file:./radar.db`) or any PostgreSQL / [Neon](https://neon.tech) connection string
+- Local PGlite (`DATABASE_URL=file:./radar.db`) for the complete transactional workflow. Neon HTTP supports a limited subset; see [database capabilities](docs/DATABASE_CAPABILITIES.md).
 
 ### Install
 
@@ -53,7 +53,7 @@ Lenses are portable and shareable — export yours with `lens export`, install s
 git clone https://github.com/ckoglmeier/radar.git
 cd radar
 npm install
-npm run setup-hooks   # pre-commit hook: blocks sensitive files, runs the test gate
+npm run setup-hooks   # staged-file checks and fast synthetic regressions
 ```
 
 ### Configure
@@ -170,19 +170,21 @@ local only). Full guide: [docs/COUNCIL_AUTH.md](docs/COUNCIL_AUTH.md).
 ## Tech stack
 
 - **Runtime:** Node.js (ESM), plus a Python 3 analytics sidecar called via JSON-over-stdin (Kelly solver, statistical validation — standard library only)
-- **Database:** Embedded PGlite (local, zero-setup) or PostgreSQL via `@neondatabase/serverless` (Neon / any Postgres)
+- **Database:** Embedded PGlite; limited remote query support through Neon HTTP. Not a generic PostgreSQL wire-protocol adapter.
 - **AI:** Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) behind a single provider seam — subscription (OAuth) or API-key billing; per-persona model tiering via subagents
 - **CLI:** `commander` + `chalk`
 - **No ORM.** Raw parameterized SQL. Intentional at this scale.
-- **Layering:** `src/reports/` returns pure data; `src/cli/printers/` formats it. A future web GUI reuses the report layer untouched.
+- **Layering:** `src/reports/` returns pure data; `src/cli/printers/` formats it. The separate Radar app consumes the engine. See [maintenance roadmap](docs/ROADMAP.md).
 
 ## Tests
 
 ```bash
-npm test   # 730+ assertions across Node + Python suites; also runs as the pre-commit gate
+npm test                 # complete registered Node + Python suite
+npm run test:fast        # quick local/pre-commit subset
+npm run test:inventory   # fail if any source test is missing from the manifest
 ```
 
-Test suites are fully self-contained — synthetic fixtures, no external files or personal data required.
+The npm test runners create disposable PGlite workspaces, ignore your DATABASE_URL/.env and strip inherited provider credentials. Each suite gets a fresh default database. No personal data or paid calls are needed. Direct invocation of legacy test files is not protected by this runner; use the npm scripts. See [contributing](CONTRIBUTING.md).
 
 ## License
 

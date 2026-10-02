@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { query, withTenant, closeDb } from './index.js';
@@ -22,7 +22,10 @@ try {
       }
       await query('DELETE FROM schema_migrations WHERE version >= 74');
       const history = await query('SELECT * FROM schema_migrations WHERE version <= 73 ORDER BY version');
-      assert.deepEqual((await inspectPendingMigrations()).pending.map(m => m.version), [74, 75, 76, 77]);
+      const expected = readdirSync(new URL('./migrations/', import.meta.url))
+        .filter(f => /^\d+.*\.sql$/.test(f)).map(f => Number(f.split('_')[0]))
+        .filter(v => v >= 74).sort((a, b) => a - b);
+      assert.deepEqual((await inspectPendingMigrations()).pending.map(m => m.version), expected);
       await runMigrations({ seedLegacyTheses: false });
       assert.deepEqual(await query('SELECT * FROM schema_migrations WHERE version <= 73 ORDER BY version'), history);
       assert.equal((await query('SELECT description FROM theses'))[0].description, 'Preserve this belief');

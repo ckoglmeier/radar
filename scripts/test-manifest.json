@@ -1,0 +1,209 @@
+{
+  "tests": [
+    "src/analytics/test_kelly.py",
+    "src/analytics/test_thesis_validation.py",
+    "src/commands/test-adapters.js",
+    "src/commands/test-direct-lifecycle-commands.js",
+    "src/commands/test-employment-lifecycle-commands.js",
+    "src/commands/test-fund-lifecycle-commands.js",
+    "src/commands/test-intake-council-commands.js",
+    "src/commands/test-pipeline-commands.js",
+    "src/commands/test-portfolio-commands.js",
+    "src/commands/test-registry.js",
+    "src/commands/test-service.js",
+    "src/commands/test-thesis-commands.js",
+    "src/commands/test-workspace-commands.js",
+    "src/config/test-data-dir.js",
+    "src/council/evals/test-business-model-anchors.js",
+    "src/council/evals/test-checkpoint-runner.js",
+    "src/council/evals/test-contracts.js",
+    "src/council/evals/test-controlled-replay.js",
+    "src/council/test-ad-hoc-review.js",
+    "src/council/test-evaluate-ad-hoc.js",
+    "src/council/test-evaluate.js",
+    "src/council/test-evidence-policy.js",
+    "src/council/test-followup.js",
+    "src/council/test-ingest.js",
+    "src/council/test-room-evidence.js",
+    "src/council/test-source-policy.js",
+    "src/db/test-atomic-write.js",
+    "src/db/test-backup-restore.js",
+    "src/db/test-concurrent-open.js",
+    "src/db/test-direct-lifecycle-backup.js",
+    "src/db/test-driver.js",
+    "src/db/test-migration-040.js",
+    "src/db/test-migration-069.js",
+    "src/db/test-migration-identity.js",
+    "src/db/test-pre-migration.js",
+    "src/db/test-public-bootstrap.js",
+    "src/db/test-seed-lens.js",
+    "src/db/test-workspace-lease.js",
+    "src/export/test-beancount.js",
+    "src/import/test-transactions-db.js",
+    "src/import/test-transactions.js",
+    "src/intake/test-extraction.js",
+    "src/intake/test-intake.js",
+    "src/intake/test-reextract.js",
+    "src/lenses/test-calibration.js",
+    "src/lenses/test-council-parser.js",
+    "src/lenses/test-hydrate.js",
+    "src/lenses/test-lens-loader.js",
+    "src/metrics/test-contract.js",
+    "src/metrics/test-registry.js",
+    "src/models/test-ad-hoc-reviews.js",
+    "src/models/test-attention-dismissals.js",
+    "src/models/test-canonical-product-model.js",
+    "src/models/test-command-conversations.js",
+    "src/models/test-command-proposals.js",
+    "src/models/test-company-aliases.js",
+    "src/models/test-council-followups.js",
+    "src/models/test-council-runs.js",
+    "src/models/test-decisions.js",
+    "src/models/test-direct-valuations.js",
+    "src/models/test-distribution-validation.js",
+    "src/models/test-documents.js",
+    "src/models/test-employment-equity-audit.js",
+    "src/models/test-employment-equity.js",
+    "src/models/test-evaluation-invite-link.js",
+    "src/models/test-evaluations.js",
+    "src/models/test-file-vault.js",
+    "src/models/test-framework.js",
+    "src/models/test-funds-audit.js",
+    "src/models/test-funds-migration.js",
+    "src/models/test-funds.js",
+    "src/models/test-investment-updates.js",
+    "src/models/test-investments.js",
+    "src/models/test-lens-config.js",
+    "src/models/test-metric-views.js",
+    "src/models/test-portfolio-entities.js",
+    "src/models/test-reconciliation.js",
+    "src/models/test-rooms.js",
+    "src/models/test-settings-first-write.js",
+    "src/models/test-settings.js",
+    "src/models/test-theses.js",
+    "src/models/test-workspace-sizing.js",
+    "src/providers/test-auth-mode.js",
+    "src/providers/test-providers.js",
+    "src/providers/test-session-errors.js",
+    "src/providers/test-session-usage.js",
+    "src/reports/test-asset-boundaries.js",
+    "src/reports/test-attention.js",
+    "src/reports/test-deployment-plan.js",
+    "src/reports/test-direct-return-register.js",
+    "src/reports/test-pipeline-evaluations.js",
+    "src/reports/test-pipeline-readiness.js",
+    "src/reports/test-portfolio-realizations.js",
+    "src/reports/test-position-return-metrics.js",
+    "src/reports/test-recent-activity.js",
+    "src/reports/test-reports.js",
+    "src/reports/test-thesis-detail.js",
+    "src/sync/test-fixtures/test-parser.js",
+    "src/utils/test-analytics.js",
+    "src/utils/test-bet-sizing.js",
+    "src/utils/test-format.js",
+    "src/utils/test-irr.js",
+    "src/utils/test-match.js",
+    "src/utils/test-matching.js",
+    "src/utils/test-recompute.js",
+    "src/utils/test-stage.js"
+  ],
+  "groups": {
+    "migration-identity": [
+      "src/db/test-migration-identity.js"
+    ],
+    "data-dir": [
+      "src/config/test-data-dir.js"
+    ],
+    "backup-restore": [
+      "src/db/test-pre-migration.js",
+      "src/db/test-backup-restore.js",
+      "src/db/test-direct-lifecycle-backup.js"
+    ],
+    "identity": [
+      "src/models/test-portfolio-entities.js"
+    ],
+    "canonical-product-model": [
+      "src/models/test-canonical-product-model.js"
+    ],
+    "funds-audit": [
+      "src/models/test-funds-audit.js"
+    ],
+    "funds": [
+      "src/models/test-funds.js"
+    ],
+    "funds-migration": [
+      "src/models/test-funds-migration.js"
+    ],
+    "employment-equity-audit": [
+      "src/models/test-employment-equity-audit.js"
+    ],
+    "employment-equity": [
+      "src/models/test-employment-equity.js"
+    ],
+    "investment-updates": [
+      "src/models/test-investment-updates.js"
+    ],
+    "file-vault": [
+      "src/models/test-file-vault.js"
+    ],
+    "boundary": [
+      "src/import/test-transactions-db.js",
+      "src/export/test-beancount.js",
+      "src/reports/test-asset-boundaries.js",
+      "src/models/test-investments.js",
+      "src/reports/test-reports.js"
+    ],
+    "metrics": [
+      "src/db/test-workspace-lease.js",
+      "src/db/test-atomic-write.js",
+      "src/metrics/test-contract.js",
+      "src/metrics/test-registry.js",
+      "src/models/test-metric-views.js"
+    ],
+    "deployment-plan": [
+      "src/reports/test-deployment-plan.js"
+    ],
+    "returns": [
+      "src/reports/test-direct-return-register.js",
+      "src/reports/test-position-return-metrics.js",
+      "src/reports/test-thesis-detail.js",
+      "src/reports/test-portfolio-realizations.js"
+    ],
+    "lifecycle": [
+      "src/reports/test-portfolio-realizations.js",
+      "src/db/test-direct-lifecycle-backup.js"
+    ],
+    "commands": [
+      "src/commands/test-registry.js",
+      "src/models/test-command-proposals.js",
+      "src/models/test-command-conversations.js",
+      "src/models/test-direct-valuations.js",
+      "src/db/test-migration-069.js",
+      "src/commands/test-service.js",
+      "src/commands/test-thesis-commands.js",
+      "src/commands/test-portfolio-commands.js",
+      "src/commands/test-direct-lifecycle-commands.js",
+      "src/commands/test-fund-lifecycle-commands.js",
+      "src/commands/test-employment-lifecycle-commands.js",
+      "src/commands/test-workspace-commands.js",
+      "src/commands/test-pipeline-commands.js",
+      "src/commands/test-intake-council-commands.js",
+      "src/commands/test-adapters.js"
+    ],
+    "council-contracts": [
+      "src/council/test-evidence-policy.js",
+      "src/council/evals/test-contracts.js",
+      "src/council/evals/test-controlled-replay.js",
+      "src/council/evals/test-checkpoint-runner.js"
+    ],
+    "fast": [
+      "src/config/test-data-dir.js",
+      "src/council/test-source-policy.js",
+      "src/providers/test-session-errors.js",
+      "src/utils/test-format.js",
+      "src/utils/test-irr.js",
+      "src/utils/test-matching.js",
+      "src/utils/test-stage.js"
+    ]
+  }
+}
