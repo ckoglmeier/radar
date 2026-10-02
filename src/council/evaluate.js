@@ -863,6 +863,13 @@ function enrichCalibratorData(data, rubric, stage) {
 
   return {
     ...data,
+    // Transaction analysis supplies evidence, not a second investment decision.
+    // Normalize before rendering, persistence, or any downstream writer sees it.
+    transaction_assessment: {
+      ...data.transaction_assessment,
+      recommendation: canonical.verdict,
+      gated_reason: null,
+    },
     dimension_scores: dimensionScores,
     evidence_assessments: policyResult.evidenceAssessments,
     cap_receipt: policyResult.capReceipt,
