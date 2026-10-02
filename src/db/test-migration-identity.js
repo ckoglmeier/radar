@@ -22,7 +22,7 @@ try {
       }
       await query('DELETE FROM schema_migrations WHERE version >= 74');
       const history = await query('SELECT * FROM schema_migrations WHERE version <= 73 ORDER BY version');
-      assert.deepEqual((await inspectPendingMigrations()).pending.map(m => m.version), [74, 75, 76, 77]);
+      assert.deepEqual((await inspectPendingMigrations()).pending.map(m => m.version), [74, 75, 76, 77, 78, 79, 80, 81, 82]);
       await runMigrations({ seedLegacyTheses: false });
       assert.deepEqual(await query('SELECT * FROM schema_migrations WHERE version <= 73 ORDER BY version'), history);
       assert.equal((await query('SELECT description FROM theses'))[0].description, 'Preserve this belief');
