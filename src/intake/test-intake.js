@@ -537,6 +537,41 @@ async function run() {
       eq(Number(row.valuation_usd), 48000000);
     });
 
+    await test('concurrent batch commits of one preview attach the artifact exactly once', async () => {
+      const { isPgliteActive } = await import('../db/index.js');
+      if (!(await isPgliteActive())) return; // batch commit is PGlite-only
+      const companyName = `ZZINTAKE Batch Race ${stamp}`;
+      const preview = await intakePreview({ content: Buffer.from(`${companyName} synthetic pitch text`), filename: 'race.txt', mime: 'text/plain' });
+      const destination = { kind: 'new_pipeline_invite', company_name: companyName };
+      const results = await Promise.allSettled([
+        intakeCommitBatch({ preview_ids: [preview.preview_id], destination }),
+        intakeCommitBatch({ preview_ids: [preview.preview_id], destination }),
+      ]);
+      eq(results.filter(r => r.status === 'fulfilled').length, 1, 'exactly one commit wins');
+      ok(/already committed/.test(results.find(r => r.status === 'rejected').reason.message), 'loser sees the sequential-retry error');
+      const invites = await query('SELECT id FROM pipeline_invites WHERE company_name = $1', [companyName]);
+      eq(invites.length, 1);
+      const docs = await query(`SELECT id FROM documents WHERE sha256 = $1`, [preview.artifact.sha256]);
+      eq(docs.length, 1, 'one document row');
+    });
+
+    await test('concurrent single commits of one preview write once and replay once', async () => {
+      const { isPgliteActive } = await import('../db/index.js');
+      if (!(await isPgliteActive())) return; // Neon path has no transaction to serialize on
+      const companyName = `ZZINTAKE Single Race ${stamp}`;
+      const preview = await intakePreview({ content: Buffer.from(`${companyName} synthetic pitch text`), filename: 'race-single.txt', mime: 'text/plain' });
+      const overrides = { type: 'pipeline_invite', company_name: companyName };
+      const [a, b] = await Promise.all([
+        intakeCommit({ preview_id: preview.preview_id, overrides }),
+        intakeCommit({ preview_id: preview.preview_id, overrides }),
+      ]);
+      eq([a.idempotent_replay, b.idempotent_replay].filter(Boolean).length, 1, 'one write, one replay');
+      eq(a.created.id, b.created.id);
+      eq(a.document_id, b.document_id);
+      const docs = await query(`SELECT id FROM documents WHERE sha256 = $1`, [preview.artifact.sha256]);
+      eq(docs.length, 1, 'one document row');
+    });
+
     await test('new-deal override: unmatched pitch text (classifies company_update) becomes a new deal', async () => {
       // The reported gap: a NEW deal arrives as plain founder text — the
       // residual classifier calls it company_update with NO_COMPANY_MATCH,

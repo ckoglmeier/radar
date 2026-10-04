@@ -63,6 +63,7 @@ const INSERT_ORDER = [
   'council_run_events',
   'council_run_dispatch',
   'deal_evaluations',
+  'memo_verdict_repairs',
   'council_followup_questions',
   'live_assessment_sessions',
   'live_assessment_turns',

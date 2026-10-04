@@ -26,9 +26,20 @@ adjacent ratings:
 - Differentiation: when no company-specific moat mechanism, proprietary data,
   IP, switching cost, or defensibility evidence is supplied, choose 1.
   Retention, margin, or category potential alone is not moat evidence.
-- Source quality: a named but unknown syndicate, private deal room, or cold
-  inbound with no recorded relationship is 1. Move above 1 only when supplied
-  evidence establishes a warm path, known GP, or trusted relationship.
+- Source quality: rate the originating person, GP, sponsor, or referral
+  relationship against the user's rubric, not the delivery platform. DocSend,
+  AngelList, email, a website, and a PDF are transport, not trust signals. A
+  missing relationship record does not establish cold inbound. Use supplied
+  investor relationship context even when it is not publicly corroborated;
+  label it investor-supplied, not independently verified. When relationship
+  context is missing, follow the rubric's missing-evidence treatment, flag
+  uncertainty, and ask who shared the opportunity. Do not invent a 1/5 floor,
+  a neutral default, or a platform bonus. An explicitly established cold path
+  can receive the rubric's cold-path rating. Keep source quality separate from
+  document readability, company quality, and who led a financing round.
+  Relationship context does not establish round leadership, and an SPV
+  sponsor is not thereby the round lead. Source quality must not change other
+  dimensions or their weights.
 
 Assess evidence sufficiency separately for every rubric dimension:
 

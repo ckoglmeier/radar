@@ -389,6 +389,9 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     eq(out.provenance.researchPlan.questions.at(-1).question_id, 'custom-safety-certification');
     eq(out.provenance.evidenceAssessments.length, 9, 'persists evidence sufficiency by dimension');
     eq(out.provenance.transactionAssessment.version, 1);
+    eq(out.provenance.transactionAssessment.recommendation, 'Worth exploring');
+    eq(out.provenance.transactionAssessment.gated_reason, null);
+    eq(out.result.structuredOutput.calibrator.transaction_assessment.recommendation, 'Worth exploring');
     eq(out.provenance.transactionAssessment.deal_economics.label, 'insufficient');
     eq(out.provenance.followupQuestions[0].current_likert, 3);
     eq(out.provenance.followupQuestions[0].upside_points, 3, 'Radar computes question upside');
@@ -396,6 +399,8 @@ test('councilEvaluate: executes five explicit stages against one seeded evidence
     eq(out.writtenFiles.length, 1);
     eq(stages.join(','), 'research,bull_bear,calibrator,cfo,finalizing', 'reported durable UI stages');
     const artifact = readFileSync(join(dealLogDir, out.writtenFiles[0]), 'utf8');
+    ok(artifact.includes('**Recommendation:** Worth exploring'));
+    ok(!artifact.includes('**Recommendation:** defer'));
     ok(artifact.includes('## Research Plan'), 'artifact records the research plan');
     ok(artifact.includes('## Evidence Confidence'), 'artifact separates evidence confidence');
     ok(artifact.includes('Missing public corroboration does not reduce the score.'));

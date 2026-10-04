@@ -5,6 +5,7 @@ import {
   createPendingIntake,
   getPendingIntake,
   markPendingCommitted,
+  alreadyCommittedError,
   MAX_SIZE_BYTES,
 } from './documents.js';
 
@@ -109,26 +110,33 @@ export async function stageVaultFile({ filename, mime, content }) {
   });
 }
 
+async function replayCommittedVaultUpload(pending) {
+  if (!pending.created_refs?.entry_id || !pending.created_refs?.document_id) {
+    throw new Error('This staged upload was already committed to another Radar record');
+  }
+  const [entry] = await query('SELECT * FROM file_vault_entries WHERE id = $1', [pending.created_refs?.entry_id]);
+  const [document] = await query(`
+    SELECT id, entity_type, entity_id, filename, mime, sha256, source, size_bytes,
+           confidentiality, processing_policy, sync_policy, created_at
+      FROM documents WHERE id = $1
+  `, [pending.created_refs?.document_id]);
+  if (!entry || !document) throw new Error('The committed File Vault upload is incomplete');
+  return { ...entry, document, idempotent_replay: true };
+}
+
 export async function createVaultFileFromPendingIntake({ previewId, ...metadata }) {
-  const pending = await getPendingIntake(previewId);
-  if (!pending) {
+  const staged = await getPendingIntake(previewId);
+  if (!staged) {
     throw new Error('The staged File Vault upload is missing or expired');
   }
-  if (pending.status === 'committed') {
-    if (!pending.created_refs?.entry_id || !pending.created_refs?.document_id) {
-      throw new Error('This staged upload was already committed to another Radar record');
-    }
-    const [entry] = await query('SELECT * FROM file_vault_entries WHERE id = $1', [pending.created_refs?.entry_id]);
-    const [document] = await query(`
-      SELECT id, entity_type, entity_id, filename, mime, sha256, source, size_bytes,
-             confidentiality, processing_policy, sync_policy, created_at
-        FROM documents WHERE id = $1
-    `, [pending.created_refs?.document_id]);
-    if (!entry || !document) throw new Error('The committed File Vault upload is incomplete');
-    return { ...entry, document, idempotent_replay: true };
-  }
+  if (staged.status === 'committed') return replayCommittedVaultUpload(staged);
 
   return withAtomicWrite(async () => {
+    // Re-read inside the serialized transaction so a concurrent commit of the
+    // same upload replays instead of creating a second entry and document.
+    const pending = await getPendingIntake(previewId);
+    if (!pending) throw new Error('The staged File Vault upload is missing or expired');
+    if (pending.status === 'committed') return replayCommittedVaultUpload(pending);
     const created = await createVaultFile({
       ...metadata,
       filename: pending.filename,
@@ -136,10 +144,10 @@ export async function createVaultFileFromPendingIntake({ previewId, ...metadata 
       content: pending.content,
       executionMode: 'desktop',
     });
-    await markPendingCommitted(previewId, {
+    if (!await markPendingCommitted(previewId, {
       entry_id: created.id,
       document_id: created.document.id,
-    });
+    })) throw alreadyCommittedError(previewId);
     return { ...created, idempotent_replay: false };
   });
 }

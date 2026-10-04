@@ -296,6 +296,12 @@ async function runDealLogImport(dir, opts = {}) {
     file.endsWith('.md') && (!requestedFiles || requestedFiles.has(file)));
   const rubric = evalMode === 'council' ? getRubric() : null;
   const provenance = opts.provenance || {};
+  let explicitInvite = null;
+  if (opts.pipelineInviteId != null) {
+    if (!Number.isSafeInteger(Number(opts.pipelineInviteId)) || Number(opts.pipelineInviteId) <= 0) throw new Error('Invalid pipelineInviteId');
+    [explicitInvite] = await query('SELECT id, company_name, status FROM pipeline_invites WHERE id = $1', [Number(opts.pipelineInviteId)]);
+    if (!explicitInvite) throw new Error('Requested pipeline invite was not found');
+  }
   const results = {
     total: files.length,
     imported: 0,
@@ -345,7 +351,12 @@ async function runDealLogImport(dir, opts = {}) {
       // Try to link to a pipeline invite (multi-strategy fuzzy match) —
       // shared with src/intake via models/pipeline.js so the two callers
       // can't drift apart.
-      const inviteMatch = await matchCompanyToPipelineInvite(parsed.company_name);
+      if (explicitInvite && explicitInvite.company_name.trim().toLowerCase() !== parsed.company_name.trim().toLowerCase()) {
+        throw new Error('Evaluation company does not match the requested pipeline invite');
+      }
+      const inviteMatch = explicitInvite
+        ? { invite_id: explicitInvite.id, status: explicitInvite.status }
+        : await matchCompanyToPipelineInvite(parsed.company_name);
       const pipeline_invite_id = inviteMatch.invite_id;
       const pipeline_status = inviteMatch.status;
 

@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import { closeDb, query } from '../db/index.js';
 import { accessDocumentBytes } from './documents.js';
-import { createVaultFile, listVaultFiles } from './file-vault.js';
+import { createVaultFile, createVaultFileFromPendingIntake, listVaultFiles, stageVaultFile } from './file-vault.js';
+import { isPgliteActive } from '../db/index.js';
 
 const title = `Test life policy ${Date.now()}`;
 const investmentTitle = `Test investment record ${Date.now()}`;
@@ -81,6 +82,17 @@ try {
     }),
     /valid file-vault category/,
   );
+
+  if (await isPgliteActive()) {
+    // Concurrent commits of one staged upload: one entry, one document, one replay.
+    const staged = await stageVaultFile({ filename: 'race.pdf', mime: 'application/pdf', content: Buffer.from(`%PDF-vault-race-${Date.now()}`) });
+    const meta = { previewId: staged.id, title, category: 'life_insurance' };
+    const [first, second] = await Promise.all([createVaultFileFromPendingIntake(meta), createVaultFileFromPendingIntake(meta)]);
+    assert.equal(first.id, second.id);
+    assert.equal([first.idempotent_replay, second.idempotent_replay].filter(Boolean).length, 1);
+    const docs = await query('SELECT id FROM documents WHERE sha256 = $1', [staged.sha256]);
+    assert.equal(docs.length, 1);
+  }
 
   console.log('file-vault: private household document storage passed');
 } finally {
