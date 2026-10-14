@@ -57,7 +57,7 @@ async function positionTarget(investmentId) {
       JOIN employment_equity_positions eep ON eep.investment_id = i.id
      WHERE i.id = $1
   `, [investmentId]);
-  if (!row || row.asset_class !== 'employment_equity') throw new CommandError('TARGET_NOT_FOUND', `Employment Equity position not found: ${investmentId}`);
+  if (!row || row.asset_class !== 'employment_equity') throw new CommandError('TARGET_NOT_FOUND', `Earned Equity position not found: ${investmentId}`);
   return { type: 'employment_equity_position', id: Number(row.id), label: row.company_name, portfolioEntityId: row.portfolio_entity_id };
 }
 
@@ -71,7 +71,7 @@ async function inspectPosition(target) {
       FROM investments i JOIN employment_equity_positions eep ON eep.investment_id = i.id
      WHERE i.id = $1
   `, [target.id]);
-  if (!row) throw new CommandError('TARGET_NOT_FOUND', `Employment Equity position not found: ${target.id}`);
+  if (!row) throw new CommandError('TARGET_NOT_FOUND', `Earned Equity position not found: ${target.id}`);
   return row;
 }
 
@@ -126,8 +126,8 @@ const settlementFields = {
 
 export const employmentLifecycleCommandDefinitions = [
   base({
-    name: 'employment.create_issuer', title: 'Create Employment issuer',
-    description: 'Create an operating-company issuer for Employment Equity reporting.',
+    name: 'employment.create_issuer', title: 'Create Earned Equity issuer',
+    description: 'Create an operating-company issuer for Earned Equity reporting.',
     risk: 'metadata_change',
     editableInputKeys: ['legalName', 'legalForm', 'jurisdiction', 'relationshipStatus', 'employmentStartDate', 'employmentEndDate'],
     inputSchema: schema({
@@ -146,14 +146,15 @@ export const employmentLifecycleCommandDefinitions = [
     affectedResources: ({ result }) => [{ type: 'employment_issuer', id: result.entity.id, label: result.entity.legal_name }],
   }),
   base({
-    name: 'employment.create_position', title: 'Create Employment position',
-    description: 'Create an Employment Equity position with its opening instrument and valuation evidence.',
+    name: 'employment.create_position', title: 'Create Earned Equity position',
+    description: 'Create an Earned Equity position with its opening instrument and valuation evidence.',
     risk: 'metadata_change',
-    editableInputKeys: ['displayName', 'description'],
+    editableInputKeys: ['displayName', 'description', 'acquisitionOrigin'],
     inputSchema: schema({
       portfolioEntityId: uuid, displayName: text,
       instrumentFamily: { type: 'string', enum: ['ppu', 'common_stock', 'iso', 'nso', 'rsu', 'profits_interest', 'other'] },
       investDate: date, ownershipEntity: nullableText, description: nullableText,
+      acquisitionOrigin: { type: 'string', enum: ['employment', 'advisory', 'board', 'other'] },
       firstGrant: { anyOf: [schema(grantFields, ['legalInstrumentName', 'instrumentType', 'grantDate', 'unitsGranted']), { type: 'null' }] },
       firstLot: { anyOf: [schema(lotFields, ['acquisitionDate', 'instrumentType', 'unitsAcquired']), { type: 'null' }] },
       openingValuations: {
@@ -166,7 +167,7 @@ export const employmentLifecycleCommandDefinitions = [
     }, ['portfolioEntityId', 'displayName', 'instrumentFamily', 'investDate']),
     resolve: async input => {
       const [entity] = await query(`SELECT id, legal_name, entity_type FROM portfolio_entities WHERE id = $1`, [input.portfolioEntityId]);
-      if (!entity || entity.entity_type !== 'operating_company') throw new CommandError('TARGET_NOT_FOUND', 'Employment issuer not found.');
+      if (!entity || entity.entity_type !== 'operating_company') throw new CommandError('TARGET_NOT_FOUND', 'Earned Equity issuer not found.');
       return { type: 'employment_issuer', id: entity.id, label: entity.legal_name };
     },
     inspect: async (target, input) => ({ existing: (await query(`SELECT id FROM investments WHERE portfolio_entity_id = $1 AND asset_class = 'employment_equity' AND invest_date = $2::date AND company_name = $3`, [target.id, input.investDate, input.displayName]))[0] || null }),
@@ -180,8 +181,8 @@ export const employmentLifecycleCommandDefinitions = [
     affectedResources: ({ result }) => [{ type: 'employment_equity_position', id: Number(result.investment.id), label: result.investment.company_name }],
   }),
   base({
-    name: 'employment.set_active', title: 'Set Employment position activity',
-    description: 'Archive or restore an Employment Equity position without deleting history.',
+    name: 'employment.set_active', title: 'Set Earned Equity position activity',
+    description: 'Archive or restore an Earned Equity position without deleting history.',
     risk: 'lifecycle', undoPolicy: 'inverse', editableInputKeys: ['active'],
     inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, active: { type: 'boolean' } }, ['investmentId', 'active']),
     resolve: input => positionTarget(input.investmentId), inspect: inspectPosition,
@@ -192,14 +193,14 @@ export const employmentLifecycleCommandDefinitions = [
     undo: ({ target, before }) => before.archived_at == null ? restoreEmploymentEquityPosition(target.id) : archiveEmploymentEquityPosition(target.id),
   }),
   childCommand({
-    name: 'employment.add_grant', title: 'Add Employment grant',
-    description: 'Add a grant instrument to an Employment Equity position.',
+    name: 'employment.add_grant', title: 'Add Earned Equity grant',
+    description: 'Add a grant instrument to an Earned Equity position.',
     fieldsSchema: grantFields, requiredFields: ['legalInstrumentName', 'instrumentType', 'grantDate', 'unitsGranted'],
     apply: (target, fields) => addEmploymentEquityGrant(target.id, fields),
   }),
   childCommand({
     name: 'employment.add_lot', title: 'Add Employment lot',
-    description: 'Add a tax and ownership lot to an Employment Equity position.',
+    description: 'Add a tax and ownership lot to an Earned Equity position.',
     fieldsSchema: lotFields, requiredFields: ['acquisitionDate', 'instrumentType', 'unitsAcquired'],
     apply: (target, fields) => addInvestmentLot(target.id, fields),
   }),
@@ -211,13 +212,13 @@ export const employmentLifecycleCommandDefinitions = [
   }),
   childCommand({
     name: 'employment.record_settlement', title: 'Record Employment settlement',
-    description: 'Record settlement of an Employment Equity grant.',
+    description: 'Record settlement of an Earned Equity grant.',
     fieldsSchema: settlementFields, requiredFields: ['grantId', 'date', 'units'],
     apply: (target, fields) => recordSettlement(target.id, fields),
   }),
   childCommand({
     name: 'employment.record_distribution', title: 'Record Employment distribution',
-    description: 'Record cash returned by an Employment Equity position.',
+    description: 'Record cash returned by an Earned Equity position.',
     fieldsSchema: { date, amount: number, description: nullableText, externalHash: nullableText },
     requiredFields: ['date', 'amount'],
     apply: (target, fields) => recordEmploymentEquityDistribution(target.id, fields),
@@ -245,8 +246,8 @@ export const employmentLifecycleCommandDefinitions = [
     apply: (target, fields) => recordBasisAdjustment(target.id, fields),
   }),
   base({
-    name: 'employment.add_disclosure', title: 'Add Employment issuer disclosure',
-    description: 'Link disclosure metadata and an optional source document to an Employment issuer.',
+    name: 'employment.add_disclosure', title: 'Add Earned Equity issuer disclosure',
+    description: 'Link disclosure metadata and an optional source document to an Earned Equity issuer.',
     risk: 'additive_reporting_fact', applyCapabilities: ['portfolio:apply:additive'],
     editableInputKeys: ['disclosureType', 'receivedDate', 'financialsAsOfDate', 'notes'],
     inputSchema: schema({

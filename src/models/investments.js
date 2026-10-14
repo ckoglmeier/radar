@@ -4,7 +4,7 @@
 // Import identity is stored separately from the position row. The legacy
 // AngelList CSV does not expose a source ID, so its v1 link preserves the old
 // exact (company_name, invest_date) behavior without keeping that pair unique
-// for manual and Employment Equity positions.
+// for manual and Earned Equity positions.
 
 import { createHash } from 'node:crypto';
 import { query, withAtomicWrite } from '../db/index.js';

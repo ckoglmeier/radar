@@ -311,9 +311,9 @@ export async function buildEmploymentEquityAudit() {
 
 export function formatEmploymentEquityAuditSummary(audit) {
   return [
-    'Employment Equity migration audit',
+    'Earned Equity migration audit',
     `Known issuers found / expected: ${audit.counts.issuer_candidates_found} / ${audit.issuer_candidates.length}`,
-    `Existing Employment Equity positions: ${audit.counts.employment_equity_positions}`,
+    `Existing Earned Equity positions: ${audit.counts.employment_equity_positions}`,
     `Room / document hints: ${audit.counts.room_candidates} / ${audit.counts.document_candidates}`,
     `Unknown document policies: ${audit.counts.unknown_document_policies}`,
     `Conflicts: ${audit.counts.conflicts}`,
