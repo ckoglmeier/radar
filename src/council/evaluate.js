@@ -81,14 +81,14 @@ const RESEARCH_PLAN_SEED_VERSION = 'baseline-v1';
 const STAGE_CHECKPOINT_VERSION = 'validated-stage-v1';
 const inFlightRuns = new Map();
 
-function hash(value) {
+export function hash(value) {
   const content = typeof value === 'string' || Buffer.isBuffer(value)
     ? value
     : JSON.stringify(value);
   return createHash('sha256').update(content).digest('hex');
 }
 
-function stageCheckpointStore(dealLogDir, runKey, runtime, retryInterruptedStages) {
+export function stageCheckpointStore(dealLogDir, runKey, runtime, retryInterruptedStages) {
   const directory = join(dealLogDir, '.council-checkpoints', runKey);
   const write = (path, receipt) => {
     mkdirSync(directory, { recursive: true });
@@ -373,7 +373,7 @@ const CUSTOM_QUESTION_SCHEMA = {
   additionalProperties: false,
 };
 
-const RESEARCH_SCHEMA = {
+export const RESEARCH_SCHEMA = {
   type: 'object',
   properties: {
     evidence: { type: 'array', items: { type: 'string' } },
@@ -547,18 +547,23 @@ const BASELINE_RESEARCH_QUESTIONS = Object.freeze([
   },
 ]);
 
-function templateForDeal(value, company) {
+export function templateForDeal(value, company) {
   return String(value).replaceAll('{company}', company);
 }
 
-export function buildBaselineResearchPlan(deal = {}) {
+// `tables` lets another lens inject its own seed questions, version and frame.
+// With no tables the output is byte-identical to the angel plan.
+export function buildBaselineResearchPlan(deal = {}, tables = {}) {
+  const baselineQuestions = tables.questions || BASELINE_RESEARCH_QUESTIONS;
   const company = String(deal.company || deal.company_name || 'the company').trim() || 'the company';
   return {
-    seed_version: RESEARCH_PLAN_SEED_VERSION,
+    seed_version: tables.seedVersion || RESEARCH_PLAN_SEED_VERSION,
     deal_identity: company,
-    decision_frame: `Test the supplied case for ${company} against the active Radar rubric using current, decision-relevant evidence.`,
-    priority_question_ids: BASELINE_RESEARCH_QUESTIONS.map(question => question.question_id),
-    questions: BASELINE_RESEARCH_QUESTIONS.map(question => ({
+    decision_frame: tables.decisionFrame
+      ? tables.decisionFrame(company)
+      : `Test the supplied case for ${company} against the active Radar rubric using current, decision-relevant evidence.`,
+    priority_question_ids: baselineQuestions.map(question => question.question_id),
+    questions: baselineQuestions.map(question => ({
       ...question,
       question: templateForDeal(question.question, company),
       confirming_evidence: templateForDeal(question.confirming_evidence, company),
@@ -567,7 +572,7 @@ export function buildBaselineResearchPlan(deal = {}) {
     })),
     critical_unknowns: [],
     contradictions_to_resolve: [],
-    stop_conditions: [
+    stop_conditions: tables.stopConditions || [
       'Every required question is answered with sourced evidence or explicitly marked unavailable.',
       'Material supplied claims are labeled verified, conflicting, or unavailable.',
       'Additional retrieval is unlikely to change a rubric choice or resolve a named contradiction.',
@@ -575,7 +580,7 @@ export function buildBaselineResearchPlan(deal = {}) {
   };
 }
 
-function mergeResearchPlan(baseline, adaptation) {
+export function mergeResearchPlan(baseline, adaptation) {
   const baselineIds = new Set(baseline.questions.map(question => question.question_id));
   const priorityQuestionIds = [...new Set(adaptation.priority_question_ids || [])]
     .filter(questionId => baselineIds.has(questionId));
@@ -670,7 +675,7 @@ function stageRequest(stage, { model, context, schema, maxTurns }) {
   };
 }
 
-async function runStage(stage, request, runtime) {
+export async function runStage(stage, request, runtime) {
   const timeoutMs = Number(runtime.stageTimeoutMs || 0);
   let timer = null;
   const controller = timeoutMs > 0 ? new AbortController() : null;
@@ -702,7 +707,11 @@ async function runStage(stage, request, runtime) {
   };
 }
 
-async function runValidatedStage(stage, request, runtime, validate) {
+const DEFAULT_REPAIR_NOTE = `Return one complete replacement response. Include every rubric dimension exactly
+once, using the exact dimension names in the scoring lens. Do not discuss the
+repair or omit unchanged dimensions.`;
+
+export async function runValidatedStage(stage, request, runtime, validate, repairNote = DEFAULT_REPAIR_NOTE) {
   const first = await runStage(stage, request, runtime);
   try {
     first.data = validate(first.data) || first.data;
@@ -714,9 +723,7 @@ async function runValidatedStage(stage, request, runtime, validate) {
 
 REPAIR REQUIRED
 Your previous response was invalid: ${error.message}
-Return one complete replacement response. Include every rubric dimension exactly
-once, using the exact dimension names in the scoring lens. Do not discuss the
-repair or omit unchanged dimensions.`,
+${repairNote}`,
     }, runtime);
     repaired.data = validate(repaired.data) || repaired.data;
     return {
@@ -726,7 +733,7 @@ repair or omit unchanged dimensions.`,
   }
 }
 
-function frozenPlannerStage(snapshot) {
+export function frozenPlannerStage(snapshot) {
   if (
     !snapshot
     || typeof snapshot.deal_identity !== 'string'
@@ -755,7 +762,7 @@ function frozenPlannerStage(snapshot) {
   };
 }
 
-function frozenResearchStage(snapshot) {
+export function frozenResearchStage(snapshot) {
   if (
     !snapshot
     || !Array.isArray(snapshot.evidence)
@@ -786,7 +793,7 @@ function frozenResearchStage(snapshot) {
   };
 }
 
-function decisionResearchPacket(research) {
+export function decisionResearchPacket(research) {
   return {
     evidence: research.evidence,
     team_dossier: research.team_dossier,
@@ -1055,7 +1062,7 @@ function contractBlock(
   return lines.join('\n');
 }
 
-function dealBlock(deal) {
+export function dealBlock(deal) {
   const lines =
     Object.entries(deal || {})
       .map(([k, v]) => `  ${k}: ${fmtValue(v)}`)
@@ -1071,7 +1078,7 @@ function sourceDocumentManifest(document) {
   };
 }
 
-function decisionDeal(deal = {}) {
+export function decisionDeal(deal = {}) {
   if (!Array.isArray(deal.source_documents)) return deal;
   return {
     ...deal,
@@ -1079,7 +1086,7 @@ function decisionDeal(deal = {}) {
   };
 }
 
-function sourceDocumentsBlock(deal = {}) {
+export function sourceDocumentsBlock(deal = {}) {
   const documents = Array.isArray(deal.source_documents) ? deal.source_documents : [];
   if (documents.length === 0) return '';
   const rendered = documents.map((document, index) => {
