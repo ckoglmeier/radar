@@ -272,3 +272,18 @@ Each amendment below answers a finding (F1–F10) from the independent review.
 - `compareOffers` and `validateSelection` return structured errors on malformed input; they never throw.
 
 `CALCULATOR_VERSION` becomes `earned-equity-core/1.1.0`.
+
+## v1.1.1 amendments (independent re-verification)
+
+**A3a.** The `asOfDate` lower bound for an unknown grant date applies only to offer revisions with status `proposed`. For `signed` or `user_reported` revisions, the grant may predate the entry, so an unknown grant date gives `null` with `grant_expiration_unknown` whenever expiry could fall before liquidity.
+
+**A4a.** Known zero units give zero proceeds under every payout method, before any ownership percentage is read.
+
+**A9a.**
+- Every date field, including `ownershipDenominator.asOfDate`, is validated.
+- Each invalid field is reported once.
+
+**A10.**
+- An `illiquidResidual` reports units still held at H, with a note that says whether they are exercisable options or already-exercised shares.
+
+`CALCULATOR_VERSION` becomes `earned-equity-core/1.1.1`.
