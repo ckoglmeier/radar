@@ -45,10 +45,29 @@ function vestFrac(g, date) { // returns Q fraction (for floor computation return
   return best < 0 ? { m: 0n, T: 1n } : { m: BigInt(best), T: BigInt(T) };
 }
 
+export function predictErrors({ group, offerRevision: offer, scenarioSet }) {
+  const e = [];
+  const na = (f) => f && f.state === 'not_applicable';
+  const bad = (d) => typeof d === 'string' && !(/^\d{4}-\d{2}-\d{2}$/.test(d) && Number(d.slice(8)) >= 1 && Number(d.slice(5,7)) >= 1 && Number(d.slice(5,7)) <= 12 && Number(d.slice(8)) <= dim(Number(d.slice(0,4)), Number(d.slice(5,7))));
+  if (na(offer.cash.annualBase)) e.push('not_applicable_not_allowed:offer_base');
+  if (bad(offer.asOfDate)) e.push('invalid_date');
+  if (bad(usable(offer.serviceStartDate))) e.push('invalid_date');
+  const own = scenarioSet.scenarios.some((s) => s.payout.method === 'pro_rata_ownership');
+  for (const g of offer.grants) {
+    if (g.vesting.totalMonths > 0 && g.vesting.cliffMonths > g.vesting.totalMonths) e.push('vesting_cliff_exceeds_term');
+    if (bad(usable(g.grantDate)) || bad(usable(g.vesting.commencementDate))) e.push('invalid_date');
+    if (na(g.vesting.commencementDate)) e.push('not_applicable_not_allowed:commencement_date');
+    if (bad(g.ownershipDenominator?.asOfDate)) e.push('invalid_date');
+    if (['iso','nso'].includes(g.instrument)) for (const [f, n] of [[g.units,'units'],[g.strikePrice,'strike_price'],[g.grantDate,'grant_date'],[g.exercise.postTerminationWindowMonths,'post_termination_window'],[g.exercise.expirationYears,'expiration_years'],...(own?[[g.quotedOwnershipPct,'ownership_pct']]:[])]) if (na(f)) e.push(`not_applicable_not_allowed:${n}`);
+  }
+  for (const s of scenarioSet.scenarios) if (s.payout.method === 'common_per_share' && bad(s.payout.asOfDate)) e.push('invalid_date');
+  return [...new Set(e)].sort();
+}
 export function reference({ group, offerRevision: offer, scenarioSet }) {
   const S = usable(offer.serviceStartDate); const H = am(group.startDate, group.horizonMonths);
   const val = (f) => { const v = usable(f); return v === null ? null : Q.of(v); };
-  const ob = val(offer.cash.annualBase), obo = val(offer.cash.annualTargetBonus), sign = val(offer.cash.signingBonus);
+  const na = (f) => (f && f.state === 'not_applicable' ? Z : val(f));
+  const ob = val(offer.cash.annualBase), obo = na(offer.cash.annualTargetBonus), sign = na(offer.cash.signingBonus);
   const bb = group.baseline.annualBase == null ? null : Q.of(group.baseline.annualBase);
   const bbo = group.baseline.annualCashBonus == null ? null : Q.of(group.baseline.annualCashBonus);
   const rate = group.discountRateAnnual == null ? null : Number(group.discountRateAnnual);
@@ -80,71 +99,64 @@ export function reference({ group, offerRevision: offer, scenarioSet }) {
     }
     const grants = []; let allKnown = true; const parts = []; let beKnown = true; const eqFlows = [];
     for (const g of offer.grants) {
-      const r = { vestedUnits: null, eligibleUnits: null, exerciseCost: null, realizedProceeds: null, residual: null };
+      const r = { vestedUnits: null, eligibleUnits: null, exerciseCost: null, realizedProceeds: null, residual: undefined };
       if (!['iso', 'nso'].includes(g.instrument)) { allKnown = false; beKnown = false; grants.push(r); continue; }
       const path = sc.exercisePath.kind; const method = sc.payout.method;
       const XD = path === 'at_date' ? am(S, sc.exercisePath.exerciseMonthsFromStart) : null;
       const exercising = path === 'at_date' ? XD <= H : realizeIn;
-      const exDate = path === 'at_date' ? XD : L;
-      const checkAt = exercising ? exDate : H;
-      const vd = exercising ? (exDate < E ? exDate : E) : (E < H ? E : H);
+      const D = exercising ? (path === 'at_date' ? XD : L) : H;       // date eligibility is assessed
+      const vd = D < E ? D : E;
       const fr = vestFrac(g, vd); const Us = usable(g.units); const U = Us === null ? null : BigInt(Us);
       const Ks = usable(g.strikePrice); const K = Ks === null ? null : Q.of(Ks);
       const vested = fr && U !== null ? (U * fr.m) / fr.T : null;
       r.vestedUnits = vested === null ? null : vested.toString();
-      let unknown = false, expired = false;
-      if (checkAt > E) {
-        const w = usable(g.exercise.postTerminationWindowMonths);
-        if (w === null) unknown = true; else if (am(E, Math.floor(Number(w))) < checkAt) expired = true;
-      }
-      const gd = usable(g.grantDate), ey = usable(g.exercise.expirationYears);
-      if (ey === null) unknown = true;
+      // A3/A7 eligibility at D: 'yes' | 'no' | 'unknown'
+      let elig;
+      if (fr === null) elig = 'unknown';
       else {
-        const mo = Q.of(ey).mul(qi(12)); const months = Number(mo.n / mo.d);
-        if (gd !== null) { if (checkAt > am(gd, months)) expired = true; }
-        else if (checkAt > am(offer.asOfDate, months)) unknown = true;
+        let expired = false, unknown = false;
+        if (D > E) { const w = usable(g.exercise.postTerminationWindowMonths); if (w === null) unknown = true; else if (am(E, Math.floor(Number(w))) < D) expired = true; }
+        const gd = usable(g.grantDate), ey = usable(g.exercise.expirationYears);
+        if (ey === null) unknown = true;
+        else { const mo = Q.of(ey).mul(qi(12)); const months = Number(mo.n / mo.d);
+          if (gd !== null) { if (D > am(gd, months)) expired = true; }
+          else if (offer.status !== 'proposed' || D > am(offer.asOfDate, months)) unknown = true; }
+        elig = expired ? 'no' : unknown ? 'unknown' : 'yes';
       }
-      const elig = expired ? false : unknown ? null : true;
+      const units = elig === 'no' ? 0n : elig === 'yes' ? vested : null;
+      const costOf = (u) => (u === null ? null : u === 0n ? Z : K === null ? null : qi(u).mul(K));
       if (!exercising) {
-        const units = elig === false ? 0n : elig === true ? vested : null;
-        Object.assign(r, { eligibleUnits: units === null ? null : units.toString(), realizedProceeds: '0.00', residual: units === null ? null : units.toString() });
-        if (units !== null) {
-          const cost = units === 0n ? Z : K ? qi(units).mul(K) : null;
-          r.exerciseCost = fmt(cost, 2); if (cost) parts.push({ u: units, K: K ?? Z, path }); else beKnown = false;
-        } else beKnown = false;
+        r.realizedProceeds = '0.00'; r.eligibleUnits = units === null ? null : units.toString(); r.residual = r.eligibleUnits;
+        r.exerciseCost = fmt(costOf(units), 2);
+        if (costOf(units) !== null) parts.push({ u: units, K: K ?? Z, path }); else beKnown = false;
         grants.push(r); continue;
       }
-      if (elig === false) {
-        Object.assign(r, { eligibleUnits: '0', exerciseCost: '0.00', realizedProceeds: '0.00', residual: realizeIn ? null : '0' }); grants.push(r); continue;
-      }
-      if (elig === null) { allKnown = false; beKnown = false; grants.push(r); continue; }
-      r.eligibleUnits = vested === null ? null : vested.toString();
-      const cost = vested === null ? null : vested === 0n ? Z : K ? qi(vested).mul(K) : null;
-      r.exerciseCost = fmt(cost, 2);
-      if (cost) parts.push({ u: vested, K: K ?? Z, path }); else beKnown = false;
+      if (elig === 'unknown') { allKnown = false; beKnown = false; grants.push(r); continue; }
+      r.eligibleUnits = units === null ? null : units.toString();
+      const cost = costOf(units); r.exerciseCost = fmt(cost, 2);
+      if (cost !== null) parts.push({ u: units, K: K ?? Z, path }); else beKnown = false;
+      if (!realizeIn) r.residual = r.eligibleUnits;
       let gross = null;
-      if (method === 'none') gross = Z;
-      else if (method === 'common_per_share') gross = vested === null ? null : qi(vested).mul(Q.of(sc.payout.commonProceedsPerShare));
-      else if (method === 'pro_rata_shares') gross = vested === null ? null : qi(vested).mul(Q.of(sc.payout.equityExitValue)).div(qi(sc.payout.fullyDilutedExitShares));
+      if (units === 0n) gross = Z;
+      else if (method === 'none') gross = Z;
+      else if (method === 'common_per_share') gross = units === null ? null : qi(units).mul(Q.of(sc.payout.commonProceedsPerShare));
+      else if (method === 'pro_rata_shares') gross = units === null ? null : qi(units).mul(Q.of(sc.payout.equityExitValue)).div(qi(sc.payout.fullyDilutedExitShares));
       else {
         const pct = usable(g.quotedOwnershipPct);
-        if (pct !== null) {
-          let ret = new Q(1n); for (const d of sc.payout.dilutionRounds) ret = ret.mul(new Q(1n).sub(Q.of(d)));
-          const fraction = U !== null ? (U === 0n ? Z : qi(vested).div(qi(U))) : new Q(fr.m, fr.T);
-          gross = Q.of(pct).div(qi(100)).mul(ret).mul(Q.of(sc.payout.equityExitValue)).mul(fraction);
-        }
+        if (pct !== null) { let ret = new Q(1n); for (const d of sc.payout.dilutionRounds) ret = ret.mul(new Q(1n).sub(Q.of(d)));
+          const frac = U !== null ? (U === 0n ? Z : new Q(units, U)) : new Q(fr.m, fr.T);
+          gross = Q.of(pct).div(qi(100)).mul(ret).mul(Q.of(sc.payout.equityExitValue)).mul(frac); }
       }
       let realized = null;
       if (path === 'at_liquidity') {
         if (method === 'none') realized = Z;
         else if (gross && cost) { realized = gross.sub(cost); if (realized.cmp(Z) < 0) realized = Z; if (!realized.isZero()) eqFlows.push([L, realized]); }
       } else if (cost) {
-        if (!cost.isZero()) eqFlows.push([exDate, Z.sub(cost)]);
+        if (!cost.isZero()) eqFlows.push([XD, Z.sub(cost)]);
         if (!realizeIn) realized = Z; else if (gross) { realized = gross; if (!gross.isZero()) eqFlows.push([L, gross]); }
       }
-      if (realized === null) { allKnown = false; }
+      if (realized === null) allKnown = false;
       r.realizedProceeds = fmt(realized, 2);
-      r.residual = realizeIn ? null : (vested === null ? null : vested.toString());
       grants.push(r);
     }
     // Drop equity flows if unknown (matches contract: unknown net)

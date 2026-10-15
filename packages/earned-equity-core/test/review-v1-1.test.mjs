@@ -9,10 +9,10 @@ const none = { liquidity: { occurs: false, monthsFromStart: null }, payout: { me
 const t0 = { commencementDate: f('2026-01-15'), totalMonths: 0, cliffMonths: 0, cadence: 'monthly', acceleration: 'none' };
 const calc = (group, offerRevision, scenarioSet) => calculateOffer({ group, offerRevision, scenarioSet });
 
-test('version is 1.1.0 and results carry their basis (A2)', () => {
-  assert.equal(CALCULATOR_VERSION, 'earned-equity-core/1.1.0');
+test('version is 1.1.1 and results carry their basis (A2)', () => {
+  assert.equal(CALCULATOR_VERSION, 'earned-equity-core/1.1.1');
   const r = run({ group: makeGroup({ discountRateAnnual: '0.1' }) });
-  assert.equal(r.calculatorVersion, 'earned-equity-core/1.1.0');
+  assert.equal(r.calculatorVersion, 'earned-equity-core/1.1.1');
   assert.deepEqual(r.basis, { currency: 'USD', startDate: '2026-01-15', horizonMonths: 48, discountRateAnnual: '0.1' });
 });
 
@@ -170,4 +170,59 @@ test('F10: impossible dates give structured errors; malformed compare does not t
     assert.equal(validateSelection(junk).ok === false || validateSelection(junk).ok === true, true);
   }
   assert.equal(validateSelection({ group: makeGroup(), opportunities: 'x', offerRevisions: null, selectedOfferRevisionIds: 5 }).ok, false);
+});
+
+// ---- v1.1.1 (round 4): N1 / A4a, A3a, M1 and M2 / A9a, M3 / A10 ----
+
+test('N1: known zero units give 0.00 even when the ownership percentage is unusable', () => {
+  const own = { method: 'pro_rata_ownership', equityExitValue: '1000000000', dilutionRounds: [] };
+  for (const pct of [missing(), f('0.5', 'illustrative')]) {
+    for (const exercisePath of [{ kind: 'at_liquidity' }, { kind: 'at_date', exerciseMonthsFromStart: 24 }]) {
+      const s = first({
+        offer: makeOffer({ grants: [makeGrant({ units: f('0'), quotedOwnershipPct: pct })] }),
+        set: makeScenarioSet([makeScenario({ payout: own, exercisePath })]),
+      });
+      assert.equal(s.grants[0].realizedProceeds, '0.00');
+      assert.equal(s.netPreTax, '-200000.00');
+    }
+  }
+  // Unknown units with an unusable percentage stay null.
+  const unk = first({ offer: makeOffer({ grants: [makeGrant({ units: missing(), quotedOwnershipPct: missing() })] }), set: makeScenarioSet([makeScenario({ payout: own })]) });
+  assert.equal(unk.grants[0].realizedProceeds, null);
+});
+
+test('A3a: the asOfDate bound applies only to proposed revisions', () => {
+  const group = makeGroup({ horizonMonths: 200 });
+  const set = makeScenarioSet([makeScenario({ serviceMonths: 100, liquidity: { occurs: true, monthsFromStart: 100 } })]);
+  const grants = [makeGrant({ grantDate: missing() })];
+  const proposed = first({ group, offer: makeOffer({ grants, status: 'proposed' }), set });
+  assert.equal(proposed.grants[0].eligibleUnits, '48000');
+  for (const status of ['signed', 'user_reported']) {
+    const s = first({ group, offer: makeOffer({ grants, status }), set });
+    assert.equal(s.grants[0].eligibleUnits, null);
+    assert.equal(s.netPreTax, null);
+    assert.ok(s.limitations.includes('grant_expiration_unknown'));
+  }
+});
+
+test('M1: an invalid offer asOfDate is reported once', () => {
+  const out = calc(makeGroup(), makeOffer({ asOfDate: '2026-02-31' }), makeScenarioSet());
+  assert.equal(out.ok, false);
+  assert.deepEqual(out.errors.map((e) => [e.path, e.code]), [['offerRevision.asOfDate', 'invalid_date']]);
+});
+
+test('M2: ownershipDenominator.asOfDate is validated', () => {
+  const g = makeGrant({ ownershipDenominator: { basis: 'fully_diluted', asOfDate: '2026-13-01' } });
+  const out = calc(makeGroup(), makeOffer({ grants: [g] }), makeScenarioSet());
+  assert.equal(out.ok, false);
+  assert.deepEqual(out.errors.map((e) => [e.path, e.code]), [['offerRevision.grants[0].ownershipDenominator.asOfDate', 'invalid_date']]);
+});
+
+test('M3: the residual note says whether units are options or already-exercised shares', () => {
+  const exercised = first({ set: makeScenarioSet([makeScenario({ exercisePath: { kind: 'at_date', exerciseMonthsFromStart: 24 }, liquidity: { occurs: true, monthsFromStart: 60 } })]) });
+  assert.equal(exercised.grants[0].illiquidResidual.units, '24000');
+  assert.match(exercised.grants[0].illiquidResidual.note, /already-exercised shares/i);
+  assert.doesNotMatch(exercised.grants[0].illiquidResidual.note, /still exercisable/i);
+  const options = first({ set: makeScenarioSet([makeScenario({ liquidity: { occurs: false, monthsFromStart: null } })]) });
+  assert.match(options.grants[0].illiquidResidual.note, /still exercisable/i);
 });

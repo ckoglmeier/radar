@@ -7,7 +7,7 @@ import { sortedUnique } from './canonical-json.mjs';
 import { Q, ZERO, formatQ } from './rational.mjs';
 import { vestedFractionAt, vestingErrors } from './vesting.mjs';
 
-export const CALCULATOR_VERSION = 'earned-equity-core/1.1.0';
+export const CALCULATOR_VERSION = 'earned-equity-core/1.1.1';
 const ONE = Q.int(1);
 const money = (q) => formatQ(q, 2);
 const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -55,7 +55,6 @@ function validate(group, offer, set) {
   if (set.offerRevisionId !== offer.id) err(errors, 'scenarioSet.offerRevisionId', 'scenario_set_offer_mismatch', 'Scenario set belongs to a different offer revision.');
   if (!isValidIsoDate(group.startDate)) err(errors, 'group.startDate', 'invalid_date', 'Group startDate is not a valid calendar date.');
   if (!Number.isInteger(group.horizonMonths) || group.horizonMonths < 1) err(errors, 'group.horizonMonths', 'invalid_horizon', 'horizonMonths must be a positive integer.');
-  checkDate(errors, 'offerRevision.asOfDate', offer.asOfDate);
   if (!isValidIsoDate(offer.asOfDate)) err(errors, 'offerRevision.asOfDate', 'invalid_date', 'asOfDate must be a valid calendar date.');
   if (!offer.cash || typeof offer.cash !== 'object') {
     err(errors, 'offerRevision.cash', 'missing_input', 'cash is required.');
@@ -79,6 +78,7 @@ function validate(group, offer, set) {
     errors.push(...vestingErrors(g, p));
     const gd = readFact(g.grantDate, 'grant_date');
     checkDate(errors, `${p}.grantDate`, gd.value);
+    checkDate(errors, `${p}.ownershipDenominator.asOfDate`, g.ownershipDenominator?.asOfDate);
     if (g.instrument === 'iso' || g.instrument === 'nso') {
       checkNotApplicable(errors, `${p}.units`, g.units, 'units');
       checkNotApplicable(errors, `${p}.strikePrice`, g.strikePrice, 'strike_price');
@@ -217,8 +217,9 @@ function computeGrant(grant, sc, ctx) {
       const months = Number(eq.n / eq.d);
       if (gd.value !== null) {
         if (checkAt > addMonths(gd.value, months)) expired = true;
-      } else if (checkAt > addMonths(ctx.offer.asOfDate, months)) {
-        // The grant date is unknown; the earliest it can be is the offer's as-of date.
+      } else if (ctx.offer.status !== 'proposed' || checkAt > addMonths(ctx.offer.asOfDate, months)) {
+        // Unknown grant date. For a proposed offer the grant cannot predate the as-of date, so
+        // that bounds expiry. A signed or user-reported grant may predate it: expiry is unknown.
         unknown = true;
         lim.add('grant_expiration_unknown');
       }
@@ -230,9 +231,11 @@ function computeGrant(grant, sc, ctx) {
   const noLiq = () => {
     lim.add('no_liquidity_in_horizon');
   };
-  const residual = (units) => ({
+  const residual = (units, exercised) => ({
     units: units === null ? null : units.toString(),
-    note: 'Units still exercisable at the horizon end and not realized within it. This is not a valuation and not a statement that the company is worthless.',
+    note: `${exercised
+      ? 'Already-exercised shares held at the horizon end and not realized within it.'
+      : 'Options still exercisable at the horizon end and not realized within it.'} This is not a valuation and not a statement that the company is worthless.`,
   });
 
   if (!exercising) {
@@ -242,7 +245,7 @@ function computeGrant(grant, sc, ctx) {
     o.res.realizedProceeds = money(ZERO);
     const units = eligible === false ? 0n : eligible === true ? vested : null;
     o.res.eligibleUnits = units === null ? null : units.toString();
-    o.res.illiquidResidual = residual(units);
+    o.res.illiquidResidual = residual(units, false);
     if (units !== null) {
       const cost = units === 0n ? ZERO : K === null ? null : Q.int(units).mul(K);
       o.res.exerciseCost = cost === null ? null : money(cost);
@@ -259,7 +262,7 @@ function computeGrant(grant, sc, ctx) {
     o.be = { u: 0n, K: K ?? ZERO, path: path.kind };
     if (!realizeIn) {
       noLiq();
-      o.res.illiquidResidual = residual(0n);
+      o.res.illiquidResidual = residual(0n, path.kind === 'at_date');
     }
     return finish(o);
   }
@@ -273,7 +276,7 @@ function computeGrant(grant, sc, ctx) {
 
   // Gross value of the eligible units at the scenario's common value.
   let gross = null;
-  if (method === 'none') gross = ZERO;
+  if (eligUnits === 0n || method === 'none') gross = ZERO; // known zero units: zero, before anything else is read
   else if (method === 'common_per_share') {
     if (eligUnits !== null) gross = Q.int(eligUnits).mul(Q.of(sc.payout.commonProceedsPerShare));
   } else if (method === 'pro_rata_shares') {
@@ -324,7 +327,7 @@ function computeGrant(grant, sc, ctx) {
   o.flows = known ? flows : [];
   if (!realizeIn) {
     noLiq();
-    o.res.illiquidResidual = residual(eligUnits);
+    o.res.illiquidResidual = residual(eligUnits, path.kind === 'at_date');
   }
   return finish(o);
 }

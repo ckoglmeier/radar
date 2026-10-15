@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateOffer } from '../index.mjs';
-import { am, reference } from './fixtures/reference.mjs';
+import { am, predictErrors, reference } from './fixtures/reference.mjs';
 
 // Seeded LCG so the cases are reproducible.
 function makeRng(seed) {
@@ -13,6 +13,12 @@ function makeRng(seed) {
 }
 const f = (value, state = 'user_reported') => ({ value, state });
 const miss = () => ({ value: null, state: 'missing' });
+const na = () => ({ value: null, state: 'not_applicable' });
+// A value that is usually usable, sometimes missing or illustrative.
+const maybe = (rnd, value, pMissing, pIllustrative) => {
+  const r = rnd();
+  return r < pMissing ? miss() : r < pMissing + pIllustrative ? f(value, 'illustrative') : f(value);
+};
 
 function generate(rng) {
   const { rnd, ri, pick } = rng;
@@ -32,11 +38,11 @@ function generate(rng) {
     const C = rnd() < 0.6 ? S : am(S, ri(-6, 6));
     grants.push({
       componentId: `c${g}`, instrument: pick(['iso', 'nso', 'iso']),
-      units: f(String(pick([0, ri(1, 999), ri(1000, 200000), ri(1, 999999999)]))),
-      quotedOwnershipPct: f(dec(2, 4)), ownershipDenominator: { basis: 'fully_diluted', asOfDate: null },
-      strikePrice: rnd() < 0.1 ? miss() : f(rnd() < 0.15 ? '0' : dec(10, pick([2, 4, 6, 12]))),
+      units: maybe(rnd, String(pick([0, 0, ri(1, 999), ri(1000, 200000), ri(1, 999999999)])), 0.06, 0.04),
+      quotedOwnershipPct: maybe(rnd, dec(2, 4), 0.08, 0.05), ownershipDenominator: { basis: 'fully_diluted', asOfDate: pick([null, '2026-01-01']) },
+      strikePrice: rnd() < 0.1 ? miss() : maybe(rnd, rnd() < 0.15 ? '0' : dec(10, pick([2, 4, 6, 12])), 0, 0.04),
       grantDate: rnd() < 0.2 ? miss() : f(C), boardApproval: f('approved'),
-      vesting: { commencementDate: f(C), totalMonths: T, cliffMonths: K, cadence: pick(['monthly', 'quarterly', 'annual']), acceleration: 'none' },
+      vesting: { commencementDate: rnd() < 0.04 ? miss() : f(C), totalMonths: T, cliffMonths: K, cadence: rnd() < 0.04 ? 'performance' : pick(['monthly', 'quarterly', 'annual']), acceleration: 'none' },
       exercise: {
         postTerminationWindowMonths: rnd() < 0.1 ? miss() : f(String(pick([0, 1, 3, 12, 24, 120]))),
         expirationYears: rnd() < 0.08 ? miss() : f(String(pick([1, 2, 5, 10]))), earlyExercise: f(false),
@@ -49,10 +55,10 @@ function generate(rng) {
     baseline: { kind: 'current_role', annualBase: dec(300000, dp), annualCashBonus: rnd() < 0.5 ? '0' : dec(50000, dp) }, status: 'open',
   };
   const offer = {
-    schemaVersion: 1, id: 'r', opportunityId: 'o', supersedesRevisionId: null, asOfDate: start, status: 'proposed', currency: 'USD',
+    schemaVersion: 1, id: 'r', opportunityId: 'o', supersedesRevisionId: null, asOfDate: am(start, pick([-24, -6, 0, 3, 60, 130])), status: pick(['proposed', 'signed', 'user_reported', 'proposed']), currency: 'USD',
     cash: {
-      annualBase: f(dec(300000, dp)), annualTargetBonus: f(rnd() < 0.5 ? '0' : dec(50000, dp)),
-      signingBonus: f(rnd() < 0.5 ? '0' : dec(50000, 2)), signingRepaymentMonths: pick([null, 0, 12, 24]),
+      annualBase: f(dec(300000, dp)), annualTargetBonus: rnd() < 0.12 ? na() : f(rnd() < 0.5 ? '0' : dec(50000, dp)),
+      signingBonus: rnd() < 0.12 ? na() : f(rnd() < 0.5 ? '0' : dec(50000, 2)), signingRepaymentMonths: pick([null, 0, 12, 24]),
     },
     serviceStartDate: f(S), grants,
   };
@@ -79,7 +85,22 @@ function generate(rng) {
       exercisePath: atDate ? { kind: 'at_date', exerciseMonthsFromStart: X } : { kind: 'at_liquidity' },
     });
   }
-  return { group, offerRevision: offer, scenarioSet: { schemaVersion: 1, id: 'ss', offerRevisionId: 'r', currency: 'USD', scenarios } };
+  const input = { group, offerRevision: offer, scenarioSet: { schemaVersion: 1, id: 'ss', offerRevisionId: 'r', currency: 'USD', scenarios } };
+  if (rnd() < 0.1) {
+    const g0 = grants[0];
+    g0.instrument = 'iso';
+    pick([
+      () => { g0.vesting.totalMonths = 12; g0.vesting.cliffMonths = 24; },
+      () => { g0.grantDate = f('2026-02-30'); },
+      () => { offer.asOfDate = '2026-02-31'; },
+      () => { g0.ownershipDenominator.asOfDate = '2026-13-01'; },
+      () => { g0.units = na(); },
+      () => { g0.strikePrice = na(); },
+      () => { offer.cash.annualBase = na(); },
+      () => { offer.serviceStartDate = f('2026-04-31'); },
+    ])();
+  }
+  return input;
 }
 
 test('property: calculator agrees EXACTLY with the independent rational reference (>= 500 cases)', () => {
@@ -87,10 +108,20 @@ test('property: calculator agrees EXACTLY with the independent rational referenc
   let agreed = 0;
   let generated = 0;
   const stats = { net: 0, be: 0, residual: 0, nullNet: 0 };
+  let errorCases = 0;
   while (agreed < 600 && generated < 6000) {
     generated += 1;
     const input = generate(rng);
     const got = calculateOffer(input);
+    const predicted = predictErrors(input);
+    if (predicted.length > 0) {
+      errorCases += 1;
+      assert.equal(got.ok, false, `case ${generated} should fail: ${predicted}`);
+      assert.deepEqual([...new Set(got.errors.map((e) => e.code))].sort(), predicted, `case ${generated}`);
+      const keys = got.errors.map((e) => `${e.path}|${e.code}`);
+      assert.deepEqual(keys, [...new Set(keys)], `case ${generated}: an invalid field was reported twice`);
+      continue;
+    }
     assert.equal(got.ok, true, JSON.stringify(got.errors));
     const ref = reference(input);
     got.result.scenarios.forEach((s, j) => {
@@ -103,12 +134,13 @@ test('property: calculator agrees EXACTLY with the independent rational referenc
       for (const k of ['netPreTax', 'npv', 'breakEvenCommonPrice', 'maxCumulativeFundingNeed']) assert.equal(s[k], r[k], `${where} ${k}`);
       s.grants.forEach((g, q) => {
         for (const k of ['vestedUnits', 'eligibleUnits', 'exerciseCost', 'realizedProceeds']) assert.equal(g[k], r.grants[q][k], `${where} grant ${q} ${k}`);
-        assert.equal(g.illiquidResidual ? g.illiquidResidual.units : null, r.grants[q].residual, `${where} grant ${q} residual`);
+        assert.equal(g.illiquidResidual ? g.illiquidResidual.units : null, (r.grants[q].residual ?? null), `${where} grant ${q} residual`);
       });
     });
     assert.deepEqual(got.result.weighted, ref.weighted, `case ${generated} weighted`);
     agreed += 1;
   }
   assert.ok(agreed >= 500);
+  assert.ok(errorCases >= 30, `error cases: ${errorCases}`);
   assert.ok(stats.net >= 150 && stats.be >= 40 && stats.residual >= 40 && stats.nullNet >= 20, JSON.stringify(stats));
 });
