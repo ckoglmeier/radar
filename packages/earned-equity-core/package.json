@@ -1,0 +1,19 @@
+{
+  "name": "@radar/earned-equity-core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.mjs",
+    "./schema": "./schema.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "schema.mjs",
+    "src",
+    "CONTRACT.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}
