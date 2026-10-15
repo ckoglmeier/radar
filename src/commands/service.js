@@ -26,6 +26,7 @@ import { thesisCommandDefinitions } from './theses.js';
 import { portfolioCommandDefinitions } from './portfolio.js';
 import { fundLifecycleCommandDefinitions } from './funds.js';
 import { employmentLifecycleCommandDefinitions } from './employment.js';
+import { earnedEquityCommandDefinitions } from './earned-equity.js';
 import { workspaceCommandDefinitions } from './workspace.js';
 import { pipelineCommandDefinitions } from './pipeline.js';
 import { intakeCouncilCommandDefinitions } from './intake-council.js';
@@ -39,6 +40,7 @@ export const commandRegistry = createCommandRegistry([
   ...portfolioCommandDefinitions,
   ...fundLifecycleCommandDefinitions,
   ...employmentLifecycleCommandDefinitions,
+  ...earnedEquityCommandDefinitions,
   ...workspaceCommandDefinitions,
   ...pipelineCommandDefinitions,
   ...intakeCouncilCommandDefinitions,
