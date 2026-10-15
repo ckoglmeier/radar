@@ -14,18 +14,31 @@ export const COMPARISON_NOTES = Object.freeze([
 const BASIS_FIELDS = ['currency', 'startDate', 'horizonMonths', 'discountRateAnnual'];
 
 export function compareOffers(input) {
+  try {
+    return compareOffersUnsafe(input);
+  } catch (e) {
+    return { ok: false, errors: [{ path: '', code: 'invalid_input', message: String(e?.message ?? e) }] };
+  }
+}
+
+function compareOffersUnsafe(input) {
   const { group, entries } = input ?? {};
   const errors = [];
-  if (!group || !Array.isArray(entries) || entries.length === 0) {
+  if (!group || typeof group !== 'object' || !Array.isArray(entries) || entries.length === 0) {
     return { ok: false, errors: [{ path: '', code: 'missing_input', message: 'group and at least one entry are required.' }] };
   }
   entries.forEach((e, i) => {
-    const g = e.group ?? group;
-    for (const f of BASIS_FIELDS) {
-      if (g[f] !== group[f]) errors.push({ path: `entries[${i}].group.${f}`, code: 'comparison_basis_mismatch', message: `Entry ${f} differs from the comparison basis.` });
+    const r = e?.result;
+    if (!e || !e.offerRevision || !r || !Array.isArray(r.scenarios) || !Array.isArray(r.limitations) || !r.basis || typeof r.basis !== 'object') {
+      errors.push({ path: `entries[${i}]`, code: 'invalid_entry', message: 'Entry needs offerRevision and a successful result with scenarios, limitations and basis.' });
+      return;
     }
-    if (e.result?.currency !== group.currency) errors.push({ path: `entries[${i}].result.currency`, code: 'comparison_basis_mismatch', message: 'Entry result currency differs from the comparison basis.' });
-    if (e.offerRevision?.currency !== group.currency) errors.push({ path: `entries[${i}].offerRevision.currency`, code: 'comparison_basis_mismatch', message: 'Entry offer currency differs from the comparison basis.' });
+    for (const f of BASIS_FIELDS) {
+      if (r.basis[f] !== group[f]) errors.push({ path: `entries[${i}].result.basis.${f}`, code: 'comparison_basis_mismatch', message: `Result ${f} differs from the group.` });
+      if (e.group && e.group[f] !== group[f]) errors.push({ path: `entries[${i}].group.${f}`, code: 'comparison_basis_mismatch', message: `Entry ${f} differs from the comparison basis.` });
+    }
+    if (r.currency !== group.currency) errors.push({ path: `entries[${i}].result.currency`, code: 'comparison_basis_mismatch', message: 'Entry result currency differs from the comparison basis.' });
+    if (e.offerRevision.currency !== group.currency) errors.push({ path: `entries[${i}].offerRevision.currency`, code: 'comparison_basis_mismatch', message: 'Entry offer currency differs from the comparison basis.' });
   });
   if (errors.length) return { ok: false, errors };
 

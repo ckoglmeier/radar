@@ -84,7 +84,7 @@ test('acceleration codes', () => {
 });
 
 test('missing or illustrative inputs give null with limitations', () => {
-  assert.deepEqual(vestedUnitsAt(grant({ units: { value: null, state: 'missing' } }), '2030-01-15'), { units: null, limitations: ['units_missing'] });
+  assert.deepEqual(vestedUnitsAt(grant({ units: { value: null, state: 'missing' } }), '2030-01-15'), { units: null, limitations: ['units_missing'], errors: [] });
   assert.ok(vestedUnitsAt(grant({}, { commencementDate: { value: null, state: 'missing' } }), '2030-01-15').limitations.includes('commencement_date_missing'));
   assert.ok(vestedUnitsAt(grant({ units: f('100', 'illustrative') }), '2030-01-15').limitations.includes('illustrative_value_ignored:units'));
   assert.ok(vestedUnitsAt(grant({ units: f('100', 'conflicting') }), '2030-01-15').limitations.includes('units_conflicting'));

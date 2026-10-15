@@ -2,7 +2,7 @@
 // Rounding is half-even and is applied only when a value is parsed to a
 // coarser scale or when an output is formatted.
 
-export const MONEY_SCALE = 6;
+export const MONEY_SCALE = 12;
 export const RATIO_SCALE = 12;
 
 export class CoreInputError extends Error {

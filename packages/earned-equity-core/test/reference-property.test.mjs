@@ -1,0 +1,114 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { calculateOffer } from '../index.mjs';
+import { am, reference } from './fixtures/reference.mjs';
+
+// Seeded LCG so the cases are reproducible.
+function makeRng(seed) {
+  let s = seed;
+  const rnd = () => { s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648; };
+  const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+  const pick = (a) => a[ri(0, a.length - 1)];
+  return { rnd, ri, pick };
+}
+const f = (value, state = 'user_reported') => ({ value, state });
+const miss = () => ({ value: null, state: 'missing' });
+
+function generate(rng) {
+  const { rnd, ri, pick } = rng;
+  const dec = (maxInt, dp) => { const i = ri(0, maxInt); return dp ? `${i}.${String(ri(0, 10 ** dp - 1)).padStart(dp, '0')}` : String(i); };
+  const y = ri(2023, 2027);
+  const m = ri(1, 12);
+  const dim = [31, y % 4 === 0 ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+  const start = `${y}-${String(m).padStart(2, '0')}-${String(Math.min(pick([1, 15, 28, 29, 30, 31]), dim)).padStart(2, '0')}`;
+  const S = am(start, ri(0, 3));
+  const dp = rnd() < 0.5 ? 6 : 2;
+  const grants = [];
+  const ng = ri(1, 3);
+  for (let g = 0; g < ng; g += 1) {
+    const T = pick([0, 12, 24, 36, 48, 10, 13]);
+    const K0 = pick([0, 6, 12, T]);
+    const K = T > 0 ? Math.min(K0, T) : K0;
+    const C = rnd() < 0.6 ? S : am(S, ri(-6, 6));
+    grants.push({
+      componentId: `c${g}`, instrument: pick(['iso', 'nso', 'iso']),
+      units: f(String(pick([0, ri(1, 999), ri(1000, 200000), ri(1, 999999999)]))),
+      quotedOwnershipPct: f(dec(2, 4)), ownershipDenominator: { basis: 'fully_diluted', asOfDate: null },
+      strikePrice: rnd() < 0.1 ? miss() : f(rnd() < 0.15 ? '0' : dec(10, pick([2, 4, 6, 12]))),
+      grantDate: rnd() < 0.2 ? miss() : f(C), boardApproval: f('approved'),
+      vesting: { commencementDate: f(C), totalMonths: T, cliffMonths: K, cadence: pick(['monthly', 'quarterly', 'annual']), acceleration: 'none' },
+      exercise: {
+        postTerminationWindowMonths: rnd() < 0.1 ? miss() : f(String(pick([0, 1, 3, 12, 24, 120]))),
+        expirationYears: rnd() < 0.08 ? miss() : f(String(pick([1, 2, 5, 10]))), earlyExercise: f(false),
+      },
+    });
+  }
+  const group = {
+    schemaVersion: 1, id: 'g', mode: 'employment', currency: 'USD', startDate: start, horizonMonths: ri(1, 120),
+    discountRateAnnual: rnd() < 0.5 ? null : pick(['0', '0.05', '0.1', '0.137']),
+    baseline: { kind: 'current_role', annualBase: dec(300000, dp), annualCashBonus: rnd() < 0.5 ? '0' : dec(50000, dp) }, status: 'open',
+  };
+  const offer = {
+    schemaVersion: 1, id: 'r', opportunityId: 'o', supersedesRevisionId: null, asOfDate: start, status: 'proposed', currency: 'USD',
+    cash: {
+      annualBase: f(dec(300000, dp)), annualTargetBonus: f(rnd() < 0.5 ? '0' : dec(50000, dp)),
+      signingBonus: f(rnd() < 0.5 ? '0' : dec(50000, 2)), signingRepaymentMonths: pick([null, 0, 12, 24]),
+    },
+    serviceStartDate: f(S), grants,
+  };
+  const scenarios = [];
+  const nsc = ri(1, 4);
+  let left = 100;
+  for (let s = 0; s < nsc; s += 1) {
+    const serviceMonths = pick([0, 1, 11, 12, 13, 24, 48, ri(0, 120)]);
+    const occurs = rnd() < 0.8;
+    const Lm = ri(0, 130);
+    const atDate = rnd() < 0.4;
+    const X = ri(0, occurs ? Lm : 130);
+    const method = pick(['common_per_share', 'pro_rata_shares', 'pro_rata_ownership', 'none', 'common_per_share']);
+    const payout = method === 'common_per_share' ? { method, commonProceedsPerShare: dec(30, pick([2, 6, 12])), source: 's', asOfDate: start }
+      : method === 'pro_rata_shares' ? { method, equityExitValue: dec(2e9, 2), fullyDilutedExitShares: String(ri(1e6, 2e8)) }
+        : method === 'pro_rata_ownership' ? { method, equityExitValue: dec(2e9, 2), dilutionRounds: Array.from({ length: ri(0, 3) }, () => `0.${ri(1, 4)}${ri(0, 9)}`) }
+          : { method };
+    const w = s === nsc - 1 ? left : ri(0, left);
+    left -= w;
+    scenarios.push({
+      scenarioId: `s${s}`, label: 'x', kind: 'custom', weightPct: rnd() < 0.85 ? String(w) : null, serviceMonths,
+      postServiceAnnualCash: rnd() < 0.4 ? dec(200000, dp) : null,
+      liquidity: { occurs, monthsFromStart: occurs ? Lm : null }, payout,
+      exercisePath: atDate ? { kind: 'at_date', exerciseMonthsFromStart: X } : { kind: 'at_liquidity' },
+    });
+  }
+  return { group, offerRevision: offer, scenarioSet: { schemaVersion: 1, id: 'ss', offerRevisionId: 'r', currency: 'USD', scenarios } };
+}
+
+test('property: calculator agrees EXACTLY with the independent rational reference (>= 500 cases)', () => {
+  const rng = makeRng(20261015);
+  let agreed = 0;
+  let generated = 0;
+  const stats = { net: 0, be: 0, residual: 0, nullNet: 0 };
+  while (agreed < 600 && generated < 6000) {
+    generated += 1;
+    const input = generate(rng);
+    const got = calculateOffer(input);
+    assert.equal(got.ok, true, JSON.stringify(got.errors));
+    const ref = reference(input);
+    got.result.scenarios.forEach((s, j) => {
+      const r = ref.scenarios[j];
+      if (s.netPreTax === null) stats.nullNet += 1; else stats.net += 1;
+      if (s.breakEvenCommonPrice !== null) stats.be += 1;
+      if (s.grants.some((g) => g.illiquidResidual && g.illiquidResidual.units !== null)) stats.residual += 1;
+      const where = `case ${generated} scenario ${j}`;
+      for (const k of Object.keys(r.cash)) assert.equal(s.cash[k], r.cash[k], `${where} cash.${k}`);
+      for (const k of ['netPreTax', 'npv', 'breakEvenCommonPrice', 'maxCumulativeFundingNeed']) assert.equal(s[k], r[k], `${where} ${k}`);
+      s.grants.forEach((g, q) => {
+        for (const k of ['vestedUnits', 'eligibleUnits', 'exerciseCost', 'realizedProceeds']) assert.equal(g[k], r.grants[q][k], `${where} grant ${q} ${k}`);
+        assert.equal(g.illiquidResidual ? g.illiquidResidual.units : null, r.grants[q].residual, `${where} grant ${q} residual`);
+      });
+    });
+    assert.deepEqual(got.result.weighted, ref.weighted, `case ${generated} weighted`);
+    agreed += 1;
+  }
+  assert.ok(agreed >= 500);
+  assert.ok(stats.net >= 150 && stats.be >= 40 && stats.residual >= 40 && stats.nullNet >= 20, JSON.stringify(stats));
+});

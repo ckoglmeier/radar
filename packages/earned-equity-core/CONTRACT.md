@@ -227,3 +227,48 @@ No optimization.
 ## Rubric (`rubric.v1.json`, Phase 4)
 
 This file is reserved for later work. It has no probability fields.
+
+## v1.1 amendments (independent review, 2026-10-15)
+
+Each amendment below answers a finding (F1–F10) from the independent review.
+
+**A1. Exact accumulation (F1, F2).**
+- Money and prices are held at 10⁻¹². This is now the same scale as ratios, and it matches the schema's 12 decimals, so no input is truncated on parse.
+- Totals are computed exactly from annual amounts × months / 12 and rounded once at output. This covers offer and baseline cash, differences, net, NPV, weighted values and proceeds.
+- `cashFlows[].amount` is display-rounded per entry. The sum of displayed flows may differ from `netPreTax` by rounding; `netPreTax` is authoritative.
+
+**A2. Basis on results (F3).**
+- `CalculationResult` carries `basis: { currency, startDate, horizonMonths, discountRateAnnual }`.
+- `compareOffers` fails with `comparison_basis_mismatch` when any result's basis differs from the group.
+
+**A3. Grant expiration (F4).**
+- If `expirationYears` is unknown and liquidity lies within the horizon, equity is `null` with `grant_expiration_unknown`.
+- If `grantDate` is unknown, the earliest possible grant date is the offer revision's `asOfDate`.
+  - Liquidity on or before `asOfDate + expirationYears` is certainly before expiry.
+  - Otherwise equity is `null` with `grant_expiration_unknown`.
+
+**A4. Ownership versus units (F5).**
+- Under `pro_rata_ownership`, when units are known, the vested fraction is `eligibleUnits / units`, and known zero units give zero proceeds.
+- When units are unknown, the fraction comes from the schedule, as before.
+
+**A5. `not_applicable` (F6).**
+- For cash terms (target bonus, signing bonus, baseline bonus), `not_applicable` means the term does not exist and counts as zero, with no limitation.
+- For any other required field, `not_applicable` is a structured error (`not_applicable_not_allowed:<field>`).
+
+**A6. Selection never assumes zero (F7).**
+- Unknown hours give a `capacity_hours_unknown` warning.
+- An unknown or missing funding result gives `exercise_funding_unknown` when a funding capacity is set.
+
+**A7. Residual respects expiry (F8).**
+- With no liquidity in the horizon, the illiquid residual is the units still exercisable at H, after the post-termination window and grant expiration.
+- An unknown window or expiration gives a `null` residual with the matching limitation.
+
+**A8. Vesting validity (F9).**
+- `cliffMonths > totalMonths` (when `T > 0`) is a structured error, `vesting_cliff_exceeds_term`.
+- When T is not a multiple of the cadence, a final event at T is kept (rule 2 governs) and the limitation `vesting_final_event_off_cadence` is added.
+
+**A9. Robustness (F10).**
+- Every date input, including `vestedUnitsAt`'s query date and impossible calendar dates, is validated and returns structured errors that name the field path.
+- `compareOffers` and `validateSelection` return structured errors on malformed input; they never throw.
+
+`CALCULATOR_VERSION` becomes `earned-equity-core/1.1.0`.

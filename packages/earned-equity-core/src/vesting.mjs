@@ -1,5 +1,5 @@
 // Vesting schedule: cumulative floor, remainder lands on the final event.
-import { addMonths } from './dates.mjs';
+import { addMonths, isValidIsoDate } from './dates.mjs';
 import { parseUnits } from './decimal.mjs';
 import { readFact } from './facts.mjs';
 import { sortedUnique } from './canonical-json.mjs';
@@ -26,6 +26,23 @@ function accelerationLimitations(vesting) {
   return [];
 }
 
+/** Structural errors for a grant's vesting block. `base` is the path prefix. */
+export function vestingErrors(grant, base) {
+  const errors = [];
+  const v = grant?.vesting;
+  if (!v) return errors;
+  const c = v.commencementDate;
+  if (c?.state === 'not_applicable') errors.push({ path: `${base}.vesting.commencementDate`, code: 'not_applicable_not_allowed:commencement_date', message: 'commencementDate cannot be not_applicable.' });
+  else {
+    const r = readFact(c, 'commencement_date');
+    if (r.value !== null && !isValidIsoDate(r.value)) errors.push({ path: `${base}.vesting.commencementDate`, code: 'invalid_date', message: 'commencementDate is not a valid calendar date.' });
+  }
+  if (v.totalMonths > 0 && v.cliffMonths > v.totalMonths) {
+    errors.push({ path: `${base}.vesting.cliffMonths`, code: 'vesting_cliff_exceeds_term', message: 'cliffMonths exceeds totalMonths.' });
+  }
+  return errors;
+}
+
 /**
  * Fraction of the grant vested on `date` (service assumed to continue through it).
  * @returns {{ num: bigint|null, den: bigint, limitations: string[] }}
@@ -35,6 +52,9 @@ export function vestedFractionAt(grant, date) {
   const limitations = accelerationLimitations(v);
   if (!STEP[v.cadence]) {
     return { num: null, den: 1n, limitations: sortedUnique([...limitations, 'vesting_unsupported']) };
+  }
+  if (v.totalMonths > 0 && v.totalMonths >= v.cliffMonths && v.totalMonths % STEP[v.cadence] !== 0) {
+    limitations.push('vesting_final_event_off_cadence');
   }
   const c = readFact(v.commencementDate, 'commencement_date');
   limitations.push(...c.limitations);
@@ -60,18 +80,18 @@ export function vestedFractionAt(grant, date) {
   return { num, den, limitations: sortedUnique(limitations) };
 }
 
-/** Units vested on `date` as a BigInt (or null) with limitations. */
-export function vestedUnitsBigAt(grant, date) {
-  const frac = vestedFractionAt(grant, date);
-  const u = readFact(grant.units, 'units');
-  const limitations = [...frac.limitations, ...u.limitations];
-  if (frac.num === null || u.value === null) return { units: null, frac, U: u.value === null ? null : parseUnits(u.value), limitations: sortedUnique(limitations) };
-  const U = parseUnits(u.value);
-  return { units: (U * frac.num) / frac.den, frac, U, limitations: sortedUnique(limitations) };
-}
-
 /** Public API: units vested on `isoDate`, as an integer string or null. */
 export function vestedUnitsAt(grant, isoDate) {
-  const r = vestedUnitsBigAt(grant, isoDate);
-  return { units: r.units === null ? null : r.units.toString(), limitations: r.limitations };
+  const errors = [];
+  if (!isValidIsoDate(isoDate)) errors.push({ path: 'isoDate', code: 'invalid_date', message: 'Query date is not a valid calendar date.' });
+  if (!grant || typeof grant !== 'object' || !grant.vesting) errors.push({ path: 'grant.vesting', code: 'invalid_grant', message: 'grant.vesting is required.' });
+  else errors.push(...vestingErrors(grant, 'grant'));
+  const u = grant?.units;
+  if (u?.state === 'not_applicable') errors.push({ path: 'grant.units', code: 'not_applicable_not_allowed:units', message: 'units cannot be not_applicable.' });
+  if (errors.length) return { units: null, limitations: [], errors };
+  const frac = vestedFractionAt(grant, isoDate);
+  const ur = readFact(grant.units, 'units');
+  const limitations = sortedUnique([...frac.limitations, ...ur.limitations]);
+  if (frac.num === null || ur.value === null) return { units: null, limitations, errors: [] };
+  return { units: ((parseUnits(ur.value) * frac.num) / frac.den).toString(), limitations, errors: [] };
 }
