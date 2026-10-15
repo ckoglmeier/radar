@@ -186,6 +186,47 @@ async function guardedTarget(opportunity, existingInvestmentId) {
   }
 }
 
+// Resolve (or create and link) the company entity of an opportunity. Opportunities are mutable,
+// so a new link goes through the revision guard. Call inside an atomic write with the row read FOR UPDATE.
+export async function ensureOpportunityIssuer(opportunity, { legalName = null, portfolioEntityId = null, createProfile = false } = {}) {
+  const requireOperatingCompany = async entityId => {
+    const [entity] = await query('SELECT entity_type FROM portfolio_entities WHERE id = $1', [entityId]);
+    if (!entity) throw new EarnedEquityError('not_found', 'Portfolio entity not found.');
+    if (entity.entity_type !== 'operating_company') throw new EarnedEquityError('invalid_target', 'The linked company is not an operating company.');
+  };
+  const link = async entityId => {
+    // Opportunities are mutable; the revision guard keeps this write honest.
+    const payload = { ...json(opportunity.payload), portfolioEntityId: entityId };
+    await updateOpportunity(opportunity.id, opportunity.revision, payload, entityId);
+  };
+  let entityId = opportunity.portfolio_entity_id;
+  let issuerCreated = false;
+  let linkedExisting = false;
+  if (entityId) {
+    if (portfolioEntityId && portfolioEntityId !== entityId) {
+      throw new EarnedEquityError('entity_mismatch', 'The opportunity is already linked to a different company.');
+    }
+    await requireOperatingCompany(entityId);
+  } else if (portfolioEntityId) {
+    await requireOperatingCompany(portfolioEntityId);
+    entityId = portfolioEntityId;
+    await link(entityId);
+    linkedExisting = true;
+  } else {
+    if (typeof legalName !== 'string' || !legalName.trim()) {
+      throw new EarnedEquityError('legal_name_required', 'The opportunity has no company yet; provide its legal name.');
+    }
+    const [clash] = await query(`SELECT id FROM portfolio_entities WHERE entity_type = 'operating_company' AND normalized_name = $1`, [normalize(legalName.trim())]);
+    if (clash) throw new EarnedEquityError('issuer_exists', 'A company with this name already exists; link the opportunity to it first.');
+    const created = await createEmploymentEquityIssuer({ legalName: legalName.trim(), relationshipStatus: 'other' });
+    entityId = created.entity.id;
+    issuerCreated = true;
+    await link(entityId);
+  }
+  if (createProfile && !issuerCreated) await createEmploymentEquityIssuerProfile(entityId, { relationshipStatus: 'other' });
+  return { entityId, issuerCreated, linkedExisting };
+}
+
 export async function linkConfirmedGrant(input) {
   const confirmed = validateLinkInput(input);
   if (!(await isPgliteActive())) throw new Error('Earned Equity writes require local PGlite transaction support');
@@ -236,26 +277,9 @@ export async function linkConfirmedGrant(input) {
       investmentId = targetInvestmentId;
     } else {
       target = 'new_position';
-      let entityId = opportunity.portfolio_entity_id;
-      if (entityId) {
-        const [entity] = await query('SELECT entity_type FROM portfolio_entities WHERE id = $1', [entityId]);
-        if (!entity || entity.entity_type !== 'operating_company') {
-          throw new EarnedEquityError('invalid_target', 'The linked company is not an operating company.');
-        }
-        await createEmploymentEquityIssuerProfile(entityId, { relationshipStatus: 'other' });
-      } else {
-        if (typeof legalName !== 'string' || !legalName.trim()) {
-          throw new EarnedEquityError('legal_name_required', 'The opportunity has no company yet; provide its legal name.');
-        }
-        const [clash] = await query(`SELECT id FROM portfolio_entities WHERE entity_type = 'operating_company' AND normalized_name = $1`, [normalize(legalName.trim())]);
-        if (clash) throw new EarnedEquityError('issuer_exists', 'A company with this name already exists; link the opportunity to it first.');
-        const created = await createEmploymentEquityIssuer({ legalName: legalName.trim(), relationshipStatus: 'other' });
-        entityId = created.entity.id;
-        issuerCreated = true;
-        // Opportunities are mutable; the revision guard keeps this write honest.
-        const payload = { ...json(opportunity.payload), portfolioEntityId: entityId };
-        await updateOpportunity(opportunity.id, opportunity.revision, payload, entityId);
-      }
+      const resolved = await ensureOpportunityIssuer(opportunity, { legalName, createProfile: true });
+      const entityId = resolved.entityId;
+      issuerCreated = resolved.issuerCreated;
       const [entity] = await query('SELECT legal_name FROM portfolio_entities WHERE id = $1', [entityId]);
       const made = await createEmploymentEquityPosition({
         portfolioEntityId: entityId, displayName: `${entity.legal_name} ${confirmed.instrumentType.toUpperCase()} grant`,

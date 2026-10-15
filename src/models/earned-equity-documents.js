@@ -1,6 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isPgliteActive, query, withAtomicWrite } from '../db/index.js';
-import { accessDocumentBytes, createDocument } from './documents.js';
+import {
+  accessDocumentBytes, alreadyCommittedError, createDocument, createPendingIntake, getPendingIntake, markPendingCommitted,
+} from './documents.js';
 import { extractHtmlText, extractPdfText } from '../intake/extract-text.js';
 import {
   OfferDocumentError, reviewOfferDocumentText, validateProposal,
@@ -51,6 +53,40 @@ export async function attachOfferDocument({ opportunityId, filename, mime = null
     processing_policy: modelAllowed === true ? 'model_allowed' : 'local_only',
   });
   return document;
+}
+
+// Bytes reach the database through staging (the File Vault pattern) so a command carries only the
+// staged id: file bytes, names and text never enter command proposals or receipts.
+export const OFFER_STAGING_TYPE = 'earned_equity_offer_document';
+
+export async function stageOfferDocument({ filename, mime = null, content }) {
+  if (typeof filename !== 'string' || !filename) throw new OfferDocumentError('invalid_input', 'filename is required.');
+  const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content);
+  if (bytes.length === 0) throw new OfferDocumentError('invalid_input', 'Choose a document to upload.');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  return createPendingIntake({ filename, mime, sha256, content: bytes, preview: { type: OFFER_STAGING_TYPE, sha256 } });
+}
+
+const DOCUMENT_META = `id, entity_type, entity_id, sha256, size_bytes, confidentiality, processing_policy, sync_policy`;
+
+// Attaches a staged document to an opportunity (personal_sensitive, local_only processing). A retry
+// of an already-committed staging id replays the same document.
+export async function attachOfferDocumentFromPending({ previewId, opportunityId }) {
+  return withDocumentWrite(async () => {
+    const pending = await getPendingIntake(previewId);
+    if (!pending || pending.preview?.type !== OFFER_STAGING_TYPE) throw new OfferDocumentError('not_found', 'The staged upload is missing or expired.');
+    if (pending.status === 'committed') {
+      const [doc] = await query(`SELECT ${DOCUMENT_META} FROM documents WHERE id = $1`, [pending.created_refs?.document_id ?? null]);
+      if (!doc || doc.entity_type !== OFFER_ENTITY_TYPE || doc.entity_id !== opportunityId) {
+        throw new OfferDocumentError('already_committed', 'This staged upload was already attached elsewhere.');
+      }
+      return { document: doc, idempotent_replay: true };
+    }
+    const created = await attachOfferDocument({ opportunityId, filename: pending.filename, mime: pending.mime, content: pending.content, modelAllowed: false });
+    if (!await markPendingCommitted(previewId, { document_id: created.id, opportunity_id: opportunityId })) throw alreadyCommittedError(previewId);
+    const [doc] = await query(`SELECT ${DOCUMENT_META} FROM documents WHERE id = $1`, [created.id]);
+    return { document: doc, idempotent_replay: false };
+  });
 }
 
 // Explicit consent is the only way a document becomes readable by a model.

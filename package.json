@@ -33,7 +33,7 @@
     "test:employment-equity-audit": "node src/models/test-employment-equity-audit.js",
     "test:earned-equity-core": "node --test packages/earned-equity-core/test/*.test.mjs",
     "test:earned-equity-opportunities": "node src/models/test-earned-equity-opportunities.js && node src/commands/test-earned-equity-commands.js",
-    "test:earned-equity-intelligence": "node src/intake/test-offer-documents.js && node src/models/test-earned-equity-documents.js && node src/council/test-earned-equity-mode.js && node src/models/test-earned-equity-reviews.js && node src/models/test-earned-equity-grant-links.js",
+    "test:earned-equity-intelligence": "node src/intake/test-offer-documents.js && node src/models/test-earned-equity-documents.js && node src/council/test-earned-equity-mode.js && node src/models/test-earned-equity-reviews.js && node src/models/test-earned-equity-grant-links.js && node src/commands/test-earned-equity-handoff-commands.js",
     "test:employment-equity": "node src/models/test-employment-equity.js",
     "test:investment-updates": "node src/models/test-investment-updates.js",
     "test:file-vault": "node src/models/test-file-vault.js",

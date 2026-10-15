@@ -46,8 +46,8 @@ try {
     const issuer = await createEmploymentEquityIssuer({ legalName: 'Synthetic Command Issuer', relationshipStatus: 'other' });
 
     const names = commandMetadata().commands.map(command => command.name).filter(name => name.startsWith('earned_equity.'));
-    assert.deepEqual(names.sort(), ['earned_equity.add_offer_revision', 'earned_equity.create_group', 'earned_equity.create_opportunity',
-      'earned_equity.link_confirmed_grant', 'earned_equity.purge_opportunity', 'earned_equity.record_analysis_snapshot', 'earned_equity.record_decision', 'earned_equity.update_group', 'earned_equity.update_opportunity']);
+    assert.deepEqual(names.sort(), ['earned_equity.add_offer_revision', 'earned_equity.attach_offer_document', 'earned_equity.create_group', 'earned_equity.create_opportunity',
+      'earned_equity.link_confirmed_grant', 'earned_equity.purge_opportunity', 'earned_equity.record_analysis_snapshot', 'earned_equity.record_decision', 'earned_equity.record_document_review', 'earned_equity.reject_document_review', 'earned_equity.request_offer_memo', 'earned_equity.set_document_consent', 'earned_equity.start_company_review', 'earned_equity.update_group', 'earned_equity.update_opportunity']);
 
     const groupPlan = await plan('earned_equity.create_group', { payload: group() }, 'cg');
     const authorize = () => authorizeCommandProposal(groupPlan.proposal.id, groupPlan.proposal.command_set_hash,
