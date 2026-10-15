@@ -347,18 +347,18 @@ export const EARNED_EQUITY_STAGE_PROMPTS = Object.freeze({
   bull:
     'STAGE: bull\nPerform only the Bull review. Use only the frozen research packet in context; do not search or add facts. ' +
     'Return rubric findings from the Bull side, citing evidence IDs from the packet, plus the strongest credible upside ' +
-    'argument and your view of the business gate. State no probabilities. Treat missing evidence as unavailable, not negative.',
+    'argument and your view of the business gate. State no probabilities. Treat missing evidence as unavailable, not negative. Hard rules: a finding on unavailable evidence must use direction unknown; a directional finding on conflicting evidence must list counterevidence; cite only evidence IDs in the packet; applicability.stage must equal the company stage when known; use only the listed rubric rows and assumptions; numeric sensitivities need cited supplied or verified evidence, never a user-estimate flag; state no probabilities; confirmationState is proposed.',
   bear:
     'STAGE: bear\nPerform only the Bear review. Use only the frozen research packet in context; do not search or add facts. ' +
     'Return rubric findings from the Bear side, citing evidence IDs from the packet, plus the strongest credible skeptical ' +
-    'argument and your view of the business gate. State no probabilities. Missing evidence is a question to ask, not proof of a problem.',
+    'argument and your view of the business gate. State no probabilities. Missing evidence is a question to ask, not proof of a problem. Hard rules: a finding on unavailable evidence must use direction unknown; a directional finding on conflicting evidence must list counterevidence; cite only evidence IDs in the packet; applicability.stage must equal the company stage when known; use only the listed rubric rows and assumptions; numeric sensitivities need cited supplied or verified evidence, never a user-estimate flag; state no probabilities; confirmationState is proposed.',
   calibrator:
     'STAGE: company_calibrator\nPerform only calibration. Reconcile the frozen Bull and Bear outputs into one set of rubric ' +
     'findings and a proposed business gate (supported, failed or unresolved; unresolved means investigate). Do not search or ' +
     'add facts. Cite only evidence IDs from the frozen packet. confirmationState is always proposed. A numeric sensitivity ' +
     'needs cited, non-conflicting evidence; otherwise give a qualitative sensitivity. Never mark a value as a user estimate. ' +
     'List a stage cap ID only from the supplied valid IDs and only when its requirement is unmet. Return no more than six ' +
-    'questions for the employer. State evidence confidence separately from outcome. State no probabilities or scenario weights.',
+    'questions for the employer. State evidence confidence separately from outcome. State no probabilities or scenario weights. Hard rules: a finding on unavailable evidence must use direction unknown; a directional finding on conflicting evidence must list counterevidence; cite only evidence IDs in the packet; applicability.stage must equal the company stage when known; use only the listed rubric rows and assumptions; numeric sensitivities need cited supplied or verified evidence, never a user-estimate flag; state no probabilities; confirmationState is proposed.',
 });
 
 // ---------------------------------------------------------------------------
@@ -507,8 +507,23 @@ export function validateCompanyFindings(findings, ctx) {
   const seen = new Set();
   const probability = findProbabilityFields(findings, 'findings');
   if (probability.length) throw new Error(`Probability fields or wording are not allowed: ${probability.slice(0, 3).join(', ')}`);
-  return findings.map(finding => {
+  const normalized = ctx.normalized || [];
+  const out = findings.map(original => {
+    let finding = original;
     const label = `Finding ${finding?.id}`;
+    // The one soft rule: missing evidence means investigate, not failure. Normalize, record, never reject.
+    if (finding?.evidenceState === 'unavailable') {
+      if (finding.direction !== 'unknown') {
+        normalized.push({ findingId: finding.id, field: 'direction', from: finding.direction, to: 'unknown',
+          reason: 'Unavailable evidence cannot support a directional finding.' });
+        finding = { ...finding, direction: 'unknown' };
+      }
+      if (finding.proposedSensitivity?.kind === 'numeric') {
+        normalized.push({ findingId: finding.id, field: 'proposedSensitivity', from: 'numeric', to: 'qualitative',
+          reason: 'A numeric assumption cannot rest on unavailable evidence.' });
+        finding = { ...finding, proposedSensitivity: { ...finding.proposedSensitivity, kind: 'qualitative', value: null, unit: null, sourceEvidenceIds: [], userEstimate: false } };
+      }
+    }
     if (!finding?.id || seen.has(finding.id)) throw new Error(`${label}: id is missing or repeated`);
     seen.add(finding.id);
     const row = rowsById.get(finding.rubricRowId);
@@ -566,6 +581,7 @@ export function validateCompanyFindings(findings, ctx) {
       withholdDefinitiveCommonPayout: row.withholdDefinitiveCommonPayout === true,
     };
   });
+  return out;
 }
 
 /**
@@ -616,14 +632,16 @@ export function finalizeBusinessGate({ proposal, findings, stageCapIds = [], evi
 }
 
 function validateGrader(data, ctx) {
-  const findings = validateCompanyFindings(data.findings, ctx);
+  const normalized = [];
+  const findings = validateCompanyFindings(data.findings, { ...ctx, normalized });
   const probability = findProbabilityFields({ key_argument: data.key_argument }, 'grader');
   if (probability.length) throw new Error('Probability wording is not allowed in the key argument');
-  return { ...data, findings };
+  return { ...data, findings, normalized };
 }
 
 function validateCalibratorOutput(data, ctx) {
-  const findings = validateCompanyFindings(data.findings, ctx);
+  const normalized = [];
+  const findings = validateCompanyFindings(data.findings, { ...ctx, normalized });
   const probability = findProbabilityFields({ ...data, findings: undefined }, 'calibrator');
   if (probability.length) throw new Error(`Probability fields or wording are not allowed: ${probability.slice(0, 3).join(', ')}`);
   const validCaps = new Set(capsForStage(ctx.stage).map(cap => cap.id));
@@ -639,7 +657,7 @@ function validateCalibratorOutput(data, ctx) {
   const gate = finalizeBusinessGate({
     proposal: data.gate_proposal, findings, stageCapIds: data.stage_cap_ids, evidenceConfidence: data.evidence_confidence,
   });
-  return { ...data, findings, gate };
+  return { ...data, findings, gate, normalized };
 }
 
 // ---------------------------------------------------------------------------
@@ -948,7 +966,9 @@ export async function earnedEquityCompanyReview(company, opts = {}) {
         parentReviewId,
         researchPlan,
         researchSnapshot,
+        normalizedFindings: final.normalized,
       },
+      normalizedFindingCount: final.normalized.length,
     };
     const leaks = findProbabilityFields(artifact, 'artifact');
     if (leaks.length) throw new Error(`Probability fields are not allowed in the artifact: ${leaks.slice(0, 3).join(', ')}`);
@@ -980,5 +1000,13 @@ export async function earnedEquityCompanyReview(company, opts = {}) {
   }
 }
 
-const REPAIR_NOTE = `Return one complete replacement response. Fix exactly the problem named above. Keep every finding
-that was valid, cite only the evidence IDs in the frozen packet, and do not discuss the repair.`;
+const REPAIR_NOTE = `Return one complete replacement response. Fix exactly the problem named above, keep every valid finding, and do not discuss the repair.
+Hard rules Radar enforces on every finding:
+- A finding whose evidenceState is unavailable must use direction unknown.
+- A directional finding (strengthens or weakens) on conflicting evidence must list the counterevidence.
+- Cite only evidence IDs that appear in the frozen packet (E1, E2, ...). Supplied, verified and conflicting evidence must cite at least one ID.
+- applicability.stage must equal the company stage when it is known, and the rubric row must apply to that stage.
+- Use only the rubric row IDs and affected assumptions listed in the rubric.
+- A numeric sensitivity needs a decimal value, a unit, and sourceEvidenceIds that are cited by the finding with supplied or verified evidence. Never set userEstimate to true. Otherwise use a qualitative or none sensitivity with value null, no sources and userEstimate false.
+- State no probabilities, likelihoods, odds or scenario weights, in any field.
+- confirmationState is always proposed.`;

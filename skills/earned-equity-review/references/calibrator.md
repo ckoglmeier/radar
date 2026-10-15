@@ -31,3 +31,14 @@ Return no more than six concrete questions whose answers would change a finding,
 ## Employee common equity notes
 
 List how financing, dilution, preferences and income concentration bear on common holders, as qualitative notes. No dollar amounts unless a cited source supports them. Do not compare to any package, salary or grant.
+
+## Rules Radar enforces on every finding
+
+- A finding whose evidenceState is `unavailable` must use direction `unknown`. (Radar sets it to `unknown`, drops any numeric sensitivity and records the change if you do not.)
+- A directional finding on `conflicting` evidence must list the counterevidence.
+- Cite only evidence IDs from the frozen packet. Supplied, verified and conflicting evidence must cite at least one.
+- applicability.stage must equal the company stage when it is known.
+- Use only the listed rubric rows and affected assumptions.
+- A numeric sensitivity needs a decimal value, a unit and cited supplied or verified evidence; never set userEstimate. Otherwise value is null and sourceEvidenceIds is empty.
+- State no probabilities, likelihoods or odds.
+- confirmationState is always `proposed`.

@@ -239,7 +239,7 @@ await test('rubric: weak evidence cannot produce a numeric assumption without a 
   // No source.
   throws(() => validateCompanyFindings([numeric({ sourceEvidenceIds: [] })], ctx()), /cited supplied or verified evidence/);
   // Source is unavailable or conflicting evidence.
-  throws(() => validateCompanyFindings([finding({ ...numeric({ sourceEvidenceIds: ['E3'] }), evidenceIds: ['E3'], evidenceState: 'unavailable', direction: 'unknown' })], ctx()), /cited supplied or verified/);
+  assert.equal(validateCompanyFindings([finding({ ...numeric({ sourceEvidenceIds: ['E3'] }), evidenceIds: ['E3'], evidenceState: 'unavailable', direction: 'unknown' })], ctx())[0].proposedSensitivity.kind, 'qualitative', 'unavailable evidence drops the number');
   throws(() => validateCompanyFindings([finding({ ...numeric({ sourceEvidenceIds: ['E4'] }), evidenceIds: ['E4'], evidenceState: 'conflicting', direction: 'weakens', counterevidence: ['other report'] })], ctx()), /cited supplied or verified/);
   // A model may not set the user-estimate flag; only a user-supplied value may.
   throws(() => validateCompanyFindings([numeric({ userEstimate: true })], ctx()), /user-estimate flag/);
@@ -269,7 +269,13 @@ await test('rubric: contradictory evidence is recorded, not resolved by assertio
 });
 
 await test('rubric: missing evidence stays unknown and keeps the gate unresolved', () => {
-  throws(() => validateCompanyFindings([finding({ evidenceIds: [], evidenceState: 'unavailable', direction: 'weakens' })], ctx()), /unavailable evidence cannot support/);
+  // Unavailable evidence with a direction is normalized, never rejected.
+  const norm = [];
+  const [fixed] = validateCompanyFindings([finding({ evidenceIds: [], evidenceState: 'unavailable', direction: 'weakens',
+    proposedSensitivity: sensitivity({ kind: 'numeric', value: '5', unit: 'usd' }) })], ctx({ normalized: norm }));
+  assert.equal(fixed.direction, 'unknown');
+  assert.equal(fixed.proposedSensitivity.kind, 'qualitative');
+  assert.deepEqual(norm.map(item => [item.field, item.from, item.to]), [['direction', 'weakens', 'unknown'], ['proposedSensitivity', 'numeric', 'qualitative']]);
   const [missing] = validateCompanyFindings([finding({
     id: 'M1', rubricRowId: 'preferences_or_debt_unresolved', evidenceIds: ['E3'], evidenceState: 'unavailable', direction: 'unknown', affectedAssumption: 'common_payout',
   })], ctx());
@@ -389,6 +395,45 @@ await test('follow-up: employer answers create a new linked review from frozen r
   assert.equal(JSON.stringify(parent), snapshot, 'the parent artifact is unchanged');
   await assert.rejects(review(company(), standard(), { reviewKind: 'followup' }), /follow-up review needs/);
   await assert.rejects(review(company(), standard(), { parentReviewId: 'x' }), /Only a follow-up/);
+});
+
+await test('unavailable-evidence weakens finding completes, normalized and recorded; other rules still reject', async () => {
+  const bad = finding({ id: 'F4', rubricRowId: 'preferences_or_debt_unresolved', evidenceIds: ['E3'], evidenceState: 'unavailable',
+    direction: 'weakens', affectedAssumption: 'common_payout' });
+  const provider = makeProvider({
+    research: researchOutput(), bull: gradeOutput([finding()]), bear: gradeOutput([bad], 'unresolved'),
+    company_calibrator: calibratorOutput({ findings: [finding(), bad] }),
+  });
+  const result = await review(company(), provider);
+  assert.equal(provider.calls.filter(call => call.stage === 'bear').length, 1, 'no repair needed');
+  const record = result.review.provenance.normalizedFindings;
+  assert.deepEqual(record.map(item => [item.findingId, item.field, item.from, item.to]), [['F4', 'direction', 'weakens', 'unknown']]);
+  assert.ok(record[0].reason);
+  assert.equal(result.review.findings.find(item => item.id === 'F4').direction, 'unknown');
+  assert.equal(result.review.normalizedFindingCount, 1);
+  // Everything else is still a hard rejection.
+  const rejects = async (out, pattern) => assert.rejects(review(company(), makeProvider({
+    research: researchOutput(), bull: gradeOutput(out), bear: gradeOutput([finding()]), company_calibrator: calibratorOutput(),
+  })), pattern);
+  await rejects([finding({ evidenceIds: ['E99'] })], /unknown evidence/);
+  await rejects([finding({ applicability: { stage: 'seed', businessModel: 'marketplace' } })], /company stage/);
+  await rejects([finding({ statement: 'There is a 30% chance of exit.' })].map(f => ({ ...f, probability: 0.3 })), /./);
+});
+
+await test('the repair note and stage prompts state every validator rule', async () => {
+  const provider = makeProvider({
+    research: researchOutput(),
+    bull: (_r, n) => gradeOutput([n === 1 ? finding({ evidenceIds: ['E99'] }) : finding()]),
+    bear: gradeOutput([finding()]), company_calibrator: calibratorOutput(),
+  });
+  await review(company(), provider);
+  const repair = provider.calls.filter(call => call.stage === 'bull')[1].request.prompt;
+  for (const rule of [/unavailable must use direction unknown/, /conflicting evidence must list the counterevidence/, /only evidence IDs/, /applicability\.stage must equal the company stage/,
+    /rubric row IDs and affected assumptions/, /numeric sensitivity needs/, /no probabilities/i, /confirmationState is always proposed/]) assert.match(repair, rule);
+  for (const call of provider.calls.filter(item => item.stage !== 'research')) {
+    assert.match(call.request.prompt, /unavailable evidence must use direction unknown/);
+    assert.match(call.request.systemPrompt, /Rules Radar enforces/);
+  }
 });
 
 console.log(`Earned Equity company review: ${passed} checks passed`);
