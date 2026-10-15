@@ -66,7 +66,7 @@ Rules:
 
 These calculations apply per scenario and per grant component. Let:
 - `S` = the offer's `serviceStartDate`. A `null` value is an error for calculation.
-- `E` = `addMonths(S, serviceMonths)` − 1 day.
+- `E` = `addMonths(S, serviceMonths)`. Service runs through the N-month anniversary, so 12 months of service meets a 12-month cliff and 48 months completes a 48-month vest. `serviceMonths: 0` means no service: `E` = S and nothing vests unless `T = 0`.
 - `L` = `addMonths(S, liquidity.monthsFromStart)`.
 - `H` = the group's `addMonths(startDate, horizonMonths)`.
 
@@ -84,7 +84,9 @@ These calculations apply per scenario and per grant component. Let:
   - Otherwise post-service months are excluded from both sides, with the limitation `post_service_cash_unmodeled`.
 
 **Output differences**
-- `baseDifference = baseline − offer` and `totalCashDifference = baseline − offer`, both including bonus.
+- `baseDifference` = baseline base − offer base.
+- `totalCashDifference` = baseline (base + bonus) − offer (base + bonus).
+- Signing flows are excluded from both and appear as their own flows.
 - Negative values are preserved (they mean the offer pays more).
 - A `null` baseline base gives `null` differences and the limitation `baseline_missing`.
 

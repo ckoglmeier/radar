@@ -86,7 +86,7 @@ export const opportunitySchema = {
     schemaVersion: { const: 1 },
     id,
     groupId: id,
-    portfolioEntityId: { type: ['integer', 'null'], minimum: 1 },
+    portfolioEntityId: { anyOf: [{ type: 'string', pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' }, { type: 'null' }] },
     companyName: { type: 'string', minLength: 1, maxLength: 200 },
     relationship: { type: 'string', enum: ['employment', 'advisory', 'board', 'other'] },
     isStayPut: { type: 'boolean' },
