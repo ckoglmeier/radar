@@ -1,6 +1,6 @@
 {
   "name": "radar",
-  "version": "2.4.0-earned-equity.1",
+  "version": "2.4.0-earned-equity.2",
   "description": "Decision infrastructure for private market investors. Portfolio tracking, thesis management, deal pipeline, and bet sizing.",
   "type": "module",
   "license": "MIT",
