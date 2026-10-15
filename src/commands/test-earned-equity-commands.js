@@ -47,7 +47,7 @@ try {
 
     const names = commandMetadata().commands.map(command => command.name).filter(name => name.startsWith('earned_equity.'));
     assert.deepEqual(names.sort(), ['earned_equity.add_offer_revision', 'earned_equity.create_group', 'earned_equity.create_opportunity',
-      'earned_equity.purge_opportunity', 'earned_equity.record_analysis_snapshot', 'earned_equity.record_decision', 'earned_equity.update_group', 'earned_equity.update_opportunity']);
+      'earned_equity.link_confirmed_grant', 'earned_equity.purge_opportunity', 'earned_equity.record_analysis_snapshot', 'earned_equity.record_decision', 'earned_equity.update_group', 'earned_equity.update_opportunity']);
 
     const groupPlan = await plan('earned_equity.create_group', { payload: group() }, 'cg');
     const authorize = () => authorizeCommandProposal(groupPlan.proposal.id, groupPlan.proposal.command_set_hash,

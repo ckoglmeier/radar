@@ -57,6 +57,7 @@ const INSERT_ORDER = [
   'earned_equity_document_reviews',
   'earned_equity_company_reviews',
   'earned_equity_offer_reviews',
+  'earned_equity_grant_links',
   'investment_lots',
   'company_aliases',
   'valuations',

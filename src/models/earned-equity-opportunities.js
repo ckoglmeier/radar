@@ -423,11 +423,14 @@ async function purgeOpportunityRows(groupId, opportunityIds) {
   const snapshots = (await query('SELECT id FROM earned_equity_analysis_snapshots WHERE offer_revision_id = ANY($1::text[])', [revisions])).map(row => row.id);
   const revisionSet = new Set(revisions);
   const snapshotSet = new Set(snapshots);
+  // Grant links are offer-tree records. The ledger position and grants they point at stay.
+  await query('DELETE FROM earned_equity_grant_links WHERE offer_revision_id = ANY($1::text[])', [revisions]);
   // A decision that selects or compared anything being removed would dangle.
   let decisions = 0;
   for (const row of await query('SELECT id, payload FROM earned_equity_decisions WHERE group_id = $1', [groupId])) {
     const payload = json(row.payload);
     if (payload.selectedOfferRevisionIds.some(id => revisionSet.has(id)) || payload.comparedSnapshotIds.some(id => snapshotSet.has(id))) {
+      await query('DELETE FROM earned_equity_grant_links WHERE decision_id = $1', [row.id]);
       await query('DELETE FROM earned_equity_decisions WHERE id = $1', [row.id]);
       decisions += 1;
     }
@@ -451,6 +454,7 @@ export async function purgeEarnedEquityGroup(id) {
     if (!(await getGroupRow(id))) throw new EarnedEquityError('not_found', `Decision group not found: ${id}`);
     const ids = (await query('SELECT id FROM earned_equity_opportunities WHERE group_id = $1', [id])).map(row => row.id);
     const counts = await purgeOpportunityRows(id, ids);
+    await query('DELETE FROM earned_equity_grant_links WHERE decision_id IN (SELECT id FROM earned_equity_decisions WHERE group_id = $1)', [id]);
     const rest = await query('DELETE FROM earned_equity_decisions WHERE group_id = $1 RETURNING id', [id]);
     await query('DELETE FROM earned_equity_decision_groups WHERE id = $1', [id]);
     return { ...counts, decisions: counts.decisions + rest.length, group: 1 };

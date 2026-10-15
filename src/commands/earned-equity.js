@@ -20,6 +20,7 @@ import {
   validateSnapshotInput,
   checkDecisionShape,
 } from '../models/earned-equity-opportunities.js';
+import { inspectLinkTarget, linkConfirmedGrant, validateLinkInput } from '../models/earned-equity-grant-links.js';
 import { CommandError } from './errors.js';
 
 // Previews carry identifiers, states and counts only. Compensation terms,
@@ -252,6 +253,51 @@ export const earnedEquityCommandDefinitions = [
     preconditions: ({ current }) => current,
     apply: ({ input }) => apply(async () => ({ decision: await recordDecision(input.payload) })),
     affectedResources: ({ target }) => [target],
+  }),
+  base({
+    name: 'earned_equity.link_confirmed_grant', title: 'Create Earned Equity holding from confirmed grant',
+    description: 'After the user confirms a board-approved ISO or NSO grant, create the Earned Equity position (or add the grant to an existing one). Acceptance alone never creates holdings; vested units are exactly what the user confirms.',
+    // Classified like employment.create_position (metadata_change) but always confirmed: it creates a real holding.
+    risk: 'metadata_change', interactionPolicy: 'confirm_inline', applyCapabilities: ['portfolio:apply:metadata'],
+    editableInputKeys: [],
+    inputSchema: schema({
+      decisionId: text, offerRevisionId: text, componentId: text,
+      existingInvestmentId: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+      legalName: nullableText, confirmed: payloadObject,
+    }, ['decisionId', 'offerRevisionId', 'componentId', 'confirmed']),
+    resolve: async input => {
+      const [row] = await query('SELECT id FROM earned_equity_offer_revisions WHERE id = $1', [input.offerRevisionId]);
+      if (!row) throw new CommandError('TARGET_NOT_FOUND', `Offer revision not found: ${input.offerRevisionId}`);
+      return { type: 'earned_equity_offer_revision', id: row.id, label: `${row.id} / ${input.componentId}` };
+    },
+    inspect: (target, input) => inspectLinkTarget({ ...input, offerRevisionId: target.id, existingInvestmentId: input.existingInvestmentId ?? null }),
+    preview: ({ target, input, current }) => {
+      const confirmed = wrap(() => validateLinkInput(input));
+      if (current.existingLinkId) {
+        return { summary: `Grant ${input.componentId} is already linked to position ${current.existingInvestmentId}; nothing new will be created.`, target,
+          before: [{ field: 'linked_position', value: current.existingInvestmentId }], after: [],
+          derivedEffects: [], warnings: ['This confirmation was already applied.'], requiredReason: false };
+      }
+      if (!current.componentExists) throw new CommandError('EARNED_EQUITY_NOT_FOUND', `Grant component not found in the offer revision: ${input.componentId}`);
+      if (current.latestDecisionId !== input.decisionId) throw new CommandError('EARNED_EQUITY_DECISION_SUPERSEDED', 'This is not the latest decision for the group.');
+      if (!current.decisionSelectsRevision) throw new CommandError('EARNED_EQUITY_DECISION_NOT_SELECTED', 'The latest decision does not select this offer revision.');
+      const adding = input.existingInvestmentId != null;
+      return { summary: adding
+          ? `Add a confirmed ${confirmed.instrumentType.toUpperCase()} grant to Earned Equity position ${input.existingInvestmentId}.`
+          : `Create an Earned Equity position with a confirmed ${confirmed.instrumentType.toUpperCase()} grant.`, target,
+        before: [], after: [
+          { field: 'holding', value: adding ? 'grant added to existing position' : 'new position' },
+          { field: 'instrument', value: confirmed.instrumentType },
+          { field: 'units_granted', value: confirmed.unitsGranted },
+          { field: 'units_vested_confirmed', value: confirmed.unitsVestedConfirmed },
+          { field: 'balance_as_of', value: confirmed.balanceAsOfDate },
+        ],
+        derivedEffects: current.hasIssuer || adding ? [] : [{ field: 'company_created_and_linked', value: true }],
+        warnings: ['Vested units are recorded exactly as confirmed; Radar does not calculate vesting.'], requiredReason: false };
+    },
+    preconditions: ({ current }) => current,
+    apply: ({ input }) => apply(() => linkConfirmedGrant(input)),
+    affectedResources: ({ target, result }) => [target, ...(result?.link ? [{ type: 'employment_equity_position', id: result.link.investmentId, label: String(result.link.investmentId) }] : [])],
   }),
   base({
     name: 'earned_equity.purge_opportunity', title: 'Delete Earned Equity opportunity',
