@@ -26,6 +26,7 @@ export const ENTITY_TABLES = {
   portfolio_entity: 'portfolio_entities',
   room_holding: 'room_holdings',
   file_vault_entry: 'file_vault_entries',
+  earned_equity_opportunity: 'earned_equity_opportunities',
 };
 
 const CONFIDENTIALITY_VALUES = new Set(['standard', 'confidential_company', 'tax_sensitive', 'personal_sensitive']);
