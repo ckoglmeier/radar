@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { closeDb, query, withTenant } from './index.js';
@@ -17,19 +17,14 @@ try {
         applied_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
-    await query(`
-      INSERT INTO schema_migrations (version, name)
-      SELECT version, 'legacy-' || version
-      FROM generate_series(1, 39) AS version
-    `);
     // This fixture isolates migration 040 with a deliberately partial legacy
     // schema. Mark later migrations applied so their unrelated prerequisites
     // are not part of this focused normalization test.
-    await query(`
-      INSERT INTO schema_migrations (version, name)
-      SELECT version, 'fixture-skip-' || version
-      FROM generate_series(41, 999) AS version
-    `);
+    for (const file of readdirSync(new URL('./migrations/', import.meta.url)).filter(f => /^\d+.*\.sql$/.test(f))) {
+      const version = Number(file.split('_')[0]);
+      if (version !== 40) await query('INSERT INTO schema_migrations (version, name) VALUES ($1, $2)',
+        [version, file.replace(/\.sql$/, '')]);
+    }
     await query(`
       CREATE TABLE council_runs (
         id SERIAL PRIMARY KEY,
