@@ -62,14 +62,21 @@ try {
       description: 'Pre-existing', firstGrant: { legalInstrumentName: 'Synthetic option', instrumentType: 'nso',
         grantDate: '2026-10-14', unitsGranted: 100, unitsVestedConfirmed: 100, balanceAsOfDate: '2026-10-14', strikePrice: 1 } });
     const history = await query('SELECT * FROM schema_migrations WHERE version < 84 ORDER BY version');
+    // Later Earned Equity migrations depend on 084, so replay them together.
+    await query('DROP TABLE earned_equity_offer_reviews');
+    await query('DROP TABLE earned_equity_company_reviews');
+    await query('DROP TABLE earned_equity_document_reviews');
+    await query('DROP FUNCTION radar_earned_equity_review_guard()');
+    await query('DROP FUNCTION radar_earned_equity_document_reviews_guard()');
     await query('DROP TABLE earned_equity_decisions');
     await query('DROP TABLE earned_equity_analysis_snapshots');
     await query('DROP TABLE earned_equity_offer_revisions');
     await query('DROP TABLE earned_equity_opportunities');
     await query('DROP TABLE earned_equity_decision_groups');
     await query('DROP FUNCTION radar_earned_equity_append_only()');
-    await query('DELETE FROM schema_migrations WHERE version = 84');
-    assert.deepEqual((await runMigrations()).migrations, ['084_earned_equity_opportunities']);
+    await query('DELETE FROM schema_migrations WHERE version >= 84');
+    assert.deepEqual((await runMigrations()).migrations,
+      ['084_earned_equity_opportunities', '085_earned_equity_document_reviews', '086_earned_equity_reviews']);
     assert.deepEqual(await query('SELECT * FROM schema_migrations WHERE version < 84 ORDER BY version'), history);
     assert.equal((await query('SELECT company_name FROM investments WHERE id = $1', [position.investment.id]))[0].company_name, 'Synthetic Legacy Co');
     assert.equal((await runMigrations()).applied, 0);

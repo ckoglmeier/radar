@@ -3,6 +3,7 @@ import Ajv from 'ajv';
 import { isPgliteActive, query, withAtomicWrite } from '../db/index.js';
 import { stableValue } from '../commands/canonical.js';
 import { SCHEMAS, SCHEMA_VERSION } from '../../packages/earned-equity-core/schema.mjs';
+import { purgeEarnedEquityDocumentsForOpportunity } from './earned-equity-documents.js';
 
 // Prospective Earned Equity records. Nothing here touches investments, lots or
 // the grant ledger: accepting an offer is a decision record only.
@@ -416,6 +417,8 @@ async function withMaintenance(fn) {
 }
 
 async function purgeOpportunityRows(groupId, opportunityIds) {
+  // Attached offer documents and their reviews are personal and go first.
+  for (const id of opportunityIds) await purgeEarnedEquityDocumentsForOpportunity(id);
   const revisions = (await query('SELECT id FROM earned_equity_offer_revisions WHERE opportunity_id = ANY($1::text[])', [opportunityIds])).map(row => row.id);
   const snapshots = (await query('SELECT id FROM earned_equity_analysis_snapshots WHERE offer_revision_id = ANY($1::text[])', [revisions])).map(row => row.id);
   const revisionSet = new Set(revisions);
