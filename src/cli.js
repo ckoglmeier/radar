@@ -66,7 +66,9 @@ program
   .description('Initialize database schema (runs all pending migrations)')
   .action(async () => {
     try {
-      const result = await runMigrations();
+      // New workspaces start without legacy starter theses. Existing rows are
+      // untouched because migration 001 is already recorded for them.
+      const result = await runMigrations({ seedLegacyTheses: false });
       if (result.applied === 0) {
         console.log(chalk.green('\n  Database is up to date.\n'));
       } else {
@@ -101,7 +103,7 @@ program
   .description('Run pending database migrations')
   .action(async () => {
     try {
-      const result = await runMigrations();
+      const result = await runMigrations({ seedLegacyTheses: false });
       if (result.applied === 0) {
         console.log(chalk.green('\n  Already up to date.\n'));
       } else {
