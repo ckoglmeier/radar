@@ -42,3 +42,12 @@ List how financing, dilution, preferences and income concentration bear on commo
 - A numeric sensitivity needs a decimal value, a unit and cited supplied or verified evidence; never set userEstimate. Otherwise value is null and sourceEvidenceIds is empty.
 - State no probabilities, likelihoods or odds.
 - confirmationState is always `proposed`.
+
+## How the gate is decided (gate-rules-v2)
+
+Radar computes the business gate in code from your findings. Your proposal is kept only for transparency.
+
+- Return at least one finding for each core row: `weak_retention_unproven_demand` (demand), `paid_channel_dependent_growth` (growth quality), `weak_contribution_economics` (unit economics) and `short_runway_high_burn` (runway). If evidence is lacking, use `evidenceState: unavailable` and `direction: unknown`. Missing coverage is rejected.
+- Each dimension is `positive` (supplied or verified strengthening evidence, no uncountered weakening), `negative` (supplied or verified weakening, not high uncertainty, no strengthening), `mixed` or `unknown`.
+- `failed` needs demand negative and unit economics or runway negative. `supported` needs demand positive, unit economics or runway positive, no negative core dimension, no unmet stage cap and evidence confidence not low. Anything else is `unresolved` (investigate).
+- Record real counterevidence on any weakening finding that other evidence answers; an uncountered weakening finding stops a dimension from being positive.

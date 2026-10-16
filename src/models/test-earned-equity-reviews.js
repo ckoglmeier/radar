@@ -163,7 +163,7 @@ try {
           research: { evidence: ['[ee-demand-retention] VERIFIED | Retention was strong | 2026-06-30 | Source | n/a'], team_dossier: 'T', company_context: 'C', custom_questions: [], critical_unknowns: [], contradictions_to_resolve: [] },
           bull: { findings: [finding], key_argument: 'Up', gate_view: 'supported' },
           bear: { findings: [finding], key_argument: 'Down', gate_view: 'supported' },
-          company_calibrator: { gate_proposal: { status: 'supported', rationale: 'Ok', deciding_finding_ids: ['F1'], unresolved_reasons: [] }, findings: [finding],
+          company_calibrator: { gate_proposal: { status: 'supported', rationale: 'Ok', deciding_finding_ids: ['F1'], unresolved_reasons: [] }, findings: [finding, ...['paid_channel_dependent_growth', 'weak_contribution_economics', 'short_runway_high_burn'].map((rubricRowId, i) => ({ ...finding, id: `C${i}`, rubricRowId, evidenceState: rubricRowId === 'short_runway_high_burn' ? 'verified' : 'unavailable', direction: rubricRowId === 'short_runway_high_burn' ? 'strengthens' : 'unknown' }))],
             evidence_confidence: 'high', stage_cap_ids: ['series_a_actual_revenue_missing'].slice(1), employee_common_equity_notes: [], questions_for_employer: [], net_assessment: 'Fine' },
         }[stage];
         return { structuredOutput: data, usage: { inputTokens: 1, outputTokens: 1, totalCostUsd: null }, sessionId: stage };

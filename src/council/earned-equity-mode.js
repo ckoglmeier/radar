@@ -354,7 +354,10 @@ export const EARNED_EQUITY_STAGE_PROMPTS = Object.freeze({
     'argument and your view of the business gate. State no probabilities. Missing evidence is a question to ask, not proof of a problem. Hard rules: a finding on unavailable evidence must use direction unknown; a directional finding on conflicting evidence must list counterevidence; cite only evidence IDs in the packet; applicability.stage must equal the company stage when known; use only the listed rubric rows and assumptions; numeric sensitivities need cited supplied or verified evidence, never a user-estimate flag; state no probabilities; confirmationState is proposed.',
   calibrator:
     'STAGE: company_calibrator\nPerform only calibration. Reconcile the frozen Bull and Bear outputs into one set of rubric ' +
-    'findings and a proposed business gate (supported, failed or unresolved; unresolved means investigate). Do not search or ' +
+    'findings and a proposed business gate (supported, failed or unresolved; unresolved means investigate). Return at least one ' +
+    'finding for each core row: weak_retention_unproven_demand, paid_channel_dependent_growth, weak_contribution_economics and ' +
+    'short_runway_high_burn; where evidence is lacking use evidenceState unavailable and direction unknown. Radar computes the gate ' +
+    'from your findings; your proposal is recorded but does not decide it. Do not search or ' +
     'add facts. Cite only evidence IDs from the frozen packet. confirmationState is always proposed. A numeric sensitivity ' +
     'needs cited, non-conflicting evidence; otherwise give a qualitative sensitivity. Never mark a value as a user estimate. ' +
     'List a stage cap ID only from the supplied valid IDs and only when its requirement is unmet. Return no more than six ' +
@@ -584,48 +587,63 @@ export function validateCompanyFindings(findings, ctx) {
   return out;
 }
 
+export const GATE_RULES_VERSION = 'gate-rules-v2';
+export const CORE_ROWS = Object.freeze({
+  demand: 'weak_retention_unproven_demand',
+  growth: 'paid_channel_dependent_growth',
+  economics: 'weak_contribution_economics',
+  runway: 'short_runway_high_burn',
+});
+
+function dimensionState(findings) {
+  const sufficient = findings.filter(finding => SUFFICIENT.has(finding.evidenceState));
+  const strengthens = sufficient.some(finding => finding.direction === 'strengthens');
+  const weakens = sufficient.filter(finding => finding.direction === 'weakens' && finding.uncertainty !== 'high');
+  const uncounteredWeakens = sufficient.some(finding => finding.direction === 'weakens' && !(finding.counterevidence || []).length);
+  let state = 'unknown';
+  if (strengthens && uncounteredWeakens) state = 'mixed';
+  else if (strengthens) state = 'positive';
+  else if (weakens.length) state = 'negative';
+  return { state, findingIds: findings.map(finding => finding.id) };
+}
+
 /**
- * Deterministic gate rules. The model proposes; this applies the evidence
- * rules and records any downgrade. Unresolved is "investigate", never failure.
+ * Gate 1 is a deterministic function of the calibrated findings (gate-rules-v2).
+ * The model's own proposal is kept only as modelProposed. Unresolved means
+ * investigate, never failure.
  */
 export function finalizeBusinessGate({ proposal, findings, stageCapIds = [], evidenceConfidence }) {
-  const adjustments = [];
-  const byId = new Map(findings.map(finding => [finding.id, finding]));
-  const deciding = (proposal.deciding_finding_ids || []).map(id => {
-    if (!byId.has(id)) throw new Error(`Gate cites unknown finding ${id}`);
-    return byId.get(id);
-  });
-  let status = proposal.status;
-  if (status === 'failed') {
-    const sound = deciding.length > 0 && deciding.every(finding => finding.direction === 'weakens'
-      && SUFFICIENT.has(finding.evidenceState) && finding.uncertainty !== 'high');
-    if (!sound) {
-      status = 'unresolved';
-      adjustments.push({
-        code: 'failed_requires_sufficient_evidence',
-        message: 'A failed gate must rest on weakening findings with supplied or verified evidence and not-high uncertainty. Insufficient evidence means investigate.',
-      });
-    }
+  const gateBasis = Object.fromEntries(Object.entries(CORE_ROWS).map(([name, row]) => [
+    name, dimensionState(findings.filter(finding => finding.rubricRowId === row)),
+  ]));
+  const state = name => gateBasis[name].state;
+  const anyNegative = Object.keys(gateBasis).some(name => state(name) === 'negative');
+  const reasons = [];
+  let status = 'unresolved';
+  if (state('demand') === 'negative' && (state('economics') === 'negative' || state('runway') === 'negative')) {
+    status = 'failed';
+  } else if (state('demand') === 'positive' && (state('economics') === 'positive' || state('runway') === 'positive')
+      && !anyNegative && stageCapIds.length === 0 && evidenceConfidence !== 'low') {
+    status = 'supported';
+  } else {
+    if (state('demand') !== 'positive') reasons.push(`Demand and retention evidence is ${state('demand')}.`);
+    if (state('economics') !== 'positive' && state('runway') !== 'positive') reasons.push('Neither unit economics nor runway is positive on supplied or verified evidence.');
+    if (anyNegative) reasons.push('At least one core dimension is negative.');
+    if (stageCapIds.length) reasons.push(`Stage requirement unmet: ${stageCapIds.join(', ')}`);
+    if (evidenceConfidence === 'low') reasons.push('Evidence confidence is low.');
   }
-  if (status === 'supported') {
-    const supporting = findings.some(finding => finding.direction === 'strengthens' && SUFFICIENT.has(finding.evidenceState));
-    if (stageCapIds.length) {
-      status = 'unresolved';
-      adjustments.push({ code: 'stage_cap_requirement_unmet', message: `Stage requirement unmet: ${stageCapIds.join(', ')}` });
-    } else if (evidenceConfidence === 'low') {
-      status = 'unresolved';
-      adjustments.push({ code: 'low_evidence_confidence', message: 'Evidence confidence is low, so the business gate cannot be supported yet.' });
-    } else if (!supporting) {
-      status = 'unresolved';
-      adjustments.push({ code: 'no_supporting_evidence', message: 'No strengthening finding rests on supplied or verified evidence.' });
-    }
-  }
+  const adjustments = status === proposal.status ? [] : [{
+    code: 'computed_gate_differs_from_model',
+    message: `Radar computed ${status} from the findings; the model proposed ${proposal.status}.`,
+  }];
   return {
     status,
     modelProposed: proposal.status,
+    rulesVersion: GATE_RULES_VERSION,
     rationale: proposal.rationale,
-    decidingFindingIds: deciding.map(finding => finding.id),
-    unresolvedReasons: [...(proposal.unresolved_reasons || []), ...adjustments.map(item => item.message)],
+    gateBasis,
+    decidingFindingIds: [...new Set(Object.values(gateBasis).flatMap(item => item.findingIds))],
+    unresolvedReasons: status === 'unresolved' ? [...(proposal.unresolved_reasons || []), ...reasons] : [],
     adjustments,
     presentation: status === 'unresolved' ? 'investigate' : status,
   };
@@ -653,6 +671,11 @@ function validateCalibratorOutput(data, ctx) {
   for (const question of data.questions_for_employer) {
     if (!question.question_id || questionIds.has(question.question_id)) throw new Error('Employer question ids must be unique');
     questionIds.add(question.question_id);
+  }
+  for (const [name, row] of Object.entries(CORE_ROWS)) {
+    if (!findings.some(finding => finding.rubricRowId === row)) {
+      throw new Error(`Core row coverage is missing: return at least one finding for ${row} (${name}). If evidence is lacking, use evidenceState unavailable and direction unknown.`);
+    }
   }
   const gate = finalizeBusinessGate({
     proposal: data.gate_proposal, findings, stageCapIds: data.stage_cap_ids, evidenceConfidence: data.evidence_confidence,
@@ -714,7 +737,7 @@ function prepareRun(rawCompany, opts) {
   const followupHash = followup ? hash({ parent: parentReviewId, answers: followup.answers }) : null;
   const provenance = {
     reviewMode: 'earned_equity_company',
-    lensId, lensVersion, policyVersion, rubricVersion: rubric.version, reviewKind, parentReviewId,
+    lensId, lensVersion, policyVersion, rubricVersion: rubric.version, rulesVersion: GATE_RULES_VERSION, reviewKind, parentReviewId,
     instructionHash, companyInputHash,
     sourceManifestHash: hash(sourceManifest),
     researchPlanSeedVersion: RESEARCH_PLAN_SEED_VERSION,
@@ -723,7 +746,7 @@ function prepareRun(rawCompany, opts) {
   };
   provenance.runKey = hash({
     portfolioEntityId: company.portfolioEntityId,
-    lensId, lensVersion, policyVersion, instructionHash,
+    lensId, lensVersion, policyVersion, instructionHash, rulesVersion: GATE_RULES_VERSION,
     sourceManifestHash: provenance.sourceManifestHash,
     modelPolicy: policy,
     reviewKind,
@@ -960,6 +983,7 @@ export async function earnedEquityCompanyReview(company, opts = {}) {
       },
       provenance: {
         runKey: provenance.runKey,
+        rulesVersion: GATE_RULES_VERSION,
         instructionHash: provenance.instructionHash,
         sourceManifestHash: provenance.sourceManifestHash,
         companyInputHash: provenance.companyInputHash,
@@ -1009,4 +1033,5 @@ Hard rules Radar enforces on every finding:
 - Use only the rubric row IDs and affected assumptions listed in the rubric.
 - A numeric sensitivity needs a decimal value, a unit, and sourceEvidenceIds that are cited by the finding with supplied or verified evidence. Never set userEstimate to true. Otherwise use a qualitative or none sensitivity with value null, no sources and userEstimate false.
 - State no probabilities, likelihoods, odds or scenario weights, in any field.
-- confirmationState is always proposed.`;
+- confirmationState is always proposed.
+- The calibrator returns at least one finding for each core row (weak_retention_unproven_demand, paid_channel_dependent_growth, weak_contribution_economics, short_runway_high_burn); use evidenceState unavailable and direction unknown where evidence is lacking.`;
