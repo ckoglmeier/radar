@@ -523,5 +523,38 @@ await test('the converter is pure: same input, same output, inputs untouched', (
   assert.equal(JSON.stringify(rec), frozen);
 });
 
+
+console.log('Evaluation follow-ups');
+await test('a board option grant that names its plan early is a grant notice and extracts its terms', () => {
+  const p = review('board-option-grant.txt');
+  assert.equal(p.docClass, 'grant_notice');
+  assert.equal(value(p, 'grant.units'), '30000');
+  assert.equal(value(p, 'grant.strikePrice'), '2.10');
+  assert.equal(value(p, 'grant.grantDate'), '2027-03-10');
+  assert.equal(value(p, 'grant.vesting.commencementDate'), '2027-03-01');
+  assert.equal(value(p, 'grant.boardApproval'), 'approved');
+  assert.equal(review('plan-clauses.txt').docClass, 'equity_plan');
+});
+await test('a year inside a plan name is never a unit count', () => {
+  const p = review('board-option-grant.txt');
+  assert.deepEqual(live(p).filter(a => a.field === 'grant.units').map(a => a.value), ['30000']);
+  const q = review('x', 'STOCK OPTION GRANT NOTICE\nThis option is granted under the 2025 Stock Option Plan and the 2025 Equity Incentive Plan.\nThe Company grants you an option to purchase 5,000 shares of Common Stock.\n');
+  assert.deepEqual(live(q).filter(a => a.field === 'grant.units').map(a => [a.value, a.state]), [['5000', 'supported_by_document']]);
+});
+await test('RSU strike proposals and non-strike "per unit" prices are rejected by the merge', () => {
+  const text = read('rsu-per-unit-price.txt');
+  const base = review('rsu-per-unit-price.txt');
+  assert.equal(value(base, 'grant.strikePrice'), undefined);
+  const out = { docClass: 'grant_notice', findings: [], referencedDocuments: [], assertions: [{ field: 'grant.strikePrice', value: '0.00', quote: 'The purchase price is $0.00 per unit' }] };
+  const merged = mergeModelOutput({ proposal: base, modelOutput: out, text });
+  assert.equal(live(merged).filter(a => a.field === 'grant.strikePrice').length, 0);
+  assert.equal(merged.rejectedModelItems[0].reason, 'strike_not_applicable_to_instrument');
+  // an option document: wording is still required
+  const optText = `${read('grant-notice.txt')}\nThe issue price is $0.50 per unit for bonus units.\n`;
+  const m2 = mergeModelOutput({ proposal: review('x', optText), text: optText, modelOutput: { ...out, assertions: [{ field: 'grant.strikePrice', value: '0.50', quote: 'The issue price is $0.50 per unit for bonus units.' }] } });
+  assert.equal(m2.rejectedModelItems[0].reason, 'quote_lacks_strike_wording');
+  assert.deepEqual(live(m2).filter(a => a.field === 'grant.strikePrice').map(a => a.value), ['1.85']);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

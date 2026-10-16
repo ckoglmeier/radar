@@ -297,6 +297,19 @@ export function classifyOfferDocument(text) {
   if (offer) { scores.set('offer_letter', offer * 2); signals.push(`offer_letter:${offer}`); }
   // A document that defers to a not-yet-delivered official offer is a cover letter, never an offer.
   if (cover >= 2 && scores.get('offer_letter') <= scores.get('cover_letter') + 2) scores.set('offer_letter', 0);
+  // Grant-specific signals beat a plan name that merely appears early.
+  const grantSignals = [
+    /\b(?:optionee|grantee|participant)(?:'s)?(?:\s+name)?\s*:/i,
+    /\b(?:number of shares|shares granted|grants? (?:you|to [A-Z][\w.]*(?: [A-Z][\w.]*)?)[^.\n]{0,60}\b\d[\d,]*\s+shares|option to purchase\s+\d[\d,]*\s+shares)/i,
+    /\b(?:exercise|strike) price[^$\n]{0,40}\$\s*\d/i,
+    /\bvesting commencement date\b[^\n]{0,20}(?:\d{4}|\b[A-Z][a-z]+ \d)/i,
+    /\b(?:date of grant|grant date)\b[^\n]{0,20}(?:\d{4}|\b[A-Z][a-z]+ \d)/i,
+    /\bboard\b[^.\n]{0,80}\b(?:approved|authorized)\b[^.\n]{0,40}\b(?:this|the|such)\s+(?:grant|option|award)\b/i,
+  ].filter(re => re.test(normalized)).length;
+  if (grantSignals >= 3 && scores.get('equity_plan') > 0 && scores.get('amendment') === 0) {
+    scores.set('grant_notice', Math.max(scores.get('grant_notice'), scores.get('equity_plan') + 1));
+    signals.push(`grant_notice:signals:${grantSignals}`);
+  }
   const priority = ['amendment', 'grant_notice', 'equity_plan', 'ciia', 'cap_disclosure', 'education', 'benefits_overview', 'service_agreement', 'cover_letter', 'offer_letter'];
   let best = 'other';
   let bestScore = 0;
@@ -490,6 +503,10 @@ function extractFromLine(line, cls) {
         if (capSpans.some(([a, b]) => at >= a && at < b)) continue;
         if (/\b(?:per|each)\s*$/i.test(t.slice(Math.max(0, at - 6), at))) continue;
         if (/^\s*(?:will|shall)\s+vest|^\s*vest/i.test(t.slice(at + hit[0].length, at + hit[0].length + 14))) continue;
+        const afterText = t.slice(at + hit[0].length, at + hit[0].length + 20);
+        const yearLike = /^(?:19|20)\d{2}$/.test(hit[1]);
+        if (/^\s*(?:plan|agreement|award agreement)\b/i.test(afterText)) continue; // part of a plan name
+        if (yearLike && /\b(?:the|under|our|adopted|amended|in|of)\s+$/i.test(t.slice(Math.max(0, at - 12), at))) continue;
         const value = parseUnits(hit[1]);
         if (value) out.push(candidate('grant.units', value, line, at, hit[0].length));
       }
@@ -1483,6 +1500,15 @@ export function mergeModelOutput({ proposal, modelOutput, text, usage = null }) 
     if (NO_GRANT_TERMS.has(merged.docClass) && item.field.startsWith('grant.')) { reject('assertion', 'document_class_has_no_grant_terms', { field: item.field }); continue; }
     const problem = fieldValueProblem(item.field, item.value);
     if (problem) { reject('assertion', problem, { field: item.field }); continue; }
+    if (item.field === 'grant.strikePrice') {
+      const instruments = [...existingByField.get('grant.instrument') || [], ...merged.assertions.filter(a => a.field === 'grant.instrument')].map(a => a.value);
+      if (instruments.some(v => v === 'rsu' || v === 'restricted_stock') || merged.abstentions.some(a => a.code === 'economic_modeling_abstained')) {
+        reject('assertion', 'strike_not_applicable_to_instrument', { field: item.field }); continue;
+      }
+      if (!/\b(?:exercise price|strike price|price per share to exercise|option price)\b/i.test(loc.quote)) {
+        reject('assertion', 'quote_lacks_strike_wording', { field: item.field }); continue;
+      }
+    }
     if (!quoteSupportsValue(item.field, item.value, loc.quote)) { reject('assertion', 'quote_does_not_support_value', { field: item.field }); continue; }
     const existing = existingByField.get(item.field) || [];
     if (existing.some(a => a.value === item.value)) continue;
