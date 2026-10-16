@@ -5,6 +5,7 @@
 import chalk from 'chalk';
 import { formatMoney, formatMultiple, formatIRR } from '../../utils/format.js';
 import { stageLabel, stageToBarbellGroup } from '../../utils/stage.js';
+import { dateOnly } from '../../utils/date-only.js';
 
 export function printPortfolioSummary(data) {
   const { summary: s, locked, lockedInvested = 0, top, byInstrument, byRound, byStage } = data;
@@ -24,7 +25,7 @@ export function printPortfolioSummary(data) {
   }
   const irrColor = s.irr != null ? (s.irr >= 0 ? chalk.green : chalk.red) : chalk.dim;
   console.log(`  IRR:             ${irrColor(formatIRR(s.irr))}`);
-  const fmtDate = (d) => d ? new Date(d).toISOString().slice(0, 10) : '—';
+  const fmtDate = (d) => dateOnly(d) || '—';
   console.log(`  Period:          ${fmtDate(s.first_investment)} to ${fmtDate(s.last_investment)}`);
 
   console.log(chalk.bold('\n  Top Performers'));
@@ -150,8 +151,7 @@ export function printPortfolioDetail(rows) {
 
 function formatDateValue(d) {
   if (d == null) return '—';
-  if (d instanceof Date) return d.toISOString().slice(0, 10);
-  return String(d).slice(0, 10);
+  return dateOnly(d) || '—';
 }
 
 export function printReconciliation(data) {

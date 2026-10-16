@@ -1,0 +1,8 @@
+A Guide to Understanding Startup Stock Options
+
+This guide explains how stock options work for employees at early stage companies.
+For illustrative purposes, suppose an employee is granted 10,000 stock options with an exercise price of $2.00 per share.
+In this example the company later sells for $12.00 per share, and the options vest over four years with a one year cliff.
+The hypothetical employee would exercise 10,000 shares at a cost of $20,000, which is 0.10% of the fully diluted company.
+Let's say the base salary in this example is $140,000 per year.
+Your own grant will differ, so read your documents with care and talk to a qualified advisor.

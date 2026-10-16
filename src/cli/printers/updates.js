@@ -1,5 +1,6 @@
 // Pretty-printers for company updates.
 import chalk from 'chalk';
+import { dateOnly } from '../../utils/date-only.js';
 
 function fmtMoney(n) {
   if (n == null) return '—';
@@ -12,8 +13,7 @@ function fmtMoney(n) {
 }
 
 function fmtDate(d) {
-  if (!d) return '—';
-  try { return new Date(d).toISOString().slice(0, 10); } catch { return '—'; }
+  return dateOnly(d) || '—';
 }
 
 function fmtPct(p) {

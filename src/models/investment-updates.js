@@ -3,6 +3,7 @@
 
 import { query, withAtomicWrite } from '../db/index.js';
 import { rejectCommandProposal } from './command-proposals.js';
+import { localToday } from '../utils/date-only.js';
 
 const UPDATE_KINDS = new Set([
   'founder_update',
@@ -40,7 +41,7 @@ function receivedDate(value) {
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
     throw new Error('Received date must be a real calendar date');
   }
-  if (text > new Date().toISOString().slice(0, 10)) throw new Error('Received date cannot be in the future');
+  if (text > localToday()) throw new Error('Received date cannot be in the future');
   return text;
 }
 

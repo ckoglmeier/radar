@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { isPgliteActive, query, withAtomicWrite } from '../db/index.js';
 import { normalize } from '../utils/company-names.js';
+import { localToday } from '../utils/date-only.js';
 
+const ACQUISITION_ORIGINS = new Set(['employment', 'advisory', 'board', 'other']);
 const POSITION_STATUSES = new Set(['active', 'partially_realized', 'realized', 'forfeited', 'archived']);
 const INSTRUMENTS = new Set(['ppu', 'common_stock', 'iso', 'nso', 'rsu', 'profits_interest', 'other']);
 const LOT_INSTRUMENTS = new Set([
@@ -52,7 +54,7 @@ function assertEnum(value, allowed, label) {
 
 function assertUsd(currency) {
   if (currency != null && String(currency).toUpperCase() !== 'USD') {
-    throw new TypeError('Employment Equity currently supports USD workspace amounts only');
+    throw new TypeError('Earned Equity currently supports USD workspace amounts only');
   }
 }
 
@@ -65,7 +67,7 @@ function dateOnly(value) {
 
 async function withEmploymentEquityWrite(fn) {
   if (!(await isPgliteActive())) {
-    throw new Error('Employment Equity writes require local PGlite transaction support');
+    throw new Error('Earned Equity writes require local PGlite transaction support');
   }
   return withAtomicWrite(fn);
 }
@@ -73,7 +75,8 @@ async function withEmploymentEquityWrite(fn) {
 async function position(investmentId, { lock = false } = {}) {
   const [row] = await query(`
     SELECT i.*, pe.legal_name, pe.entity_type, eep.instrument_family,
-           eep.position_status, eep.display_name, eep.archived_at
+           eep.position_status, eep.display_name, eep.archived_at,
+           eep.description, eep.acquisition_origin
       FROM investments i
       LEFT JOIN portfolio_entities pe ON pe.id = i.portfolio_entity_id
       LEFT JOIN employment_equity_positions eep ON eep.investment_id = i.id
@@ -82,9 +85,9 @@ async function position(investmentId, { lock = false } = {}) {
   `, [investmentId]);
   if (!row) throw new Error(`investment not found: ${investmentId}`);
   if (row.asset_class !== 'employment_equity' || row.entity_type !== 'operating_company') {
-    throw new Error('Employment Equity operation requires an Employment Equity position linked to an operating-company entity');
+    throw new Error('Earned Equity operation requires an Earned Equity position linked to an operating-company entity');
   }
-  if (!row.instrument_family) throw new Error(`Employment Equity profile not found: ${investmentId}`);
+  if (!row.instrument_family) throw new Error(`Earned Equity profile not found: ${investmentId}`);
   return row;
 }
 
@@ -93,7 +96,7 @@ async function grant(grantId, investmentId = null, { lock = false } = {}) {
     SELECT * FROM employment_equity_grants WHERE id = $1
     ${lock ? 'FOR UPDATE' : ''}
   `, [grantId]);
-  if (!row) throw new Error(`Employment Equity grant not found: ${grantId}`);
+  if (!row) throw new Error(`Earned Equity grant not found: ${grantId}`);
   if (investmentId != null && Number(row.investment_id) !== Number(investmentId)) {
     throw new Error('grant belongs to another position');
   }
@@ -161,7 +164,7 @@ export async function createEmploymentEquityIssuerProfile(portfolioEntityId, fie
   return withEmploymentEquityWrite(async () => {
     const [entity] = await query(`SELECT * FROM portfolio_entities WHERE id = $1 FOR UPDATE`, [portfolioEntityId]);
     if (!entity || entity.entity_type !== 'operating_company') {
-      throw new Error('Employment Equity issuer profile requires an operating-company entity');
+      throw new Error('Earned Equity issuer profile requires an operating-company entity');
     }
     await query(`
       INSERT INTO companies (entity_id, metadata_reviewed_at)
@@ -189,7 +192,7 @@ export async function updateEmploymentEquityIssuerProfile(portfolioEntityId, fie
     const [current] = await query(`
       SELECT * FROM employment_equity_issuer_profiles WHERE portfolio_entity_id = $1 FOR UPDATE
     `, [portfolioEntityId]);
-    if (!current) throw new Error(`Employment Equity issuer profile not found: ${portfolioEntityId}`);
+    if (!current) throw new Error(`Earned Equity issuer profile not found: ${portfolioEntityId}`);
     const [profile] = await query(`
       UPDATE employment_equity_issuer_profiles
          SET relationship_status = $2,
@@ -287,18 +290,19 @@ export async function createEmploymentEquityPosition(fields = {}) {
   const portfolioEntityId = requiredText(fields.portfolioEntityId, 'Portfolio entity ID');
   const displayName = requiredText(fields.displayName, 'Position display name');
   const instrumentFamily = assertEnum(fields.instrumentFamily, INSTRUMENTS, 'instrument family');
+  const acquisitionOrigin = assertEnum(fields.acquisitionOrigin || 'employment', ACQUISITION_ORIGINS, 'earned equity relationship');
   const investDate = isoDate(fields.investDate || fields.firstGrant?.grantDate || fields.firstLot?.acquisitionDate, 'Position date');
   return withEmploymentEquityWrite(async () => {
     const [entity] = await query(`SELECT * FROM portfolio_entities WHERE id = $1 FOR UPDATE`, [portfolioEntityId]);
     if (!entity || entity.entity_type !== 'operating_company') {
-      throw new Error('Employment Equity position requires a reviewed operating-company entity');
+      throw new Error('Earned Equity position requires a reviewed operating-company entity');
     }
     const [issuerProfile] = await query(`
       SELECT * FROM employment_equity_issuer_profiles WHERE portfolio_entity_id = $1
     `, [portfolioEntityId]);
-    if (!issuerProfile) throw new Error('Employment Equity issuer profile must exist before creating a position');
+    if (!issuerProfile) throw new Error('Earned Equity issuer profile must exist before creating a position');
     const [company] = await query(`SELECT entity_id FROM companies WHERE entity_id = $1`, [portfolioEntityId]);
-    if (!company) throw new Error('Employment Equity position requires a reviewed Company subtype');
+    if (!company) throw new Error('Earned Equity position requires a reviewed Company subtype');
     const status = assertEnum(fields.positionStatus || 'active', POSITION_STATUSES, 'position status');
     const [investment] = await query(`
       INSERT INTO investments
@@ -319,8 +323,8 @@ export async function createEmploymentEquityPosition(fields = {}) {
     const [typedPosition] = await query(`
       INSERT INTO employment_equity_positions
         (investment_id, display_name, instrument_family, position_status,
-         description, archived_at, migration_key)
-      VALUES ($1,$2,$3,$4,$5,$6,$7)
+         description, archived_at, migration_key, acquisition_origin)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
       RETURNING *
     `, [
       investment.id,
@@ -330,6 +334,7 @@ export async function createEmploymentEquityPosition(fields = {}) {
       optionalText(fields.description),
       status === 'archived' ? new Date() : null,
       optionalText(fields.migrationKey),
+      acquisitionOrigin,
     ]);
     const firstGrant = fields.firstGrant ? await insertGrant(investment.id, fields.firstGrant) : null;
     const firstLot = fields.firstLot ? await insertLot(investment.id, {
@@ -384,7 +389,7 @@ export async function addInvestmentLot(investmentId, fields = {}) {
   return withEmploymentEquityWrite(async () => {
     const [parent] = await query(`SELECT asset_class FROM investments WHERE id = $1 FOR UPDATE`, [investmentId]);
     if (!parent || !['direct', 'employment_equity'].includes(parent.asset_class)) {
-      throw new Error('investment lot requires a Direct or Employment Equity position');
+      throw new Error('investment lot requires a Direct or Earned Equity position');
     }
     if (fields.grantId) await grant(fields.grantId, investmentId);
     return insertLot(investmentId, fields);
@@ -759,7 +764,7 @@ async function insertEmploymentEquityValuation(investmentId, fields = {}) {
         (existing.unvested_value == null ? unvestedValue == null : Number(existing.unvested_value) === unvestedValue)) {
       return { valuation: existing, calculation: calculated, idempotent_replay: true };
     }
-    throw new Error('a different Employment Equity valuation already exists for this date');
+    throw new Error('a different Earned Equity valuation already exists for this date');
   }
   const [valuation] = await query(`
     INSERT INTO valuations
@@ -800,7 +805,7 @@ export async function recordEmploymentEquityIssuerMark(portfolioEntityId, fields
     'issuer mark type',
   );
   const markDate = isoDate(fields.date, 'Issuer mark date');
-  if (markDate > new Date().toISOString().slice(0, 10)) {
+  if (markDate > localToday()) {
     throw new TypeError('Issuer mark date cannot be in the future');
   }
   const valuePerUnit = number(fields.valuePerUnit, 'Value per unit');
@@ -815,7 +820,7 @@ export async function recordEmploymentEquityIssuerMark(portfolioEntityId, fields
        WHERE pe.id = $1 AND pe.entity_type = 'operating_company'
        FOR UPDATE OF pe
     `, [portfolioEntityId]);
-    if (!entity) throw new Error('Issuer mark requires an Employment Equity operating-company issuer');
+    if (!entity) throw new Error('Issuer mark requires an Earned Equity operating-company issuer');
 
     const [existing] = await query(`
       SELECT * FROM employment_equity_issuer_marks
@@ -825,7 +830,7 @@ export async function recordEmploymentEquityIssuerMark(portfolioEntityId, fields
       if (Number(existing.value_per_unit) === valuePerUnit) {
         return { mark: existing, valuations: [], manual_positions: [], idempotent_replay: true };
       }
-      const error = new Error('a different Employment Equity issuer mark already exists for this date');
+      const error = new Error('a different Earned Equity issuer mark already exists for this date');
       error.code = 'ISSUER_MARK_DATE_CONFLICT';
       throw error;
     }
@@ -902,7 +907,7 @@ export async function addIssuerDisclosure(portfolioEntityId, fields = {}) {
     const [profile] = await query(`
       SELECT portfolio_entity_id FROM employment_equity_issuer_profiles WHERE portfolio_entity_id = $1
     `, [portfolioEntityId]);
-    if (!profile) throw new Error('issuer disclosure requires an Employment Equity issuer profile');
+    if (!profile) throw new Error('issuer disclosure requires an Earned Equity issuer profile');
     const [row] = await query(`
       INSERT INTO issuer_disclosures
         (portfolio_entity_id, document_id, disclosure_type, received_date,
@@ -926,11 +931,13 @@ export async function addIssuerDisclosure(portfolioEntityId, fields = {}) {
 export async function updateEmploymentEquityPosition(investmentId, fields = {}) {
   return withEmploymentEquityWrite(async () => {
     const current = await position(investmentId, { lock: true });
+    const acquisitionOrigin = fields.acquisitionOrigin === undefined ? current.acquisition_origin
+      : assertEnum(fields.acquisitionOrigin, ACQUISITION_ORIGINS, 'earned equity relationship');
     const status = fields.positionStatus === undefined ? current.position_status
       : assertEnum(fields.positionStatus, POSITION_STATUSES, 'position status');
     const [updated] = await query(`
       UPDATE employment_equity_positions
-         SET display_name = $2, position_status = $3, description = $4,
+         SET display_name = $2, position_status = $3, description = $4, acquisition_origin = $5,
              archived_at = CASE WHEN $3 = 'archived' THEN COALESCE(archived_at, NOW()) ELSE NULL END,
              updated_at = NOW()
        WHERE investment_id = $1 RETURNING *
@@ -939,6 +946,7 @@ export async function updateEmploymentEquityPosition(investmentId, fields = {}) 
       fields.displayName === undefined ? current.display_name : requiredText(fields.displayName, 'Position display name'),
       status,
       fields.description === undefined ? current.description : optionalText(fields.description),
+      acquisitionOrigin,
     ]);
     return updated;
   });

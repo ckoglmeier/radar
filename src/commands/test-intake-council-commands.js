@@ -112,6 +112,20 @@ try {
       ['committed', 'committed'],
     );
 
+    // Adding a new file to an existing deal commits (the duplicate guard runs before apply only).
+    const extra = await intakePreview({
+      content: Buffer.from('a later document for the same deal'), filename: 'later.txt', mime: 'text/plain',
+    });
+    await run('intake.commit_batch', {
+      previewIds: [extra.preview_id],
+      destination: { kind: 'existing_pipeline_invite', inviteId: Number(batchInvite.id) },
+      startCouncil: false,
+    }, 'existing-destination', 'manual_ui');
+    assert.equal(Number((await query(`
+      SELECT COUNT(*)::int AS count FROM documents
+       WHERE entity_type = 'pipeline_invite' AND entity_id = $1::text
+    `, [batchInvite.id]))[0].count), 3);
+
     const duplicateA = await intakePreview({
       content: Buffer.from('same batch bytes'), filename: 'same-a.txt', mime: 'text/plain',
     });

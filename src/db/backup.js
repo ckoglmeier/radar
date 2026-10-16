@@ -49,6 +49,15 @@ const INSERT_ORDER = [
   'employment_equity_issuer_profiles',
   'employment_equity_positions',
   'employment_equity_grants',
+  'earned_equity_decision_groups',
+  'earned_equity_opportunities',
+  'earned_equity_offer_revisions',
+  'earned_equity_analysis_snapshots',
+  'earned_equity_decisions',
+  'earned_equity_document_reviews',
+  'earned_equity_company_reviews',
+  'earned_equity_offer_reviews',
+  'earned_equity_grant_links',
   'investment_lots',
   'company_aliases',
   'valuations',
@@ -60,6 +69,26 @@ const INSERT_ORDER = [
   'pipeline_events',
   'council_runs',
   'ad_hoc_reviews',
+  'angel_business_preference_lists',
+  'angel_evaluation_drafts',
+  'angel_evaluation_contexts',
+  'angel_personal_fit_jobs',
+  'giving_household_members',
+  'giving_organizations',
+  'giving_sources',
+  'giving_requests',
+  'giving_pledges',
+  'giving_gifts',
+  'giving_refunds',
+  'giving_daf_contributions',
+  'giving_source_items',
+  'giving_transitions',
+  'giving_lens_versions',
+  'giving_budgets',
+  'giving_snapshots',
+  'giving_org_reviews',
+  'giving_request_evaluations',
+  'giving_settings',
   'council_run_events',
   'council_run_dispatch',
   'deal_evaluations',
@@ -402,6 +431,8 @@ export async function restoreDatabase({ file, content } = {}) {
   }
 
   return withAtomicWrite(async () => {
+    // Append-only Earned Equity tables allow restore's cycle repair only inside this transaction.
+    await query(`SELECT set_config('radar.earned_equity_maintenance', 'on', true)`);
     if (restoreTables.length > 0) {
       await query(
         `TRUNCATE TABLE ${restoreTables.map(quoteIdentifier).join(', ')} RESTART IDENTITY CASCADE`,
@@ -450,19 +481,21 @@ export async function restoreDatabase({ file, content } = {}) {
         );
       }
 
-      const idColumn = await query(
-        `SELECT 1 FROM information_schema.columns
-         WHERE table_schema = 'public' AND table_name = $1 AND column_name = 'id'`,
-        [table],
-      );
-      if (idColumn.length > 0) {
+      // Sequence-backed ordering columns: id (serial) and seq (identity).
+      for (const sequenceColumn of ['id', 'seq']) {
+        const present = await query(
+          `SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+          [table, sequenceColumn],
+        );
+        if (present.length === 0) continue;
         const [{ sequence_name }] = await query(
-          `SELECT pg_get_serial_sequence($1, 'id') AS sequence_name`,
-          [table],
+          `SELECT pg_get_serial_sequence($1, $2) AS sequence_name`,
+          [table, sequenceColumn],
         );
         if (sequence_name) {
           await query(
-            `SELECT setval($1::regclass, COALESCE(MAX(id), 1), COUNT(*) > 0)
+            `SELECT setval($1::regclass, COALESCE(MAX(${quoteIdentifier(sequenceColumn)}), 1), COUNT(*) > 0)
              FROM ${quoteIdentifier(table)}`,
             [sequence_name],
           );

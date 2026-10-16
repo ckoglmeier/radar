@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { isPgliteActive, query, withAtomicWrite } from '../db/index.js';
 import { normalize } from '../utils/company-names.js';
+import { dateOnly } from '../utils/date-only.js';
 
 const MANIFEST_VERSION = 1;
 
 function stableValue(value) {
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (value instanceof Date) return dateOnly(value);
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === 'object') {
     return Object.fromEntries(

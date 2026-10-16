@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://radar.local/schemas/giving-import-v1.json",
+  "title": "giving-import/v1",
+  "description": "Proposed giving records discovered outside Radar (e.g. a one-time Gmail scan run from a Claude session). Every record is a proposal: Radar shows it for confirm/correct and never treats it as confirmed giving.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "generated_at", "generator", "household_member", "scan", "items"],
+  "properties": {
+    "format": { "const": "giving-import/v1" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["claude_session_gmail_scan", "manual", "sample"] },
+        "model": { "type": ["string", "null"] },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "household_member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display_name"],
+      "properties": { "display_name": { "type": "string", "minLength": 1, "maxLength": 80 } }
+    },
+    "scan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "access", "period", "queries", "messages_examined", "items_proposed"],
+      "properties": {
+        "provider": { "enum": ["gmail", "none"] },
+        "access": { "const": "one_time", "description": "One-time read. The file carries no credentials, tokens or account identifiers beyond message ids." },
+        "period": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from", "to"],
+          "properties": {
+            "from": { "type": "string", "format": "date" },
+            "to": { "type": "string", "format": "date" }
+          }
+        },
+        "queries": { "type": "array", "items": { "type": "string", "maxLength": 500 }, "maxItems": 50 },
+        "messages_examined": { "type": "integer", "minimum": 0 },
+        "items_proposed": { "type": "integer", "minimum": 0 },
+        "known_gaps": { "type": "array", "items": { "type": "string", "maxLength": 300 }, "description": "What the scan could not see, e.g. paper receipts, another inbox, PDFs it could not read." }
+      }
+    },
+    "items": { "type": "array", "maxItems": 2000, "items": { "$ref": "#/$defs/item" } }
+  },
+  "$defs": {
+    "cents": { "type": ["integer", "null"], "minimum": 0 },
+    "literal": { "type": ["string", "null"], "maxLength": 200, "description": "Exact text copied from the excerpt. Radar rejects the proposal if this is not a substring of the excerpt." },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "source_ref", "excerpt", "proposed"],
+      "properties": {
+        "item_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+        "source_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "message_id", "received_at", "from_name", "from_domain", "subject"],
+          "properties": {
+            "kind": { "enum": ["gmail_message"] },
+            "message_id": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Gmail message id; Radar's re-import key." },
+            "thread_id": { "type": ["string", "null"], "maxLength": 200 },
+            "received_at": { "type": "string", "format": "date-time" },
+            "from_name": { "type": "string", "maxLength": 200 },
+            "from_domain": { "type": "string", "maxLength": 200, "description": "Sender domain only, not the full address." },
+            "subject": { "type": "string", "maxLength": 500 },
+            "attachment_names": { "type": "array", "items": { "type": "string", "maxLength": 300 }, "maxItems": 20 }
+          }
+        },
+        "excerpt": { "type": "string", "minLength": 1, "maxLength": 6000, "description": "Only the receipt-relevant text. Strip unrelated thread content, signatures and tracking links." },
+        "proposed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "organization", "amount", "date", "vehicle", "confidence"],
+          "properties": {
+            "kind": { "enum": ["receipt", "daf_grant", "daf_contribution", "solicitation", "pledge", "pledge_payment", "refund", "recurring_notice", "not_a_gift", "unknown"] },
+            "organization": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name"],
+              "properties": {
+                "name": { "type": ["string", "null"], "maxLength": 300 },
+                "ein": { "type": ["string", "null"], "pattern": "^\\d{2}-?\\d{7}$" },
+                "ein_literal": { "$ref": "#/$defs/literal" },
+                "website": { "type": ["string", "null"], "maxLength": 300 }
+              }
+            },
+            "amount": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["cents", "currency", "literal"],
+              "properties": {
+                "cents": { "$ref": "#/$defs/cents" },
+                "currency": { "enum": ["USD", null] },
+                "literal": { "$ref": "#/$defs/literal" }
+              }
+            },
+            "date": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["value", "basis", "literal"],
+              "properties": {
+                "value": { "type": ["string", "null"], "format": "date" },
+                "basis": { "enum": ["stated_in_excerpt", "email_received", "unknown"], "description": "email_received is a proxy that Radar shows as unconfirmed; unknown sends the gift to the review queue." },
+                "literal": { "$ref": "#/$defs/literal" }
+              }
+            },
+            "purpose": { "type": ["string", "null"], "maxLength": 300 },
+            "restriction": { "type": ["string", "null"], "maxLength": 300 },
+            "vehicle": { "enum": ["direct", "daffy", "other_daf", "employer_match", "unknown"] },
+            "recurring": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["cadence", "literal"],
+              "properties": {
+                "cadence": { "enum": ["weekly", "monthly", "quarterly", "annual", "unknown"] },
+                "literal": { "$ref": "#/$defs/literal" }
+              }
+            },
+            "request": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "description": "Solicitations only.",
+              "required": ["requested_cents", "deadline"],
+              "properties": {
+                "requested_cents": { "$ref": "#/$defs/cents" },
+                "requested_literal": { "$ref": "#/$defs/literal" },
+                "deadline": { "type": ["string", "null"], "format": "date" },
+                "deadline_literal": { "$ref": "#/$defs/literal" }
+              }
+            },
+            "pledge": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["total_cents"],
+              "properties": {
+                "total_cents": { "$ref": "#/$defs/cents" },
+                "total_literal": { "$ref": "#/$defs/literal" },
+                "schedule_text": { "type": ["string", "null"], "maxLength": 300 }
+              }
+            },
+            "related_hint": { "type": ["string", "null"], "maxLength": 300, "description": "Free-text hint for refunds, pledge payments or DAF grant/receipt pairs, e.g. 'refund of 2026-03-01 gala ticket'. Radar never auto-links from this." },
+            "confidence": { "enum": ["low", "medium", "high"] },
+            "notes": { "type": ["string", "null"], "maxLength": 500 }
+          }
+        }
+      }
+    }
+  }
+}

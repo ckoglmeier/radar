@@ -3,6 +3,7 @@
 
 import { writeFileSync } from 'fs';
 import { query } from '../db/index.js';
+import { dateOnly } from '../utils/date-only.js';
 
 function sanitizeAccountName(name) {
   // Beancount account components must be CamelCase or PascalCase alphanumeric
@@ -24,8 +25,7 @@ function sanitizeCommodity(name) {
 
 function fmtDate(d) {
   if (!d) return null;
-  if (typeof d === 'string') return d.slice(0, 10);
-  return d.toISOString().slice(0, 10);
+  return dateOnly(d);
 }
 
 function fmtAmount(n) {

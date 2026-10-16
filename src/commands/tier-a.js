@@ -67,7 +67,7 @@ async function investmentTarget(investmentId, assetClass) {
     throw new CommandError('WRONG_TARGET_TYPE', 'Fund position is not linked to a fund vehicle.');
   }
   if (assetClass === 'employment_equity' && row.entity_type !== 'operating_company') {
-    throw new CommandError('WRONG_TARGET_TYPE', 'Employment position is not linked to an operating company.');
+    throw new CommandError('WRONG_TARGET_TYPE', 'Earned Equity position is not linked to an operating company.');
   }
   return { type: `${assetClass}_position`, id: Number(row.id), label: row.company_name };
 }
@@ -78,7 +78,7 @@ async function inspectInvestment(target, input = {}) {
            fp.strategy AS fund_strategy, fp.vintage_year,
            fp.fund_status, fp.description AS fund_description,
            fp.archived_at AS fund_archived_at,
-           eep.display_name, eep.position_status, eep.description,
+           eep.display_name, eep.position_status, eep.description, eep.acquisition_origin,
            eep.archived_at AS employment_archived_at,
            (SELECT id FROM valuations WHERE investment_id = i.id ORDER BY snapshot_date DESC, id DESC LIMIT 1) AS latest_valuation_id,
            (SELECT snapshot_date FROM valuations WHERE investment_id = i.id ORDER BY snapshot_date DESC, id DESC LIMIT 1) AS latest_valuation_date,
@@ -519,13 +519,13 @@ export const tierACommandDefinitions = [
     affectedResources: ({ target, result }) => [target, ...(result?.valuations || []).map(row => ({ type: 'employment_equity_position', id: Number(row.investment_id) }))],
   }),
   investmentCommand({
-    name: 'employment.record_valuation', title: 'Record Employment valuation', description: 'Record a manually confirmed Employment position value.',
+    name: 'employment.record_valuation', title: 'Record Earned Equity valuation', description: 'Record a manually confirmed Earned Equity position value.',
     risk: 'additive_reporting_fact', assetClass: 'employment_equity',
     editableInputKeys: ['date', 'vestedValue', 'unvestedValue', 'methodology', 'confidence', 'notes'],
     inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, date, vestedValue: money, unvestedValue: money, currency: usd, methodology: { type: 'string', enum: ['company_statement', 'common_fmv', 'tender', 'waterfall', 'manual', 'other'] }, confidence: { type: 'string', enum: ['company_reported', 'calculated', 'estimated'] }, notes: nullableText, sourceDocumentId: { type: 'integer', minimum: 1 } }, ['investmentId', 'date', 'vestedValue', 'currency']),
     preview: ({ target, input, current }) => {
       if (current.same_date_valuation_id && num(current.same_date_net_value) !== input.vestedValue) {
-        throw new CommandError('EMPLOYMENT_VALUATION_DATE_CONFLICT', 'A different Employment valuation exists on this date.');
+        throw new CommandError('EMPLOYMENT_VALUATION_DATE_CONFLICT', 'A different Earned Equity valuation exists on this date.');
       }
       return basicPreview(target, current, [{ field: 'latest_value', value: num(current.latest_valuation_value), as_of: dateOnly(current.latest_valuation_date) }], [{ field: 'vested_value', value: input.vestedValue, as_of: input.date }]);
     },
@@ -533,12 +533,12 @@ export const tierACommandDefinitions = [
     apply: ({ target, input }) => recordEmploymentEquityValuation(target.id, input),
   }),
   investmentCommand({
-    name: 'employment.update_position', title: 'Update Employment position', description: 'Update narrow reporting metadata for an Employment position.',
+    name: 'employment.update_position', title: 'Update Earned Equity position', description: 'Update narrow reporting metadata for an Earned Equity position.',
     risk: 'metadata_change', assetClass: 'employment_equity',
-    editableInputKeys: ['displayName', 'positionStatus', 'description'],
-    inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, displayName: { type: 'string', minLength: 1 }, positionStatus: { type: 'string', enum: ['active', 'partially_realized', 'realized', 'forfeited', 'archived'] }, description: nullableText }, ['investmentId']),
-    preview: ({ target, input, current }) => basicPreview(target, current, [{ field: 'display_name', value: current.display_name }, { field: 'position_status', value: current.position_status }, { field: 'description', value: current.description }], [{ field: 'display_name', value: input.displayName ?? current.display_name }, { field: 'position_status', value: input.positionStatus ?? current.position_status }, { field: 'description', value: input.description === undefined ? current.description : input.description }]),
-    preconditions: ({ current }) => ({ display_name: current.display_name, position_status: current.position_status, description: current.description }),
+    editableInputKeys: ['displayName', 'positionStatus', 'description', 'acquisitionOrigin'],
+    inputSchema: schema({ investmentId: { type: 'integer', minimum: 1 }, displayName: { type: 'string', minLength: 1 }, positionStatus: { type: 'string', enum: ['active', 'partially_realized', 'realized', 'forfeited', 'archived'] }, acquisitionOrigin: { type: 'string', enum: ['employment', 'advisory', 'board', 'other'] }, description: nullableText }, ['investmentId']),
+    preview: ({ target, input, current }) => basicPreview(target, current, [{ field: 'display_name', value: current.display_name }, { field: 'position_status', value: current.position_status }, { field: 'description', value: current.description }, { field: 'acquisition_origin', value: current.acquisition_origin }], [{ field: 'display_name', value: input.displayName ?? current.display_name }, { field: 'position_status', value: input.positionStatus ?? current.position_status }, { field: 'description', value: input.description === undefined ? current.description : input.description }, { field: 'acquisition_origin', value: input.acquisitionOrigin ?? current.acquisition_origin }]),
+    preconditions: ({ current }) => ({ display_name: current.display_name, position_status: current.position_status, description: current.description, acquisition_origin: current.acquisition_origin }),
     apply: ({ target, input }) => updateEmploymentEquityPosition(target.id, input),
   }),
 ];

@@ -34,6 +34,9 @@ export async function queueCouncilRun({
   executionId = null,
   reviewMode = 'personalized',
   policyId = process.env.RADAR_COUNCIL_POLICY || 'balanced',
+  // A caller-owned submission key (one-time evaluation context ID). It makes the
+  // request key unique per confirmed submission, even for an initial run.
+  requestNonce = null,
 }) {
   if (!['personalized', 'ad_hoc'].includes(reviewMode)) throw new Error('Invalid review mode');
   const active = await activeCouncilRun(inviteId);
@@ -74,7 +77,7 @@ export async function queueCouncilRun({
       reviewMode,
       pipelineInviteId: inviteId, sourceHash, modelPolicy: policyId,
       policyVersion: COUNCIL_POLICY_VERSION, runType,
-      nonce: fresh ? (executionId || randomUUID()) : '',
+      nonce: requestNonce || (fresh ? (executionId || randomUUID()) : ''),
     }),
     runType,
     parentRunId: completedRuns[0]?.id || null,

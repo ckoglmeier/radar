@@ -1,0 +1,212 @@
+# Earned Equity intelligence contract (wave 2, frozen)
+
+Coordinator-owned. This file is the spec for builders C (documents) and D (lens). Builder E reads it for UI states.
+
+## Attachment decision
+
+Phase 0 inspection found:
+- `council_runs.pipeline_invite_id` is NOT NULL.
+- Angel results land in `deal_evaluations`, which drives `getCalibration`, `eval validate/discover` and pipeline status.
+
+Rules:
+- The earned-equity flow never writes to these tables: `pipeline_invites`, `council_runs`, `deal_evaluations`, `ad_hoc_reviews` or `council_followups`.
+- Angel calibration therefore never sees earned-equity reviews, and earned-equity prospects never appear in the angel Pipeline counts.
+- Shared code is reused at the function level: stage execution, evidence policy, retrieval, model policy and provider. It is not reused at the run-record level.
+- The angel golden guard (`src/council/test-angel-golden.js`) must pass byte-identically after every change.
+
+### Two review records
+
+1. **Company review.** This is company-scoped and reusable across offers. It is keyed by `portfolio_entity_id`.
+   - **Stages:** research → bull → bear → calibrator. There is no CFO stage, no sizing, no check size, no gpTiers and no portfolio-fit questions.
+   - **Output:** a business-gate proposal (`supported | failed | unresolved`) plus rubric findings.
+   - **Input:** company-level evidence only. Personal terms are never included: no salary, units, strike, offer documents or personal notes. A test asserts this.
+   - **Run key:** sha256 of the company entity id, the lens id and version, the evidence policy version, the instruction hash, the source manifest hash, the model policy, and the review kind. On desktop the tenant is the workspace DB. A completed review with the same run key is reused, not rerun.
+2. **Offer review.** This is personal and keyed by `offer_revision_id`.
+   - **Inputs:** the company review (its id), the analysis snapshot (its id), confirmed document findings, and an optional user learning note.
+   - **Process:** one bounded synthesis call (stage `memo`), validated against a schema.
+   - **Output:** the memo sections from plan §7. These are the two gates, material clauses, trade-offs, crossover conditions taken from calculator outputs (the model never computes numbers), and unanswered questions.
+   - **Gate 2 proposal:**
+     - The memo may only propose `financially_attractive`, `not_attractive` or `unresolved`, based on calculator outputs against the baseline.
+     - `learning_led_user_choice` is only ever set by the user, in the decision record.
+     - With no user learning note, the memo must say that learning cannot satisfy gate 2.
+   - **Calibrator check:** every numeric claim in the memo must equal a calculator output string, or the memo is rejected. This is a deterministic check.
+
+### Follow-up
+
+Employer answers create a new company review (`review_kind='followup'`, `parent_review_id`) or a new offer review. Prior rows are never modified, and earlier decisions keep their snapshot references.
+
+## Migrations and ownership
+
+| # | Owner | Tables |
+| --- | --- | --- |
+| 085 | C | `earned_equity_document_reviews`: id, opportunity_id FK, document_id FK documents, document_sha256, doc_class, extraction_version, status (`proposed`/`confirmed`/`rejected`/`failed`), proposal JSONB (assertions + findings), confirmed_offer_revision_id FK nullable, created_at, seq. Proposal content is append-only. A status change happens by inserting a new row that references the prior one, or through a narrowly guarded status update. C chooses and documents which. |
+| 086 | D | `earned_equity_company_reviews` (id, portfolio_entity_id FK NOT NULL, parent_review_id, review_kind, lens_id, lens_version, policy_version, instruction_hash, source_manifest_hash, run_key UNIQUE, status, stage, artifact JSONB, error_code, usage JSONB, created_at, completed_at, seq; one running per entity). `earned_equity_offer_reviews` (id, offer_revision_id FK, company_review_id FK nullable, snapshot_id FK nullable, run_key UNIQUE, status, artifact JSONB, error_code, created_at, completed_at, seq). Completed artifacts are immutable. |
+| 087 | H | `earned_equity_grant_links` (seq, id, decision_id FK, offer_revision_id FK, grant_component_id, investment_id FK investments, grant_id UUID FK employment_equity_grants, confirmed_terms JSONB incl. vesting schedule, created_at; UNIQUE (offer_revision_id, grant_component_id) and UNIQUE (grant_id)). Append-only under the maintenance flag. Written only by the explicit, confirmed `earned_equity.link_confirmed_grant` (ISO/NSO, board-approved, latest decision selects the revision; vested units are user-confirmed, default 0, never computed). Opportunity or group purge deletes link rows but never the ledger position, grants, lots or events. |
+
+Also applies to every new table:
+- Each one is added to `INSERT_ORDER` in `src/db/backup.js`.
+- Each is covered by the purge of an opportunity or group. Company reviews are not personal, so they are purged only by an explicit company-review purge.
+- The coordinator updates `src/db/test-migration-identity.js` and `src/commands/test-service.js` counts during integration. Builders must NOT edit those two lines, and should expect only those assertions to fail locally.
+
+## Document rules (C)
+
+**Classification**
+- Each document is classified before extraction as one of: `cover_letter`, `offer_letter`, `grant_notice`, `equity_plan`, `service_agreement`, `ciia`, `amendment`, `cap_disclosure`, `education`, `benefits_overview`, `other`.
+- `education` and `benefits_overview` never yield personal grant terms. A cover letter is not a signed offer.
+
+**Proposals**
+- An extraction produces a proposal only. Every assertion carries `{ field, value, units, locator, quote ≤300 chars, documentSha256, state }`, using the core `VALUE_STATES`.
+- Numbers, dates and instrument names are validated: units are integers, dates are ISO, and the instrument is in the core enum.
+- Contradictions between documents are preserved as `conflicting`. The newest document does not win.
+
+**Findings**
+- Findings use the plan §6 categories.
+- Each one carries `{ category, severity, confidence, evidenceRef, reason, economicConsequence, question, resolution:null }`.
+- "Unusual" is used only against a cited dated baseline. Otherwise the finding says `material term`, `unclear` or `requires review`.
+
+**Failure handling**
+- Referenced documents that are missing become checklist items.
+- OCR or parse failures are surfaced as `failed`, never as empty success.
+
+**Safety**
+- Documents are untrusted. Embedded instructions are ignored.
+- A test includes a prompt-injection fixture that tries to set strike to 0 and claim board approval. The proposal must not reflect it.
+
+**Confirmation**
+- Converting a confirmed proposal into an `OfferRevision` payload is a pure function. The user's approval happens in the UI, and the record is saved through `earned_equity.add_offer_revision`.
+- Extraction never creates positions, grants or revisions by itself.
+
+**Deterministic first**
+- Deterministic parsing and rules run first: regexes for share counts, strike, percentages and vesting phrases; plan-reference detection; and term-review rules.
+- The AI extraction pass runs through the existing provider abstraction under stage `extraction`, and tests inject a fake provider.
+
+## Lens rules (D)
+
+**Lens assets**
+- Lens assets live in `skills/earned-equity-review/` (role references) and `packages/earned-equity-core/rubric.v1.json`. D creates that file and its test under the core `test/` directory.
+- The rubric rows come from plan §7. There is no probability field.
+- Each finding records:
+  - evidenceIds
+  - stage/businessModel applicability
+  - direction
+  - affectedAssumption
+  - proposedSensitivity
+  - uncertainty
+  - counterevidence
+  - confirmationState
+
+**Code changes**
+- `evaluate.js` may be parameterized so stage tables (roles, prompts, schemas, research seed questions, included stages) are injectable. The default is today's angel tables, unchanged.
+- No other change to angel behavior is allowed.
+- Stage caps are keyed on company stage, and `capsForStage` is reused where the company stage is known.
+
+**App adapter** (`lib/earned-equity-council.js`, `lib/earned-equity-memo.js`)
+- It builds the provider with `createRadarModelProvider` and maps calls to the existing `MODEL_STAGE_ROLES`. The production model policy is unchanged.
+- It persists through engine model functions.
+- No live calls in tests.
+
+## UI states (E)
+
+**Value states and gates**
+- Every value shows its state (confirmed, document-supported, user-reported, illustrative, conflicting, missing).
+- Each gate shows `supported`, `failed` or `unresolved`. Unresolved is presented as "investigate", not as failure.
+
+**Equity figures**
+- Figures with limitations show the limitation text.
+- `null` is shown as "Unknown", never as $0.
+- A no-liquidity scenario shows the illiquid residual separately.
+
+**Comparison and decisions**
+- There is no composite winner. The comparison shows rows and crossovers only.
+- An accepted decision never displays as vested holdings.
+
+## Gate rules v2 (2026-10-15, after the expanded live evaluation)
+
+Evidence from the expanded run:
+- The business gate agreed across reps for only 2 of 6 real companies on live research. Frozen-evidence companies were stable.
+- Gate 2 was never decisive (unresolved in 30 of 30 memos).
+
+From now on, the model supplies findings and prose, and Radar computes both gates in code. The model's own proposal is kept only as `modelProposed`, for transparency.
+
+### Gate 1 (business): a deterministic function of the calibrated findings
+
+**Core dimensions** are the rubric rows:
+- `weak_retention_unproven_demand` (demand)
+- `paid_channel_dependent_growth` (growth quality)
+- `weak_contribution_economics` (unit economics)
+- `short_runway_high_burn` (runway)
+
+**Coverage rule.** The calibrator must return at least one finding for each core row. If evidence is lacking, the finding uses `evidenceState: unavailable` and `direction: unknown`. Missing coverage is a validation error with one repair.
+
+**Dimension state.** "Sufficient" means `supplied` or `verified` evidence.
+
+| State | Condition |
+| --- | --- |
+| `positive` | ≥1 `strengthens` finding with sufficient evidence, and no uncountered `weakens` finding with sufficient evidence |
+| `negative` | ≥1 `weakens` finding with sufficient evidence and uncertainty not `high`, and no `strengthens` finding with sufficient evidence |
+| `mixed` | Both of the above present |
+| `unknown` | Anything else |
+
+**Gate.**
+- **`failed`**: demand is `negative` AND (unit economics OR runway is `negative`).
+- **`supported`**: all of the following:
+  - demand is `positive`;
+  - unit economics OR runway is `positive`;
+  - no core dimension is `negative`;
+  - no unmet stage cap;
+  - evidence confidence is not `low`.
+- **`unresolved`** (presented as "investigate"): otherwise.
+
+**Recorded output.** The artifact records `gateBasis`, a map from dimension to `{state, findingIds}`, plus `modelProposed` and `rulesVersion: "gate-rules-v2"`. `rulesVersion` folds into the run key.
+
+### Gate 2 (participation): a deterministic function of the calculator result
+
+The memo model no longer chooses gate 2. Code computes it and passes it into the memo packet, and the model explains it. A model `gate2.proposal` that differs from the computed value is overwritten and recorded as an adjustment.
+
+1. **`unresolved` when the inputs are structurally incomplete**:
+   - the baseline is missing (cash differences are null);
+   - any grant is unsupported (`instrument_unsupported:*`);
+   - or the equity outcome is null in the base or upside scenario because of missing units, strike or exercise terms.
+2. **Weighted case.** If `weighted` is non-null (the user's weights sum to 100): `expectedNetPreTax > 0` gives `financially_attractive`; otherwise `not_attractive`.
+3. **Unweighted case.**
+   - Base scenario `netPreTax > 0` gives `financially_attractive`.
+   - Else, the upside scenario exists and its `netPreTax ≤ 0` gives `not_attractive`: even the upside does not recover the cash forgone.
+   - Else `unresolved`, with the reason "Depends on whether the upside occurs. Add scenario weights to decide."
+4. **Standing limitations never force `unresolved` by themselves.** These are `pre_tax_only`, `excludes_preferences`, `post_service_cash_unmodeled`, `discount_rate_missing`, `bonus_uncertain`, `no_liquidity_in_horizon` (on a failure or no-liquidity scenario) and `vesting_final_event_off_cadence`. The memo still states them.
+
+`learning_led_user_choice` remains user-only, set in the decision.
+
+v1 threshold: "attractive" means net positive against the baseline. That is a deliberate, simple v1 rule; owner review may raise it (for example, requiring the base net to exceed a multiple of the cash forgone).
+
+## v3: no verdicts (2026-10-15, CK direction; supersedes the gate outcomes in "Gate rules v2")
+
+**Verdicts removed.** Radar no longer produces a business verdict (supported, failed or unresolved) or a participation verdict (attractive, not attractive or unresolved). The user decides; Radar provides understanding.
+
+**Company review → dimension readings.**
+- The core-row coverage rule and the deterministic dimension states from v2 remain. The states are positive, negative, mixed and unknown, each derived from findings with evidence.
+- The artifact exposes `dimensions` (dimension → `{state, findingIds, openQuestions}`) and `evidenceConfidence`. There is no `gate` status.
+- `rulesVersion` becomes `dimension-readings-v3`.
+- Unknown is presented as "Not yet evidenced: ask", never as negative.
+
+**Researched valuation proposals.**
+- Research may return `researchedValuation`: `[{ field, value, asOfDate, evidenceId }]`, for the `valuationContext` fields in core CONTRACT V1.
+- Each proposal must cite `supplied` or `verified` evidence, and is never marked confirmed.
+- The app offers them for the user to confirm into the offer revision. Unconfirmed, they carry the state `researched_unconfirmed`.
+- User-entered and document-confirmed values always win.
+
+**Offer memo v3.** The memo explains; it does not decide. Its sections are:
+1. **Relative position.** Prose over `relativePosition` and the comparison with the other offers and the baseline.
+2. **Outcome sensitivity.** Prose over the grid: under what exit prices and timings the equity offsets the cash given up, and where it does not.
+3. **Valuation memo.**
+   - Preferred price, 409A and strike.
+   - The implied exit needed against the post-money valuation.
+   - Senior claims ahead of common.
+   - How the company review's dimension readings bear on the plausibility of that growth, with no probabilities.
+   - The source and state of each valuation input (researched values are named as such).
+4. **Material clauses.**
+5. **Open questions.**
+
+**Memo rules**
+- There is no gate, verdict, recommendation, "attractive" or "accept/decline" language. A deterministic check rejects it.
+- The number rule is unchanged: only numbers present in the input packet, which now includes the relative-position metrics and the grid.
+- The learning note, if any, is reflected back as the user's own judgment and is never weighed.

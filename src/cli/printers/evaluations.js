@@ -2,6 +2,7 @@
 import chalk from 'chalk';
 import { basename } from 'path';
 import { formatMultiple, formatIRR } from '../../utils/format.js';
+import { dateOnly } from '../../utils/date-only.js';
 
 function companyFromPath(filePath) {
   if (!filePath) return '—';
@@ -15,12 +16,7 @@ function companyFromPath(filePath) {
 }
 
 function fmtDate(d) {
-  if (!d) return '—';
-  try {
-    return new Date(d).toISOString().slice(0, 10);
-  } catch {
-    return '—';
-  }
+  return dateOnly(d) || '—';
 }
 
 function fmtScore(s) {

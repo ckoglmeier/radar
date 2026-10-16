@@ -410,7 +410,7 @@ export async function portfolioRealizationEvents(options = {}) {
         evidence: evidence(
           row.source_document_id ? 'source_document' : 'employment_equity_event',
           row.source_document_id || row.id,
-          row.source_filename || row.notes || 'Employment Equity event',
+          row.source_filename || row.notes || 'Earned Equity event',
         ),
         confidenceClass: fullyDisposed ? 'confirmed' : 'recorded_cash_activity',
         coverageCodes: [

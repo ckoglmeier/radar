@@ -4,30 +4,14 @@
 
 import { query } from '../db/index.js';
 import { evalReconcile } from './evaluations.js';
+import { addDaysIso, addYearsIso, dateOnly, daysBetweenIso } from '../utils/date-only.js';
 
-function isoDate(value) {
-  if (!value) return null;
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
-  return String(value).slice(0, 10);
-}
-
-function daysBetween(a, b) {
-  const start = new Date(isoDate(a));
-  const end = new Date(isoDate(b));
-  return Math.floor((end - start) / (1000 * 60 * 60 * 24));
-}
-
-function addDays(date, days) {
-  const d = new Date(isoDate(date));
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function addYears(date, years) {
-  const d = new Date(isoDate(date));
-  d.setFullYear(d.getFullYear() + years);
-  return d.toISOString().slice(0, 10);
-}
+// Calendar math in UTC on YYYY-MM-DD strings (see utils/date-only.js): DATE values from
+// the database and DST changes never move a day.
+const isoDate = dateOnly;
+const daysBetween = daysBetweenIso;
+const addDays = addDaysIso;
+const addYears = addYearsIso;
 
 export async function qsbsWindowItems({ today, windowDays }) {
   const rows = await query(`

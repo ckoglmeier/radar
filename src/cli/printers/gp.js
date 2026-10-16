@@ -2,6 +2,7 @@
 import chalk from 'chalk';
 import { formatMoney, formatMultiple } from '../../utils/format.js';
 import { stageLabel } from '../../utils/stage.js';
+import { dateOnly } from '../../utils/date-only.js';
 
 export function printGpSummary({ rows, bestMap }) {
   console.log(chalk.bold('\n  GP / Source Quality Analytics'));
@@ -36,7 +37,7 @@ export function printGpDetail({ investments, stats, thesisDist, eras, stageDist 
     return;
   }
 
-  const fmtDate = (d) => d ? new Date(d).toISOString().slice(0, 10) : '—';
+  const fmtDate = (d) => dateOnly(d) || '—';
 
   console.log(chalk.bold(`\n  GP Detail: ${stats.gp_name}`));
   console.log(chalk.dim('  ─'.repeat(40)));

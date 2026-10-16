@@ -4,11 +4,12 @@
 // Import identity is stored separately from the position row. The legacy
 // AngelList CSV does not expose a source ID, so its v1 link preserves the old
 // exact (company_name, invest_date) behavior without keeping that pair unique
-// for manual and Employment Equity positions.
+// for manual and Earned Equity positions.
 
 import { createHash } from 'node:crypto';
 import { query, withAtomicWrite } from '../db/index.js';
 import { roundToStageBucket } from '../utils/stage.js';
+import { dateOnly } from '../utils/date-only.js';
 
 /**
  * Return a non-mutating review hint for names that may represent fund vehicles.
@@ -33,9 +34,7 @@ function normalizedSource(source) {
 }
 
 export function legacyInvestmentSourceKey(companyName, investDate) {
-  const date = investDate instanceof Date
-    ? investDate.toISOString().slice(0, 10)
-    : String(investDate || '').slice(0, 10);
+  const date = investDate instanceof Date ? dateOnly(investDate) : String(investDate || '').slice(0, 10);
   const digest = createHash('md5')
     .update(`${companyName}\u001f${date}`)
     .digest('hex');
@@ -354,9 +353,7 @@ function directAcquisitionFields(fields) {
 function comparableDirectAcquisitionProfile(row) {
   if (!row) return null;
   return {
-    acquisition_date: row.acquisition_date instanceof Date
-      ? row.acquisition_date.toISOString().slice(0, 10)
-      : String(row.acquisition_date).slice(0, 10),
+    acquisition_date: row.acquisition_date instanceof Date ? dateOnly(row.acquisition_date) : String(row.acquisition_date).slice(0, 10),
     acquisition_type: row.acquisition_type,
     security_class: row.security_class,
     pricing_reference_round: row.pricing_reference_round,

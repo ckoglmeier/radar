@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { query } from '../db/index.js';
 import { normalize } from '../utils/company-names.js';
+import { dateOnly } from '../utils/date-only.js';
 
 const DOCUMENT_HINT = /\b(grant|equity plan|stock plan|rule 701|701|409a|tender|exercise|83\(b\)|tax election|cap.?table|k-?1|profits? interest|ppu)\b/i;
 const EMPLOYMENT_HINT = /\b(employ|grant|option|rsu|ppu|profits? interest)\b/i;
@@ -39,7 +40,7 @@ export const KNOWN_EMPLOYMENT_ISSUERS = Object.freeze([
 ]);
 
 function stableValue(value) {
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (value instanceof Date) return dateOnly(value);
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === 'object') {
     return Object.fromEntries(
@@ -311,9 +312,9 @@ export async function buildEmploymentEquityAudit() {
 
 export function formatEmploymentEquityAuditSummary(audit) {
   return [
-    'Employment Equity migration audit',
+    'Earned Equity migration audit',
     `Known issuers found / expected: ${audit.counts.issuer_candidates_found} / ${audit.issuer_candidates.length}`,
-    `Existing Employment Equity positions: ${audit.counts.employment_equity_positions}`,
+    `Existing Earned Equity positions: ${audit.counts.employment_equity_positions}`,
     `Room / document hints: ${audit.counts.room_candidates} / ${audit.counts.document_candidates}`,
     `Unknown document policies: ${audit.counts.unknown_document_policies}`,
     `Conflicts: ${audit.counts.conflicts}`,

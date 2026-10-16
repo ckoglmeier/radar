@@ -389,7 +389,7 @@ try {
       () => addInvestmentLot(fund.id, {
         acquisitionDate: '2024-01-01', instrumentType: 'other', cashOutlay: 10,
       }),
-      /Direct or Employment Equity/,
+      /Direct or Earned Equity/,
     );
   });
 

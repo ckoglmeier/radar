@@ -2,6 +2,7 @@
 import chalk from 'chalk';
 import { formatMoney, formatMultiple, formatIRR } from '../../utils/format.js';
 import { stageLabel, stageToBarbellGroup } from '../../utils/stage.js';
+import { dateOnly } from '../../utils/date-only.js';
 
 export function printThesisPerformance(rows) {
   console.log(chalk.bold('\n  Thesis Performance'));
@@ -17,7 +18,7 @@ export function printThesisPerformance(rows) {
     console.log(`    IRR:           ${irrColor(formatIRR(r.irr))}`);
     console.log(`    Avg multiple:  ${r.avg_multiple ? formatMultiple(r.avg_multiple) : '—'}`);
     console.log(`    Best multiple: ${r.best_multiple ? formatMultiple(r.best_multiple) : '—'}`);
-    const fmtDate = (d) => d ? new Date(d).toISOString().slice(0, 10) : '—';
+    const fmtDate = (d) => dateOnly(d) || '—';
     console.log(`    Period:        ${fmtDate(r.first_deal)} to ${fmtDate(r.last_deal)}`);
   }
 

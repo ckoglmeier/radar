@@ -153,6 +153,12 @@ export const intakeCouncilCommandDefinitions = [
     }, ['previewIds', 'destination', 'startCouncil']),
     resolve: pendingBatchTarget,
     inspect: inspectPendingBatch,
+    // After apply the files ARE attached, so the pre-apply duplicate guard would
+    // reject its own result and roll back every commit to an existing deal.
+    inspectAfter: async ({ input }) => query(`
+      SELECT id, filename, sha256, size_bytes, status FROM pending_intake
+       WHERE id = ANY($1::uuid[]) ORDER BY id
+    `, [input.previewIds]),
     preview: ({ target, input, current }) => ({
       summary: `Add ${target.label} to ${input.destination.kind === 'new_pipeline_invite' ? input.destination.companyName : 'the selected pipeline deal'}.`,
       target,

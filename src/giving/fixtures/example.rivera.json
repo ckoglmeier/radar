@@ -1,0 +1,59 @@
+{
+  "format": "giving-import/v1",
+  "generated_at": "2026-10-16T18:00:00Z",
+  "generator": { "kind": "sample", "model": null, "notes": "Fictional fixture from RADAR_GIVING_SYNTHETIC_EXAMPLE.md" },
+  "household_member": { "display_name": "Alex Rivera" },
+  "scan": {
+    "provider": "gmail",
+    "access": "one_time",
+    "period": { "from": "2024-10-16", "to": "2026-10-16" },
+    "queries": ["(receipt OR \"thank you for your gift\" OR \"tax-deductible\") newer_than:2y", "from:daffy.org newer_than:2y"],
+    "messages_examined": 212,
+    "items_proposed": 7,
+    "known_gaps": ["Paper receipts and other household inboxes are not included."]
+  },
+  "items": [
+    {
+      "item_id": "E1",
+      "source_ref": { "kind": "gmail_message", "message_id": "18c1f0a0e1", "thread_id": null, "received_at": "2026-01-05T15:02:00Z", "from_name": "Daffy", "from_domain": "daffy.org", "subject": "Your contribution is complete" },
+      "excerpt": "You added $10,000.00 to your Daffy fund on January 5, 2026.",
+      "proposed": { "kind": "daf_contribution", "organization": { "name": null }, "amount": { "cents": 1000000, "currency": "USD", "literal": "$10,000.00" }, "date": { "value": "2026-01-05", "basis": "stated_in_excerpt", "literal": "January 5, 2026" }, "vehicle": "daffy", "confidence": "high" }
+    },
+    {
+      "item_id": "E2",
+      "source_ref": { "kind": "gmail_message", "message_id": "18c3a2b4f2", "thread_id": null, "received_at": "2026-02-01T17:20:00Z", "from_name": "Daffy", "from_domain": "daffy.org", "subject": "Your donation to Northside Food Bank was sent" },
+      "excerpt": "Your donation of $2,500.00 to Northside Food Bank (EIN 12-3456789) was sent on Feb 1, 2026.",
+      "proposed": { "kind": "daf_grant", "organization": { "name": "Northside Food Bank", "ein": "12-3456789", "ein_literal": "12-3456789" }, "amount": { "cents": 250000, "currency": "USD", "literal": "$2,500.00" }, "date": { "value": "2026-02-01", "basis": "stated_in_excerpt", "literal": "Feb 1, 2026" }, "vehicle": "daffy", "confidence": "high" }
+    },
+    {
+      "item_id": "E3",
+      "source_ref": { "kind": "gmail_message", "message_id": "18c3d9c011", "thread_id": null, "received_at": "2026-02-04T13:45:00Z", "from_name": "Northside Food Bank", "from_domain": "northsidefood.example", "subject": "Thank you for your gift" },
+      "excerpt": "Thank you for your gift of $2,500 received through Daffy Charitable Fund.",
+      "proposed": { "kind": "receipt", "organization": { "name": "Northside Food Bank" }, "amount": { "cents": 250000, "currency": "USD", "literal": "$2,500" }, "date": { "value": "2026-02-04", "basis": "email_received", "literal": null }, "vehicle": "daffy", "related_hint": "Likely the same gift as the Daffy grant sent 2026-02-01", "confidence": "medium" }
+    },
+    {
+      "item_id": "E9",
+      "source_ref": { "kind": "gmail_message", "message_id": "18c55e7a90", "thread_id": null, "received_at": "2026-03-20T10:00:00Z", "from_name": "Harbor Arts", "from_domain": "harborarts.example", "subject": "Your refund" },
+      "excerpt": "We have refunded $100.00 for the event ticket portion of your March 1 contribution.",
+      "proposed": { "kind": "refund", "organization": { "name": "Harbor Arts" }, "amount": { "cents": 10000, "currency": "USD", "literal": "$100.00" }, "date": { "value": "2026-03-20", "basis": "email_received", "literal": null }, "vehicle": "direct", "related_hint": "Refund of the March 1 contribution", "confidence": "high" }
+    },
+    {
+      "item_id": "E11",
+      "source_ref": { "kind": "gmail_message", "message_id": "18c7b10c33", "thread_id": null, "received_at": "2026-05-12T09:10:00Z", "from_name": "River Trust", "from_domain": "rivertrust.example", "subject": "Thanks for your support!" },
+      "excerpt": "Thanks for your support! Your $250 gift helps protect the watershed.",
+      "proposed": { "kind": "receipt", "organization": { "name": "River Trust" }, "amount": { "cents": 25000, "currency": "USD", "literal": "$250" }, "date": { "value": null, "basis": "unknown", "literal": null }, "vehicle": "unknown", "notes": "Gift date not stated; email may be a delayed acknowledgment.", "confidence": "medium" }
+    },
+    {
+      "item_id": "E12",
+      "source_ref": { "kind": "gmail_message", "message_id": "18c9e0f777", "thread_id": null, "received_at": "2026-10-02T16:00:00Z", "from_name": "Harbor Arts", "from_domain": "harborarts.example", "subject": "Help us build the Youth Studio" },
+      "excerpt": "We're asking a few close supporters for $5,000 toward the Youth Studio build-out. Could you let us know by November 30?",
+      "proposed": { "kind": "solicitation", "organization": { "name": "Harbor Arts" }, "amount": { "cents": null, "currency": null, "literal": null }, "date": { "value": "2026-10-02", "basis": "email_received", "literal": null }, "purpose": "Youth Studio build-out", "vehicle": "unknown", "request": { "requested_cents": 500000, "requested_literal": "$5,000", "deadline": "2026-11-30", "deadline_literal": "November 30" }, "confidence": "high" }
+    },
+    {
+      "item_id": "E13",
+      "source_ref": { "kind": "gmail_message", "message_id": "18c9f12a01", "thread_id": null, "received_at": "2026-10-05T12:00:00Z", "from_name": "Maple Literacy", "from_domain": "mapleliteracy.example", "subject": "October newsletter" },
+      "excerpt": "This month our tutors reached 1,200 students across the county.",
+      "proposed": { "kind": "not_a_gift", "organization": { "name": "Maple Literacy" }, "amount": { "cents": null, "currency": null, "literal": null }, "date": { "value": null, "basis": "unknown", "literal": null }, "vehicle": "unknown", "confidence": "high" }
+    }
+  ]
+}

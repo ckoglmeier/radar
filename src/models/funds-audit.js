@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { query } from '../db/index.js';
 import { normalize } from '../utils/company-names.js';
 import { calculateIRR } from '../utils/irr.js';
+import { dateOnly } from '../utils/date-only.js';
 
 const FUND_NAME_HINT = /\b(fund|capital|access)\b/i;
 const FIELD_PATTERNS = {
@@ -16,7 +17,7 @@ const FIELD_PATTERNS = {
 };
 
 function stableValue(value) {
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (value instanceof Date) return dateOnly(value);
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === 'object') {
     return Object.fromEntries(

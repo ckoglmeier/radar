@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isPgliteActive, query } from '../db/index.js';
 import { normalize } from '../utils/company-names.js';
+import { dateOnly } from '../utils/date-only.js';
 
 const MANIFEST_VERSION = 1;
 const ENTITY_TYPES = new Set(['operating_company', 'fund_vehicle', 'other']);
@@ -8,7 +9,7 @@ const DECISIONS = new Set(['create_and_link', 'link_existing', 'leave_unlinked']
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function stableValue(value) {
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (value instanceof Date) return dateOnly(value);
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === 'object') {
     return Object.fromEntries(

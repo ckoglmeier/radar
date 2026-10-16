@@ -1,0 +1,280 @@
+{
+  "id": "earned-equity-rubric",
+  "version": 1,
+  "source": "RADAR_EARNED_EQUITY_IMPLEMENTATION_PLAN section 7",
+  "purpose": "Maps business findings to the economic question they raise. Findings explain scenario assumptions. They never map mechanically into an exit outcome.",
+  "stages": [
+    "pre-seed",
+    "seed",
+    "series-a",
+    "series-b-plus",
+    "unknown"
+  ],
+  "businessModels": [
+    "any",
+    "subscription_software",
+    "marketplace",
+    "consumer",
+    "hardware",
+    "deep_tech",
+    "services",
+    "other"
+  ],
+  "directions": [
+    "strengthens",
+    "weakens",
+    "unknown"
+  ],
+  "affectedAssumptions": [
+    "growth_trajectory",
+    "financing_need",
+    "dilution",
+    "runway_interruption",
+    "exercise_funding",
+    "common_payout",
+    "liquidity_timing",
+    "uncertainty_width"
+  ],
+  "evidenceStates": [
+    "supplied",
+    "verified",
+    "conflicting",
+    "unavailable"
+  ],
+  "uncertaintyLevels": [
+    "low",
+    "medium",
+    "high"
+  ],
+  "confirmationStates": [
+    "proposed",
+    "confirmed",
+    "rejected"
+  ],
+  "findingFields": [
+    "id",
+    "rubricRowId",
+    "evidenceIds",
+    "applicability",
+    "direction",
+    "affectedAssumption",
+    "proposedSensitivity",
+    "uncertainty",
+    "counterevidence",
+    "confirmationState"
+  ],
+  "sensitivityRules": {
+    "numeric": "A numeric financing, dilution or discount assumption needs cited evidence ids that exist and are not unavailable or conflicting, or an explicit user-estimate flag set by the user. Weak evidence yields a qualitative sensitivity only.",
+    "userEstimate": "Only a user-supplied value may carry the user-estimate flag. A model proposal never does."
+  },
+  "rows": [
+    {
+      "id": "weak_retention_unproven_demand",
+      "businessFinding": "Weak retention or unproven demand",
+      "requiredEconomicQuestion": "Does the growth/exit case depend on retention improvement that has not occurred?",
+      "applicableStages": [
+        "pre-seed",
+        "seed",
+        "series-a",
+        "series-b-plus",
+        "unknown"
+      ],
+      "businessModels": [
+        "any"
+      ],
+      "direction": "weakens",
+      "affectedAssumption": "growth_trajectory",
+      "proposedSensitivityKinds": [
+        "qualitative",
+        "numeric"
+      ],
+      "evidenceNeeded": [
+        "cohort or customer retention with period and denominator",
+        "evidence of repeat use, renewal or expansion",
+        "stated demand evidence and who pays"
+      ],
+      "numericSensitivityRequires": "cited_evidence_or_user_estimate",
+      "confirmationRequired": true,
+      "stageNotes": "Before product-market fit, absent retention history is unknown, never a retention value of zero. Record it as missing evidence and keep the growth question open."
+    },
+    {
+      "id": "paid_channel_dependent_growth",
+      "businessFinding": "Paid/channel-dependent growth",
+      "requiredEconomicQuestion": "What happens to growth and funding needs if acquisition becomes less efficient?",
+      "applicableStages": [
+        "pre-seed",
+        "seed",
+        "series-a",
+        "series-b-plus",
+        "unknown"
+      ],
+      "businessModels": [
+        "consumer",
+        "marketplace",
+        "subscription_software",
+        "other"
+      ],
+      "direction": "weakens",
+      "affectedAssumption": "financing_need",
+      "proposedSensitivityKinds": [
+        "qualitative",
+        "numeric"
+      ],
+      "evidenceNeeded": [
+        "share of growth from paid or single-channel acquisition",
+        "acquisition cost trend over dated periods",
+        "organic or referral share"
+      ],
+      "numericSensitivityRequires": "cited_evidence_or_user_estimate",
+      "confirmationRequired": true
+    },
+    {
+      "id": "weak_contribution_economics",
+      "businessFinding": "Weak contribution economics or long payback",
+      "requiredEconomicQuestion": "What financing and dilution are needed before growth becomes self-funding?",
+      "applicableStages": [
+        "pre-seed",
+        "seed",
+        "series-a",
+        "series-b-plus",
+        "unknown"
+      ],
+      "businessModels": [
+        "any"
+      ],
+      "direction": "weakens",
+      "affectedAssumption": "dilution",
+      "proposedSensitivityKinds": [
+        "qualitative",
+        "numeric"
+      ],
+      "evidenceNeeded": [
+        "contribution margin or gross margin with period",
+        "payback period or an explicit statement it cannot yet be measured",
+        "unit-level cost and revenue definition"
+      ],
+      "numericSensitivityRequires": "cited_evidence_or_user_estimate",
+      "confirmationRequired": true
+    },
+    {
+      "id": "short_runway_high_burn",
+      "businessFinding": "Short runway/high burn",
+      "requiredEconomicQuestion": "Test financing, dilution, employment interruption and exercise-funding pressure together.",
+      "applicableStages": [
+        "pre-seed",
+        "seed",
+        "series-a",
+        "series-b-plus",
+        "unknown"
+      ],
+      "businessModels": [
+        "any"
+      ],
+      "direction": "weakens",
+      "affectedAssumption": "runway_interruption",
+      "proposedSensitivityKinds": [
+        "qualitative",
+        "numeric"
+      ],
+      "evidenceNeeded": [
+        "cash or runway statement with date",
+        "recent burn",
+        "financing plan or lender and investor commitments"
+      ],
+      "numericSensitivityRequires": "cited_evidence_or_user_estimate",
+      "confirmationRequired": true,
+      "correlatedExposures": [
+        "financing",
+        "dilution",
+        "employment_interruption",
+        "exercise_funding"
+      ],
+      "note": "Employment loss and equity decline are correlated exposures. Do not multiply them as independent risks."
+    },
+    {
+      "id": "strong_business_demanding_valuation",
+      "businessFinding": "Strong business at a demanding valuation",
+      "requiredEconomicQuestion": "Does plausible business success still produce employee common-share upside?",
+      "applicableStages": [
+        "pre-seed",
+        "seed",
+        "series-a",
+        "series-b-plus",
+        "unknown"
+      ],
+      "businessModels": [
+        "any"
+      ],
+      "direction": "weakens",
+      "affectedAssumption": "common_payout",
+      "proposedSensitivityKinds": [
+        "qualitative",
+        "numeric"
+      ],
+      "evidenceNeeded": [
+        "last priced round or valuation, with date and source",
+        "preference stack or capitalization if available",
+        "plausible exit routes and their scale"
+      ],
+      "numericSensitivityRequires": "cited_evidence_or_user_estimate",
+      "confirmationRequired": true,
+      "note": "Business strength and common-equity upside are separate judgments. A strong business can still offer little to common holders at a demanding price."
+    },
+    {
+      "id": "preferences_or_debt_unresolved",
+      "businessFinding": "Material preferences or debt unresolved",
+      "requiredEconomicQuestion": "Withhold a definitive common payout; use explicit bounded/externally supplied scenarios.",
+      "applicableStages": [
+        "pre-seed",
+        "seed",
+        "series-a",
+        "series-b-plus",
+        "unknown"
+      ],
+      "businessModels": [
+        "any"
+      ],
+      "direction": "unknown",
+      "affectedAssumption": "common_payout",
+      "proposedSensitivityKinds": [
+        "qualitative",
+        "numeric"
+      ],
+      "evidenceNeeded": [
+        "liquidation preferences and participation terms",
+        "outstanding debt, warrants or structured instruments",
+        "source of each term"
+      ],
+      "numericSensitivityRequires": "cited_evidence_or_user_estimate",
+      "confirmationRequired": true,
+      "withholdDefinitiveCommonPayout": true
+    },
+    {
+      "id": "early_stage_no_operating_history",
+      "businessFinding": "Early stage without operating history",
+      "requiredEconomicQuestion": "Show uncertainty and financing sensitivities; do not substitute mature-company metrics.",
+      "applicableStages": [
+        "pre-seed",
+        "seed",
+        "unknown"
+      ],
+      "businessModels": [
+        "any"
+      ],
+      "direction": "unknown",
+      "affectedAssumption": "uncertainty_width",
+      "proposedSensitivityKinds": [
+        "qualitative",
+        "numeric"
+      ],
+      "evidenceNeeded": [
+        "team and technical or market evidence appropriate to the stage",
+        "funding history and milestones",
+        "what would count as the next proof point"
+      ],
+      "numericSensitivityRequires": "cited_evidence_or_user_estimate",
+      "confirmationRequired": true,
+      "forbidMatureMetricSubstitution": true
+    }
+  ]
+}
