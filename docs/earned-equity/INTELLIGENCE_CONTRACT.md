@@ -177,3 +177,36 @@ The memo model no longer chooses gate 2. Code computes it and passes it into the
 `learning_led_user_choice` remains user-only, set in the decision.
 
 v1 threshold: "attractive" means net positive against the baseline. That is a deliberate, simple v1 rule; owner review may raise it (for example, requiring the base net to exceed a multiple of the cash forgone).
+
+## v3: no verdicts (2026-10-15, CK direction; supersedes the gate outcomes in "Gate rules v2")
+
+**Verdicts removed.** Radar no longer produces a business verdict (supported, failed or unresolved) or a participation verdict (attractive, not attractive or unresolved). The user decides; Radar provides understanding.
+
+**Company review → dimension readings.**
+- The core-row coverage rule and the deterministic dimension states from v2 remain. The states are positive, negative, mixed and unknown, each derived from findings with evidence.
+- The artifact exposes `dimensions` (dimension → `{state, findingIds, openQuestions}`) and `evidenceConfidence`. There is no `gate` status.
+- `rulesVersion` becomes `dimension-readings-v3`.
+- Unknown is presented as "Not yet evidenced: ask", never as negative.
+
+**Researched valuation proposals.**
+- Research may return `researchedValuation`: `[{ field, value, asOfDate, evidenceId }]`, for the `valuationContext` fields in core CONTRACT V1.
+- Each proposal must cite `supplied` or `verified` evidence, and is never marked confirmed.
+- The app offers them for the user to confirm into the offer revision. Unconfirmed, they carry the state `researched_unconfirmed`.
+- User-entered and document-confirmed values always win.
+
+**Offer memo v3.** The memo explains; it does not decide. Its sections are:
+1. **Relative position.** Prose over `relativePosition` and the comparison with the other offers and the baseline.
+2. **Outcome sensitivity.** Prose over the grid: under what exit prices and timings the equity offsets the cash given up, and where it does not.
+3. **Valuation memo.**
+   - Preferred price, 409A and strike.
+   - The implied exit needed against the post-money valuation.
+   - Senior claims ahead of common.
+   - How the company review's dimension readings bear on the plausibility of that growth, with no probabilities.
+   - The source and state of each valuation input (researched values are named as such).
+4. **Material clauses.**
+5. **Open questions.**
+
+**Memo rules**
+- There is no gate, verdict, recommendation, "attractive" or "accept/decline" language. A deterministic check rejects it.
+- The number rule is unchanged: only numbers present in the input packet, which now includes the relative-position metrics and the grid.
+- The learning note, if any, is reflected back as the user's own judgment and is never weighed.

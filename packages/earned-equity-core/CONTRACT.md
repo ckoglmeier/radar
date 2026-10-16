@@ -287,3 +287,76 @@ Each amendment below answers a finding (F1–F10) from the independent review.
 - An `illiquidResidual` reports units still held at H, with a note that says whether they are exercisable options or already-exercised shares.
 
 `CALCULATOR_VERSION` becomes `earned-equity-core/1.1.1`.
+
+## v1.2 amendments: relative position, sensitivity grid, valuation context (2026-10-15, CK direction)
+
+CK direction: no accept/decline verdicts. Radar shows where an offer stands relative to the alternatives, how its outcome moves with exit value and timing, and the valuation context.
+
+### V1. Valuation context (schema, additive)
+
+`OfferRevision.valuationContext` is optional. Every field in it is a fact.
+
+| Field | Meaning |
+| --- | --- |
+| `preferredPricePerShare` | Price per share of the latest preferred round |
+| `postMoneyValuation` | Post-money valuation of that round |
+| `fullyDilutedShares` | Fully diluted share count |
+| `fmv409APerShare` | 409A fair market value per common share |
+| `fmv409AAsOf` | Date of that 409A (a date) |
+| `lastRoundDate` | Date of the latest round (a date) |
+| `seniorClaimsAmount` | Total liquidation preferences plus debt ahead of common |
+| `preferenceTerms` | Text, at most 500 characters |
+
+**Value state.** `VALUE_STATES` gains `researched_unconfirmed`. It marks a value proposed from public research that the user has not confirmed. The calculator may use it in relative metrics, but always adds the limitation `researched_value:<field>`. It is never used for payout, units or strike.
+
+### V2. `relativePosition({ group, offerRevision, scenarioSet, result })`
+
+All results are exact rationals and deterministic. There is no verdict field.
+
+**Cash given up**
+- `cashGivenUpTotal` is the base scenario's `totalCashDifference`.
+- `cashGivenUpPerYear` is that total divided by the base scenario's service years.
+
+**Break-even multiples**
+- `breakEvenCommonPrice` is the base scenario's break-even common price.
+- `breakEvenMultipleOfPreferred` is the break-even price divided by `preferredPricePerShare`.
+- `breakEvenMultipleOf409A` is the break-even price divided by `fmv409APerShare`.
+- Each multiple is `null` when its reference is unknown.
+
+**Break-even equity value**
+- `breakEvenEquityValue` is the break-even price × `fullyDilutedShares`, when known.
+- `breakEvenMultipleOfPostMoney` is that value divided by `postMoneyValuation`.
+- A senior-claims-adjusted figure is shown only when `seniorClaimsAmount` is known: `(breakEvenEquityValue + seniorClaimsAmount) / postMoneyValuation`. It is labelled as a simplified as-converted figure that excludes participation and seniority detail.
+
+**Strike context**
+- `strikeVs409A` is the strike divided by the 409A FMV, when both are known.
+
+**Limitations** are carried through from the calculation and the valuation states.
+
+### V3. `sensitivityGrid({ group, offerRevision, scenarioSet, baseScenarioId, prices?, years? })`
+
+The grid is one two-way table of `netPreTax` by exit common price per share × years to liquidity.
+
+**How each cell is calculated**
+- Start from the base scenario: its service months, exercise path and cash.
+- Replace its payout with `common_per_share` at the price on the price axis.
+- Replace its liquidity with the year on the year axis.
+- Set the horizon to `max(group.horizonMonths, liquidityMonths)` so that the liquidity always falls inside it.
+- Each cell reports `netPreTax`, plus `npv` when a discount rate is set.
+
+**Axes**
+- Default years: `[2, 3, 4, 5, 7, 10]`.
+- Default prices: the reference price × `[0.5, 1, 2, 3, 5, 10]`.
+  - The reference price is the first known of: `preferredPricePerShare`, then `fmv409APerShare`, then the base break-even price.
+  - The reference used is reported.
+- Callers may pass explicit axes, up to 8 × 8.
+
+**Per-column break-even.** For each year, the grid also reports the exact break-even common price for that timing.
+
+Cells that cannot be computed are `null` with a limitation. They are never zero.
+
+`CALCULATOR_VERSION` becomes `earned-equity-core/1.2.0`.
+
+### V4. Decision record
+
+`gates` is optional and deprecated, and new decisions omit it. The decision keeps `outcome`, `rationale`, `acknowledgedRisks`, the optional `learningJudgment`, and `contraryToAnalysis`.
