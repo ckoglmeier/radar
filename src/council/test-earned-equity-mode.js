@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Earned Equity company review: stage tables, privacy, run key, reuse, rubric
-// findings, gate rules and follow-up. A fake provider only; no model calls.
+// findings, dimension readings and follow-up. A fake provider only; no model calls.
 // Invented companies and numbers only.
 
 import assert from 'node:assert/strict';
@@ -14,7 +14,9 @@ import {
   assertNoPersonalValues,
   earnedEquityCompanyReview,
   findProbabilityFields,
-  finalizeBusinessGate,
+  readDimensions,
+  screenResearchedValuation,
+  VALUATION_FIELDS,
   indexEvidence,
   loadEarnedEquityRubric,
   normalizeCompanyInput,
@@ -67,7 +69,7 @@ const throws = (fn, pattern) => assert.throws(fn, pattern);
 function researchOutput(extra = {}) {
   return {
     evidence: EVIDENCE, team_dossier: 'Invented team notes.', company_context: 'Invented company context.',
-    custom_questions: [], critical_unknowns: ['Preference stack'], contradictions_to_resolve: ['Paid growth share'], ...extra,
+    custom_questions: [], critical_unknowns: ['Preference stack'], contradictions_to_resolve: ['Paid growth share'], researchedValuation: [], ...extra,
   };
 }
 const row = (id, rubricRowId, extra = {}) => finding({
@@ -79,14 +81,11 @@ const coreRest = () => [
   row('F6', 'paid_channel_dependent_growth'),
   row('F7', 'weak_contribution_economics'),
 ];
-function gradeOutput(findings, gateView = 'supported') {
-  return { findings, key_argument: 'Argument.', gate_view: gateView };
+function gradeOutput(findings) {
+  return { findings, key_argument: 'Argument.' };
 }
 function calibratorOutput(overrides = {}) {
   return {
-    gate_proposal: {
-      status: 'supported', rationale: 'Retention evidence is strong for the stage.', deciding_finding_ids: ['F1'], unresolved_reasons: [],
-    },
     findings: [finding(), ...coreRest()],
     evidence_confidence: 'medium',
     stage_cap_ids: [],
@@ -151,7 +150,13 @@ await test('stages are research, bull, bear, calibrator; no CFO; no angel contex
       assert.doesNotMatch(String(request[field]), banned, `${field} of a request carries angel text`);
     }
   }
-  assert.equal(result.review.gate.status, 'supported');
+  assert.equal(result.review.dimensions.demand.state, 'positive');
+  assert.equal(result.review.dimensions.runway.state, 'positive');
+  assert.equal(result.review.dimensions.growth.state, 'unknown');
+  assert.deepEqual(result.review.dimensions.demand.findingIds, ['F1']);
+  assert.ok(!('gate' in result.review), 'no verdict is produced');
+  assert.equal(result.review.rulesVersion, 'dimension-readings-v3');
+  assert.deepEqual(result.review.researchedValuation, []);
   assert.equal(result.review.reviewMode, 'earned_equity_company');
   assert.deepEqual(findProbabilityFields(result.review), []);
   assert.equal(result.usage.inputTokens, 40);
@@ -205,7 +210,7 @@ await test('run key changes with lens version, manifest, policy version and enti
 });
 
 await test('reuse returns the completed review without provider calls', async () => {
-  const stored = { id: 'rev-1', artifact: { reviewMode: 'earned_equity_company', gate: { status: 'supported' } } };
+  const stored = { id: 'rev-1', artifact: { reviewMode: 'earned_equity_company', dimensions: {} } };
   let asked;
   const provider = makeProvider({});
   const result = await earnedEquityCompanyReview(company(), {
@@ -256,103 +261,6 @@ await test('rubric: weak evidence cannot produce a numeric assumption without a 
   // Non-numeric sensitivities carry no value or flag.
   throws(() => validateCompanyFindings([finding({ proposedSensitivity: sensitivity({ value: '5' }) })], ctx()), /only a numeric sensitivity/);
   throws(() => validateCompanyFindings([numeric({ value: 'four million', sourceEvidenceIds: ['E2'] })], ctx()), /decimal value/);
-});
-
-await test('rubric: contradictory evidence is recorded, not resolved by assertion', () => {
-  const conflicted = extra => finding({
-    id: 'C1', rubricRowId: 'paid_channel_dependent_growth', evidenceIds: ['E4'], evidenceState: 'conflicting',
-    direction: 'weakens', affectedAssumption: 'financing_need', ...extra,
-  });
-  throws(() => validateCompanyFindings([conflicted()], ctx()), /counterevidence/);
-  const [ok] = validateCompanyFindings([conflicted({ counterevidence: ['A second report puts paid growth at 20 percent.'] })], ctx());
-  assert.equal(ok.evidenceState, 'conflicting');
-  // Conflicting evidence never counts as sufficient: it cannot drive a gate.
-  const gate = finalizeBusinessGate({
-    proposal: { status: 'failed', rationale: 'Growth is paid.', deciding_finding_ids: ['C1'], unresolved_reasons: [] },
-    findings: [ok], evidenceConfidence: 'medium',
-  });
-  assert.equal(gate.status, 'unresolved');
-  assert.equal(gate.presentation, 'investigate');
-  assert.equal(gate.modelProposed, 'failed');
-  assert.equal(gate.adjustments[0].code, 'computed_gate_differs_from_model');
-});
-
-await test('rubric: missing evidence stays unknown and keeps the gate unresolved', () => {
-  // Unavailable evidence with a direction is normalized, never rejected.
-  const norm = [];
-  const [fixed] = validateCompanyFindings([finding({ evidenceIds: [], evidenceState: 'unavailable', direction: 'weakens',
-    proposedSensitivity: sensitivity({ kind: 'numeric', value: '5', unit: 'usd' }) })], ctx({ normalized: norm }));
-  assert.equal(fixed.direction, 'unknown');
-  assert.equal(fixed.proposedSensitivity.kind, 'qualitative');
-  assert.deepEqual(norm.map(item => [item.field, item.from, item.to]), [['direction', 'weakens', 'unknown'], ['proposedSensitivity', 'numeric', 'qualitative']]);
-  const [missing] = validateCompanyFindings([finding({
-    id: 'M1', rubricRowId: 'preferences_or_debt_unresolved', evidenceIds: ['E3'], evidenceState: 'unavailable', direction: 'unknown', affectedAssumption: 'common_payout',
-  })], ctx());
-  assert.equal(missing.withholdDefinitiveCommonPayout, true);
-  const gate = finalizeBusinessGate({
-    proposal: { status: 'failed', rationale: 'No terms.', deciding_finding_ids: ['M1'], unresolved_reasons: [] },
-    findings: [missing], evidenceConfidence: 'low',
-  });
-  assert.equal(gate.status, 'unresolved');
-  const unsupported = finalizeBusinessGate({
-    proposal: { status: 'supported', rationale: 'Feels strong.', deciding_finding_ids: ['M1'], unresolved_reasons: [] },
-    findings: [missing], evidenceConfidence: 'medium',
-  });
-  assert.equal(unsupported.status, 'unresolved');
-  assert.ok(unsupported.unresolvedReasons.length);
-});
-
-await test('strong business with a poor package stays supported; the company review never sees the package', async () => {
-  const provider = standard();
-  const result = await review(company(), provider, { personalValues: PERSONAL_VALUES });
-  assert.equal(result.review.gate.status, 'supported');
-  // The demanding valuation shows up as a common-equity finding, not as a reason to fail the business.
-  const valuation = validateCompanyFindings([finding({
-    id: 'V1', rubricRowId: 'strong_business_demanding_valuation', evidenceIds: ['E2'], evidenceState: 'supplied', direction: 'weakens', affectedAssumption: 'common_payout',
-  })], ctx());
-  const gate = finalizeBusinessGate({
-    proposal: { status: 'supported', rationale: 'Strong business.', deciding_finding_ids: ['F1'], unresolved_reasons: [] },
-    findings: [finding(), ...coreRest(), ...valuation], evidenceConfidence: 'high',
-  });
-  assert.equal(gate.status, 'supported');
-  assert.equal(result.review.withholdDefinitiveCommonPayout, true, 'unresolved preferences withhold a definitive payout');
-});
-
-await test('weak business with a large grant: the business gate fails on evidence, whatever the grant', async () => {
-  const weak = finding({
-    id: 'W1', rubricRowId: 'weak_contribution_economics', evidenceIds: ['E2'], evidenceState: 'supplied',
-    direction: 'weakens', affectedAssumption: 'dilution', uncertainty: 'low',
-  });
-  const provider = makeProvider({
-    research: researchOutput(),
-    bull: gradeOutput([weak], 'unresolved'),
-    bear: gradeOutput([weak], 'failed'),
-    company_calibrator: calibratorOutput({
-      gate_proposal: { status: 'failed', rationale: 'Economics are weak on supplied evidence.', deciding_finding_ids: ['W1'], unresolved_reasons: [] },
-      findings: [weak, finding({ id: 'D1', evidenceState: 'supplied', direction: 'weakens', uncertainty: 'low', affectedAssumption: 'growth_trajectory' }), row('F6', 'paid_channel_dependent_growth'), row('F8', 'short_runway_high_burn')], evidence_confidence: 'high',
-    }),
-  });
-  const result = await review(company(), provider, { personalValues: [...PERSONAL_VALUES, '9999999'] });
-  assert.equal(result.review.gate.status, 'failed');
-  assert.equal(result.review.gate.presentation, 'failed');
-  for (const { request } of provider.calls) assert.ok(!JSON.stringify(request).includes('9999999'));
-});
-
-await test('stage caps are reused: an unmet cap blocks supported', async () => {
-  const provider = makeProvider({
-    research: researchOutput(), bull: gradeOutput([finding()]), bear: gradeOutput([finding()]),
-    company_calibrator: calibratorOutput({ stage_cap_ids: ['series_a_actual_revenue_missing'] }),
-  });
-  const result = await review(company(), provider);
-  assert.equal(result.review.gate.status, 'unresolved');
-  assert.deepEqual(result.review.stageCapIds, ['series_a_actual_revenue_missing']);
-  assert.match(provider.calls.find(call => call.stage === 'company_calibrator').request.context, /series_a_actual_revenue_missing/);
-  // An unknown cap id is rejected, and a seed-stage company has no valid caps.
-  const bad = makeProvider({
-    research: researchOutput(), bull: gradeOutput([finding()]), bear: gradeOutput([finding()]),
-    company_calibrator: calibratorOutput({ stage_cap_ids: ['invented_cap'] }),
-  });
-  await assert.rejects(review(company(), bad), /Unknown stage cap/);
 });
 
 await test('an invalid stage output is repaired once; probability output is refused', async () => {
@@ -409,77 +317,70 @@ const F = (id, rubricRowId, direction, extra = {}) => ({
   ...finding({ id, rubricRowId, direction, evidenceState: 'supplied', uncertainty: 'low' }), ...extra,
 });
 const DEMAND = 'weak_retention_unproven_demand', ECON = 'weak_contribution_economics', RUNWAY = 'short_runway_high_burn', GROWTH = 'paid_channel_dependent_growth';
-const gateOf = (findings, over = {}, proposed = 'supported') => finalizeBusinessGate({
-  proposal: { status: proposed, rationale: 'r', deciding_finding_ids: [], unresolved_reasons: [] }, findings, evidenceConfidence: 'medium', ...over,
+
+await test('rubric: contradictory and missing evidence read as unknown, never negative', () => {
+  const conflicted = extra => finding({
+    id: 'C1', rubricRowId: 'paid_channel_dependent_growth', evidenceIds: ['E4'], evidenceState: 'conflicting',
+    direction: 'weakens', affectedAssumption: 'financing_need', ...extra,
+  });
+  throws(() => validateCompanyFindings([conflicted()], ctx()), /counterevidence/);
+  const [ok] = validateCompanyFindings([conflicted({ counterevidence: ['A second report puts paid growth at 20 percent.'] })], ctx());
+  assert.equal(readDimensions([ok]).growth.state, 'unknown', 'conflicting evidence is not sufficient');
+  const norm = [];
+  const [fixed] = validateCompanyFindings([finding({ evidenceIds: [], evidenceState: 'unavailable', direction: 'weakens',
+    proposedSensitivity: sensitivity({ kind: 'numeric', value: '5', unit: 'usd' }) })], ctx({ normalized: norm }));
+  assert.equal(fixed.direction, 'unknown');
+  assert.equal(fixed.proposedSensitivity.kind, 'qualitative');
+  assert.deepEqual(norm.map(item => [item.field, item.from, item.to]), [['direction', 'weakens', 'unknown'], ['proposedSensitivity', 'numeric', 'qualitative']]);
+  const [missing] = validateCompanyFindings([finding({
+    id: 'M1', rubricRowId: 'preferences_or_debt_unresolved', evidenceIds: ['E3'], evidenceState: 'unavailable', direction: 'unknown', affectedAssumption: 'common_payout',
+  })], ctx());
+  assert.equal(missing.withholdDefinitiveCommonPayout, true);
+  assert.deepEqual(Object.values(readDimensions([missing])).map(item => item.state), ['unknown', 'unknown', 'unknown', 'unknown']);
 });
 
-await test('gate-rules-v2: each outcome, dimension state and gateBasis', () => {
-  const supported = gateOf([F('a', DEMAND, 'strengthens'), F('b', RUNWAY, 'strengthens')], {}, 'failed');
-  assert.equal(supported.status, 'supported');
-  assert.equal(supported.modelProposed, 'failed');
-  assert.equal(supported.rulesVersion, 'gate-rules-v2');
-  assert.deepEqual(supported.gateBasis.demand, { state: 'positive', findingIds: ['a'] });
-  assert.equal(supported.gateBasis.growth.state, 'unknown');
-  assert.deepEqual(gateOf([F('a', DEMAND, 'strengthens'), F('b', ECON, 'strengthens')]).status, 'supported');
-  const failed = gateOf([F('a', DEMAND, 'weakens'), F('b', ECON, 'weakens')]);
-  assert.equal(failed.status, 'failed');
-  assert.equal(gateOf([F('a', DEMAND, 'weakens'), F('b', RUNWAY, 'weakens')]).status, 'failed');
-  // Demand negative alone is not enough to fail.
-  assert.equal(gateOf([F('a', DEMAND, 'weakens'), F('b', ECON, 'strengthens')], {}, 'failed').status, 'unresolved');
-  // Demand positive without economics or runway positive is unresolved.
-  assert.equal(gateOf([F('a', DEMAND, 'strengthens'), F('b', ECON, 'unknown', { evidenceState: 'unavailable' })]).status, 'unresolved');
-  // Any negative core dimension blocks supported.
-  assert.equal(gateOf([F('a', DEMAND, 'strengthens'), F('b', RUNWAY, 'strengthens'), F('c', GROWTH, 'weakens')]).status, 'unresolved');
-  assert.match(gateOf([F('a', DEMAND, 'strengthens'), F('b', RUNWAY, 'strengthens'), F('c', GROWTH, 'weakens')]).unresolvedReasons.join(' '), /negative/);
-  // Stage caps and low confidence sit inside the supported condition.
-  const positive = [F('a', DEMAND, 'strengthens'), F('b', RUNWAY, 'strengthens')];
-  assert.equal(gateOf(positive, { stageCapIds: ['series_a_actual_revenue_missing'] }).status, 'unresolved');
-  assert.equal(gateOf(positive, { evidenceConfidence: 'low' }).status, 'unresolved');
-  assert.equal(gateOf(positive).presentation, 'supported');
-  assert.equal(gateOf([]).presentation, 'investigate');
+await test('dimension-readings-v3: states, mixed, unknown, open questions, no verdict', () => {
+  const state = (...findings) => readDimensions(findings).demand.state;
+  assert.equal(state(F('a', DEMAND, 'strengthens')), 'positive');
+  assert.equal(state(F('a', DEMAND, 'weakens')), 'negative');
+  assert.equal(state(F('a', DEMAND, 'strengthens'), F('m', DEMAND, 'weakens')), 'mixed');
+  assert.equal(state(F('a', DEMAND, 'strengthens'), F('m', DEMAND, 'weakens', { counterevidence: ['Answered by E1'] })), 'positive');
+  assert.equal(state(F('a', DEMAND, 'weakens', { uncertainty: 'high' })), 'unknown');
+  assert.equal(state(F('a', DEMAND, 'strengthens', { evidenceState: 'conflicting', counterevidence: ['x'] })), 'unknown');
+  assert.equal(state(F('a', DEMAND, 'unknown', { evidenceState: 'unavailable' })), 'unknown');
+  assert.equal(state(), 'unknown');
+  const dims = readDimensions([F('a', DEMAND, 'strengthens'), F('b', ECON, 'weakens')], [
+    { rubric_row_id: ECON, question: 'What is the payback?' }, { rubric_row_id: 'preferences_or_debt_unresolved', question: 'Preferences?' },
+  ]);
+  assert.deepEqual(dims.economics, { state: 'negative', findingIds: ['b'], openQuestions: ['What is the payback?'] });
+  assert.deepEqual(Object.keys(dims), ['demand', 'growth', 'economics', 'runway']);
+  assert.ok(!JSON.stringify(dims).match(/supported|failed|unresolved|gate/));
 });
 
-await test('gate-rules-v2: mixed and unknown dimensions', () => {
-  const mixed = gateOf([F('a', DEMAND, 'strengthens'), F('m', DEMAND, 'weakens'), F('b', RUNWAY, 'strengthens')]);
-  assert.equal(mixed.gateBasis.demand.state, 'mixed');
-  assert.equal(mixed.status, 'unresolved');
-  // A weakening finding that carries counterevidence does not stop a dimension being positive.
-  const countered = gateOf([F('a', DEMAND, 'strengthens'), F('m', DEMAND, 'weakens', { counterevidence: ['Answered by E1'] }), F('b', RUNWAY, 'strengthens')]);
-  assert.equal(countered.gateBasis.demand.state, 'positive');
-  assert.equal(countered.status, 'supported');
-  // High-uncertainty weakening alone is unknown, not negative; unavailable or conflicting evidence is never sufficient.
-  assert.equal(gateOf([F('a', DEMAND, 'weakens', { uncertainty: 'high' })]).gateBasis.demand.state, 'unknown');
-  assert.equal(gateOf([F('a', DEMAND, 'strengthens', { evidenceState: 'conflicting', counterevidence: ['x'] })]).gateBasis.demand.state, 'unknown');
-  assert.equal(gateOf([F('a', DEMAND, 'unknown', { evidenceState: 'unavailable' })]).gateBasis.demand.state, 'unknown');
-  assert.equal(gateOf([]).gateBasis.runway.state, 'unknown');
-});
-
-await test('gate-rules-v2: the gate is identical whatever the model proposes; rules version is in the run key', async () => {
-  const findings = [F('a', DEMAND, 'strengthens'), F('b', ECON, 'strengthens'), F('c', RUNWAY, 'weakens')];
-  const gates = ['supported', 'failed', 'unresolved'].map(status => gateOf(findings, {}, status));
-  assert.deepEqual(new Set(gates.map(gate => gate.status)), new Set(['unresolved']));
-  assert.deepEqual(gates.map(gate => gate.modelProposed), ['supported', 'failed', 'unresolved']);
-  assert.deepEqual(gates.map(gate => JSON.stringify(gate.gateBasis)).filter((v, i, all) => all.indexOf(v) === i).length, 1);
-  // The same full review with three different model proposals produces one gate.
-  const statuses = [];
-  for (const proposed of ['supported', 'failed', 'unresolved']) {
+await test('dimension-readings-v3: identical findings give identical readings; the model proposes no gate', async () => {
+  const outputs = [];
+  for (const net of ['Credible business.', 'A completely different net assessment.']) {
     const provider = makeProvider({
       research: researchOutput(), bull: gradeOutput([finding()]), bear: gradeOutput([finding()]),
-      company_calibrator: calibratorOutput({ gate_proposal: { status: proposed, rationale: 'x', deciding_finding_ids: [], unresolved_reasons: [] } }),
+      company_calibrator: calibratorOutput({ net_assessment: net }),
     });
     const result = await review(company(), provider);
-    statuses.push([result.review.gate.status, result.review.gate.modelProposed]);
-    assert.equal(result.review.provenance.rulesVersion, 'gate-rules-v2');
+    outputs.push(JSON.stringify(result.review.dimensions));
+    assert.equal(result.review.provenance.rulesVersion, 'dimension-readings-v3');
+    assert.ok(!('gate_proposal' in EARNED_EQUITY_CALIBRATOR_SCHEMA.properties));
+    assert.ok(!('gate_view' in EARNED_EQUITY_GRADER_SCHEMA.properties));
   }
-  assert.deepEqual(statuses.map(item => item[0]), ['supported', 'supported', 'supported']);
-  assert.deepEqual(statuses.map(item => item[1]), ['supported', 'failed', 'unresolved']);
+  assert.equal(outputs[0], outputs[1]);
   const dry = await earnedEquityCompanyReview(company(), { dryRun: true, env: {} });
-  assert.match(dry.requests.calibrator.prompt, /Radar computes the gate/);
+  assert.match(dry.requests.calibrator.prompt, /do not propose a verdict or a gate/);
   assert.match(dry.requests.calibrator.prompt, /short_runway_high_burn/);
-  assert.match(readFileSync(fileURLToPath(new URL('../../skills/earned-equity-review/references/calibrator.md', import.meta.url)), 'utf8'), /gate-rules-v2/);
+  assert.doesNotMatch(JSON.stringify(Object.values(dry.requests)), /business gate|supported, failed/i);
+  assert.match(readFileSync(fileURLToPath(new URL('../../skills/earned-equity-review/references/calibrator.md', import.meta.url)), 'utf8'), /dimension-readings-v3/);
+  // The rules version is part of the run key through the instruction hash and the key itself.
+  assert.match(dry.provenance.runKey, /^[0-9a-f]{64}$/);
 });
 
-await test('gate-rules-v2: missing core-row coverage triggers one repair, then fails', async () => {
+await test('dimension-readings-v3: missing core-row coverage triggers one repair, then fails', async () => {
   const partial = calibratorOutput({ findings: [finding(), ...coreRest().slice(0, 1)] });
   const repaired = makeProvider({
     research: researchOutput(), bull: gradeOutput([finding()]), bear: gradeOutput([finding()]),
@@ -490,9 +391,72 @@ await test('gate-rules-v2: missing core-row coverage triggers one repair, then f
   assert.equal(calls.length, 2);
   assert.match(calls[1].request.prompt, /Core row coverage is missing/);
   assert.match(calls[1].request.prompt, /paid_channel_dependent_growth/);
-  assert.equal(result.review.gate.status, 'supported');
+  assert.equal(result.review.dimensions.demand.state, 'positive');
   const stubborn = makeProvider({ research: researchOutput(), bull: gradeOutput([finding()]), bear: gradeOutput([finding()]), company_calibrator: partial });
   await assert.rejects(review(company(), stubborn), /Core row coverage is missing/);
+});
+
+await test('stage caps are still listed and validated; they no longer decide anything', async () => {
+  const provider = makeProvider({
+    research: researchOutput(), bull: gradeOutput([finding()]), bear: gradeOutput([finding()]),
+    company_calibrator: calibratorOutput({ stage_cap_ids: ['series_a_actual_revenue_missing'] }),
+  });
+  const result = await review(company(), provider);
+  assert.deepEqual(result.review.stageCapIds, ['series_a_actual_revenue_missing']);
+  assert.match(provider.calls.find(call => call.stage === 'company_calibrator').request.context, /series_a_actual_revenue_missing/);
+  const bad = makeProvider({
+    research: researchOutput(), bull: gradeOutput([finding()]), bear: gradeOutput([finding()]),
+    company_calibrator: calibratorOutput({ stage_cap_ids: ['invented_cap'] }),
+  });
+  await assert.rejects(review(company(), bad), /Unknown stage cap/);
+});
+
+await test('weak business with a large grant: dimensions read negative on evidence; the grant never appears', async () => {
+  const weak = finding({ id: 'W1', rubricRowId: 'weak_contribution_economics', evidenceIds: ['E2'], evidenceState: 'supplied',
+    direction: 'weakens', affectedAssumption: 'dilution', uncertainty: 'low' });
+  const demand = finding({ id: 'D1', evidenceState: 'supplied', direction: 'weakens', uncertainty: 'low', affectedAssumption: 'growth_trajectory' });
+  const provider = makeProvider({
+    research: researchOutput(), bull: gradeOutput([weak]), bear: gradeOutput([weak]),
+    company_calibrator: calibratorOutput({ findings: [weak, demand, row('F6', 'paid_channel_dependent_growth'), row('F8', 'short_runway_high_burn')], evidence_confidence: 'high' }),
+  });
+  const result = await review(company(), provider, { personalValues: [...PERSONAL_VALUES, '9999999'] });
+  assert.equal(result.review.dimensions.demand.state, 'negative');
+  assert.equal(result.review.dimensions.economics.state, 'negative');
+  assert.ok(!('gate' in result.review));
+  for (const { request } of provider.calls) assert.ok(!JSON.stringify(request).includes('9999999'));
+});
+
+await test('researched valuation: only supplied or verified citations survive, never confirmed', async () => {
+  assert.deepEqual([...VALUATION_FIELDS].sort(), ['fmv409AAsOf', 'fmv409APerShare', 'fullyDilutedShares', 'lastRoundDate', 'postMoneyValuation', 'preferenceTerms', 'preferredPricePerShare', 'seniorClaimsAmount']);
+  const proposals = [
+    { field: 'preferredPricePerShare', value: '4.25', asOfDate: '2026-06-30', evidenceId: 'E1' },
+    { field: 'postMoneyValuation', value: '210000000', asOfDate: null, evidenceId: 'E2' },
+    { field: 'fmv409APerShare', value: '1.10', asOfDate: '2026-03-31', evidenceId: 'E3' },
+    { field: 'seniorClaimsAmount', value: '9000000', asOfDate: null, evidenceId: 'E4' },
+    { field: 'fullyDilutedShares', value: '51,000,000', asOfDate: null, evidenceId: 'E1' },
+    { field: 'lastRoundDate', value: '2026-06-30', asOfDate: null, evidenceId: 'E99' },
+    { field: 'preferredPricePerShare', value: '5.00', asOfDate: null, evidenceId: 'E2' },
+    { field: 'strikePrice', value: '1', asOfDate: null, evidenceId: 'E1' },
+  ];
+  const { kept, notes } = screenResearchedValuation(proposals, IDX);
+  assert.deepEqual(kept.map(item => item.field), ['preferredPricePerShare', 'postMoneyValuation']);
+  assert.ok(kept.every(item => item.state === 'researched_unconfirmed'));
+  assert.deepEqual(notes.map(item => item.reason), [
+    'Cites evidence that is not supplied or verified.', 'Cites evidence that is not supplied or verified.',
+    'The value does not fit the field format.', 'Cites evidence that is not in the packet.',
+    'A proposal for this field was already kept.', 'Not a valuation context field.',
+  ]);
+  // Through a full review: kept proposals land in the artifact, dropped ones are noted in provenance.
+  const provider = makeProvider({
+    research: researchOutput({ researchedValuation: proposals.slice(0, 4) }), bull: gradeOutput([finding()]), bear: gradeOutput([finding()]),
+    company_calibrator: calibratorOutput(),
+  });
+  const result = await review(company(), provider);
+  assert.deepEqual(result.review.researchedValuation.map(item => [item.field, item.state]), [['preferredPricePerShare', 'researched_unconfirmed'], ['postMoneyValuation', 'researched_unconfirmed']]);
+  assert.equal(result.review.provenance.researchedValuationNotes.length, 2);
+  assert.ok(!JSON.stringify(result.review).includes('"confirmed"'));
+  assert.match(provider.calls[0].request.context, /RADAR RESEARCH PLAN/);
+  assert.ok(EARNED_EQUITY_RESEARCH_SCHEMA.required.includes('researchedValuation'));
 });
 
 await test('unavailable-evidence weakens finding completes, normalized and recorded; other rules still reject', async () => {

@@ -2,7 +2,7 @@
 
 Make the strongest credible skeptical case about this company. Use only the frozen research packet. Do not search and do not add facts.
 
-Return rubric findings from the Bear's side plus one key argument and your view of the business gate.
+Return rubric findings from the Bear's side plus one key argument.
 
 Rules:
 - Every finding cites evidence IDs that exist in the packet.

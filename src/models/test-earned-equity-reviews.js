@@ -33,8 +33,9 @@ const key = (entity, extra = {}) => ({
   portfolioEntityId: entity, lensId: 'earned-equity-company', lensVersion: 1, policyVersion: 9,
   instructionHash: hex(1), sourceManifestHash: hex(2), runKey: hex(10), ...extra,
 });
-const artifact = (entity, runKey, gate = 'supported', extra = {}) => ({
-  reviewMode: 'earned_equity_company', gate: { status: gate }, company: { portfolioEntityId: entity }, findings: [], provenance: { runKey }, ...extra,
+const dims = state => Object.fromEntries(['demand', 'growth', 'economics', 'runway'].map(name => [name, { state, findingIds: [], openQuestions: [] }]));
+const artifact = (entity, runKey, state = 'positive', extra = {}) => ({
+  reviewMode: 'earned_equity_company', dimensions: dims(state), company: { portfolioEntityId: entity }, findings: [], provenance: { runKey }, ...extra,
 });
 
 const scratch = mkdtempSync(join(tmpdir(), 'radar-earned-reviews-'));
@@ -59,6 +60,7 @@ try {
     await assert.rejects(completeCompanyReview(started.review.id, { artifact: artifact(entity, hex(99)) }), code('invalid_artifact'));
     await assert.rejects(completeCompanyReview(started.review.id, { artifact: artifact(other, hex(10)) }), code('invalid_artifact'));
     await assert.rejects(completeCompanyReview(started.review.id, { artifact: artifact(entity, hex(10), 'maybe') }), code('invalid_artifact'));
+    await assert.rejects(completeCompanyReview(started.review.id, { artifact: artifact(entity, hex(10), 'positive', { gate: { status: 'supported' } }) }), code('invalid_artifact'));
     const done = await completeCompanyReview(started.review.id, { artifact: artifact(entity, hex(10)), usage: { inputTokens: 5 } });
     assert.equal(done.status, 'completed');
     assert.equal(done.usage.inputTokens, 5);
@@ -135,7 +137,7 @@ try {
     const followupStart = await beginCompanyReview(key(entity, { runKey: hex(31), reviewKind: 'followup', parentReviewId: done.id }));
     assert.equal(followupStart.state, 'started');
     assert.equal(followupStart.review.parentReviewId, done.id);
-    const followupDone = await completeCompanyReview(followupStart.review.id, { artifact: artifact(entity, hex(31), 'unresolved', { reviewKind: 'followup' }) });
+    const followupDone = await completeCompanyReview(followupStart.review.id, { artifact: artifact(entity, hex(31), 'unknown', { reviewKind: 'followup' }) });
     assert.deepEqual((await companyReviewChain(followupDone.id)).map(row => row.id), [done.id, followupDone.id]);
     const offerFollowup = await beginOfferReview({ offerRevisionId: 'r1', companyReviewId: followupDone.id, snapshotId: snapshot.id, parentReviewId: offerDone.id, reviewKind: 'followup', runKey: hex(42) });
     assert.equal(offerFollowup.review.parentReviewId, offerDone.id);
@@ -161,9 +163,9 @@ try {
           uncertainty: 'low', counterevidence: [], confirmationState: 'proposed' };
         const data = {
           research: { evidence: ['[ee-demand-retention] VERIFIED | Retention was strong | 2026-06-30 | Source | n/a'], team_dossier: 'T', company_context: 'C', custom_questions: [], critical_unknowns: [], contradictions_to_resolve: [] },
-          bull: { findings: [finding], key_argument: 'Up', gate_view: 'supported' },
-          bear: { findings: [finding], key_argument: 'Down', gate_view: 'supported' },
-          company_calibrator: { gate_proposal: { status: 'supported', rationale: 'Ok', deciding_finding_ids: ['F1'], unresolved_reasons: [] }, findings: [finding, ...['paid_channel_dependent_growth', 'weak_contribution_economics', 'short_runway_high_burn'].map((rubricRowId, i) => ({ ...finding, id: `C${i}`, rubricRowId, evidenceState: rubricRowId === 'short_runway_high_burn' ? 'verified' : 'unavailable', direction: rubricRowId === 'short_runway_high_burn' ? 'strengthens' : 'unknown' }))],
+          bull: { findings: [finding], key_argument: 'Up'},
+          bear: { findings: [finding], key_argument: 'Down'},
+          company_calibrator: { findings: [finding, ...['paid_channel_dependent_growth', 'weak_contribution_economics', 'short_runway_high_burn'].map((rubricRowId, i) => ({ ...finding, id: `C${i}`, rubricRowId, evidenceState: rubricRowId === 'short_runway_high_burn' ? 'verified' : 'unavailable', direction: rubricRowId === 'short_runway_high_burn' ? 'strengthens' : 'unknown' }))],
             evidence_confidence: 'high', stage_cap_ids: ['series_a_actual_revenue_missing'].slice(1), employee_common_equity_notes: [], questions_for_employer: [], net_assessment: 'Fine' },
         }[stage];
         return { structuredOutput: data, usage: { inputTokens: 1, outputTokens: 1, totalCostUsd: null }, sessionId: stage };
@@ -176,7 +178,7 @@ try {
     assert.equal(claim.state, 'started');
     const run = await earnedEquityCompanyReview(input, { provider: fakeProvider, env: {}, onStage: stage => setCompanyReviewStage(claim.review.id, stage) });
     const persisted = await completeCompanyReview(claim.review.id, { artifact: run.review, usage: run.usage });
-    assert.equal(persisted.artifact.gate.status, 'supported');
+    assert.equal(persisted.artifact.dimensions.demand.state, 'positive');
     const callsBefore = fakeProvider.calls;
     const again = await earnedEquityCompanyReview(input, { provider: fakeProvider, env: {}, findExisting: findCompletedCompanyReview });
     assert.equal(again.reused, true);

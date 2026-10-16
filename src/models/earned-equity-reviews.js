@@ -21,7 +21,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA256 = /^[0-9a-f]{64}$/;
 const COMPANY_KINDS = ['initial', 'refresh', 'followup'];
 const OFFER_KINDS = ['initial', 'followup'];
-const GATES = ['supported', 'failed', 'unresolved'];
+const DIMENSION_STATES = ['positive', 'negative', 'mixed', 'unknown'];
+const DIMENSIONS = ['demand', 'growth', 'economics', 'runway'];
 
 const json = value => (typeof value === 'string' ? JSON.parse(value) : value);
 const isUnique = error => error?.code === '23505' || /unique|duplicate key/i.test(error?.message || '');
@@ -191,7 +192,10 @@ export async function setCompanyReviewStage(id, stage) {
 function checkCompanyArtifact(artifact, row) {
   if (!artifact || typeof artifact !== 'object' || Array.isArray(artifact)) throw new EarnedEquityReviewError('invalid_artifact', 'Artifact must be an object');
   if (artifact.reviewMode !== 'earned_equity_company') throw new EarnedEquityReviewError('invalid_artifact', 'Artifact is not an Earned Equity company review');
-  if (!GATES.includes(artifact.gate?.status)) throw new EarnedEquityReviewError('invalid_artifact', 'Artifact has no valid business gate');
+  if (!DIMENSIONS.every(name => DIMENSION_STATES.includes(artifact.dimensions?.[name]?.state))) {
+    throw new EarnedEquityReviewError('invalid_artifact', 'Artifact has no valid dimension readings');
+  }
+  if (artifact.gate !== undefined) throw new EarnedEquityReviewError('invalid_artifact', 'Artifacts carry no verdict');
   if (artifact.provenance?.runKey !== row.run_key) throw new EarnedEquityReviewError('invalid_artifact', 'Artifact run key does not match the review');
   if (artifact.company?.portfolioEntityId !== row.portfolio_entity_id) throw new EarnedEquityReviewError('invalid_artifact', 'Artifact company does not match the review');
 }

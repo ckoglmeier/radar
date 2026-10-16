@@ -6,7 +6,8 @@
 // is no CFO stage, no sizing and no calibration history. The review is
 // company-scoped. It never receives an offer, a salary, grant terms or notes.
 //
-// Output is a business-gate proposal (supported | failed | unresolved) plus
+// Output is dimension readings (positive | negative | mixed | unknown per core
+// dimension) plus
 // rubric findings. Models propose; this module validates structure and applies
 // deterministic rules (evidence sufficiency, stage caps, numeric-source rules).
 // It never produces or accepts a probability.
@@ -267,10 +268,30 @@ const FINDING_SCHEMA = {
   additionalProperties: false,
 };
 
-const GATE_STATUS = ['supported', 'failed', 'unresolved'];
+
+// Fields of OfferRevision.valuationContext (core CONTRACT V1) that research may propose.
+export const VALUATION_FIELDS = Object.freeze([
+  'preferredPricePerShare', 'postMoneyValuation', 'fullyDilutedShares', 'fmv409APerShare',
+  'fmv409AAsOf', 'lastRoundDate', 'seniorClaimsAmount', 'preferenceTerms',
+]);
 
 export const EARNED_EQUITY_RESEARCH_SCHEMA = (() => {
   const schema = structuredClone(RESEARCH_SCHEMA);
+  schema.properties.researchedValuation = {
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        field: { type: 'string', enum: [...VALUATION_FIELDS] },
+        value: { type: 'string' },
+        asOfDate: { type: ['string', 'null'] },
+        evidenceId: { type: 'string' },
+      },
+      required: ['field', 'value', 'asOfDate', 'evidenceId'],
+      additionalProperties: false,
+    },
+  };
+  schema.required = [...schema.required, 'researchedValuation'];
   schema.properties.custom_questions.items.properties.coverage_area.enum = [...COVERAGE_AREAS];
   return schema;
 })();
@@ -280,26 +301,14 @@ export const EARNED_EQUITY_GRADER_SCHEMA = {
   properties: {
     findings: { type: 'array', items: FINDING_SCHEMA },
     key_argument: { type: 'string' },
-    gate_view: { type: 'string', enum: GATE_STATUS },
   },
-  required: ['findings', 'key_argument', 'gate_view'],
+  required: ['findings', 'key_argument'],
   additionalProperties: false,
 };
 
 export const EARNED_EQUITY_CALIBRATOR_SCHEMA = {
   type: 'object',
   properties: {
-    gate_proposal: {
-      type: 'object',
-      properties: {
-        status: { type: 'string', enum: GATE_STATUS },
-        rationale: { type: 'string' },
-        deciding_finding_ids: { type: 'array', items: { type: 'string' } },
-        unresolved_reasons: { type: 'array', items: { type: 'string' } },
-      },
-      required: ['status', 'rationale', 'deciding_finding_ids', 'unresolved_reasons'],
-      additionalProperties: false,
-    },
     findings: { type: 'array', items: FINDING_SCHEMA },
     evidence_confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
     stage_cap_ids: { type: 'array', items: { type: 'string' } },
@@ -321,7 +330,7 @@ export const EARNED_EQUITY_CALIBRATOR_SCHEMA = {
     net_assessment: { type: 'string' },
   },
   required: [
-    'gate_proposal', 'findings', 'evidence_confidence', 'stage_cap_ids',
+    'findings', 'evidence_confidence', 'stage_cap_ids',
     'employee_common_equity_notes', 'questions_for_employer', 'net_assessment',
   ],
   additionalProperties: false,
@@ -342,22 +351,22 @@ export const EARNED_EQUITY_STAGE_PROMPTS = Object.freeze({
     'supplied, verified, conflicting, or unavailable. Verify entity and date before recording a claim; reserve CONFLICTING ' +
     'for explicit, mutually incompatible claims about the same entity, event, and period, and record both claims. Never ' +
     'infer that something did not happen merely because a search did not find it. Before product-market fit, absent ' +
-    'retention history is unavailable, not zero. Keep the team dossier and company context neutral and sourced, with no ' +
+    'retention history is unavailable, not zero. When a source states the latest preferred price per share, post-money valuation, fully diluted shares, 409A value and date, last round date, senior claims (preferences plus debt) or preference terms, also return it in researchedValuation as {field, value, asOfDate, evidenceId}, citing the ID of a supplied or verified evidence line (E1, E2, ... by position in your evidence array); return [] when there are none. Values are plain decimal strings (share counts as integers, dates as YYYY-MM-DD). These are proposals a person confirms, never facts. Keep the team dossier and company context neutral and sourced, with no ' +
     'scoring or conclusions. Use only company-level evidence. Do not score or simulate another role.',
   bull:
     'STAGE: bull\nPerform only the Bull review. Use only the frozen research packet in context; do not search or add facts. ' +
     'Return rubric findings from the Bull side, citing evidence IDs from the packet, plus the strongest credible upside ' +
-    'argument and your view of the business gate. State no probabilities. Treat missing evidence as unavailable, not negative. Hard rules: a finding on unavailable evidence must use direction unknown; a directional finding on conflicting evidence must list counterevidence; cite only evidence IDs in the packet; applicability.stage must equal the company stage when known; use only the listed rubric rows and assumptions; numeric sensitivities need cited supplied or verified evidence, never a user-estimate flag; state no probabilities; confirmationState is proposed.',
+    'argument. State no probabilities. Treat missing evidence as unavailable, not negative. Hard rules: a finding on unavailable evidence must use direction unknown; a directional finding on conflicting evidence must list counterevidence; cite only evidence IDs in the packet; applicability.stage must equal the company stage when known; use only the listed rubric rows and assumptions; numeric sensitivities need cited supplied or verified evidence, never a user-estimate flag; state no probabilities; confirmationState is proposed.',
   bear:
     'STAGE: bear\nPerform only the Bear review. Use only the frozen research packet in context; do not search or add facts. ' +
     'Return rubric findings from the Bear side, citing evidence IDs from the packet, plus the strongest credible skeptical ' +
-    'argument and your view of the business gate. State no probabilities. Missing evidence is a question to ask, not proof of a problem. Hard rules: a finding on unavailable evidence must use direction unknown; a directional finding on conflicting evidence must list counterevidence; cite only evidence IDs in the packet; applicability.stage must equal the company stage when known; use only the listed rubric rows and assumptions; numeric sensitivities need cited supplied or verified evidence, never a user-estimate flag; state no probabilities; confirmationState is proposed.',
+    'argument. State no probabilities. Missing evidence is a question to ask, not proof of a problem. Hard rules: a finding on unavailable evidence must use direction unknown; a directional finding on conflicting evidence must list counterevidence; cite only evidence IDs in the packet; applicability.stage must equal the company stage when known; use only the listed rubric rows and assumptions; numeric sensitivities need cited supplied or verified evidence, never a user-estimate flag; state no probabilities; confirmationState is proposed.',
   calibrator:
     'STAGE: company_calibrator\nPerform only calibration. Reconcile the frozen Bull and Bear outputs into one set of rubric ' +
-    'findings and a proposed business gate (supported, failed or unresolved; unresolved means investigate). Return at least one ' +
+    'findings. You do not propose a verdict or a gate. Return at least one ' +
     'finding for each core row: weak_retention_unproven_demand, paid_channel_dependent_growth, weak_contribution_economics and ' +
-    'short_runway_high_burn; where evidence is lacking use evidenceState unavailable and direction unknown. Radar computes the gate ' +
-    'from your findings; your proposal is recorded but does not decide it. Do not search or ' +
+    'short_runway_high_burn; where evidence is lacking use evidenceState unavailable and direction unknown. Radar derives the state of each core ' +
+    'dimension (positive, negative, mixed or unknown) from your findings. Do not search or ' +
     'add facts. Cite only evidence IDs from the frozen packet. confirmationState is always proposed. A numeric sensitivity ' +
     'needs cited, non-conflicting evidence; otherwise give a qualitative sensitivity. Never mark a value as a user estimate. ' +
     'List a stage cap ID only from the supplied valid IDs and only when its requirement is unmet. Return no more than six ' +
@@ -587,7 +596,7 @@ export function validateCompanyFindings(findings, ctx) {
   return out;
 }
 
-export const GATE_RULES_VERSION = 'gate-rules-v2';
+export const DIMENSION_RULES_VERSION = 'dimension-readings-v3';
 export const CORE_ROWS = Object.freeze({
   demand: 'weak_retention_unproven_demand',
   growth: 'paid_channel_dependent_growth',
@@ -604,49 +613,59 @@ function dimensionState(findings) {
   if (strengthens && uncounteredWeakens) state = 'mixed';
   else if (strengthens) state = 'positive';
   else if (weakens.length) state = 'negative';
-  return { state, findingIds: findings.map(finding => finding.id) };
+  return state;
 }
 
 /**
- * Gate 1 is a deterministic function of the calibrated findings (gate-rules-v2).
- * The model's own proposal is kept only as modelProposed. Unresolved means
- * investigate, never failure.
+ * Dimension readings (dimension-readings-v3): a deterministic function of the calibrated
+ * findings. There is no verdict. Unknown means "not yet evidenced: ask", never negative.
+ * @returns {Record<string, {state:string, findingIds:string[], openQuestions:string[]}>}
  */
-export function finalizeBusinessGate({ proposal, findings, stageCapIds = [], evidenceConfidence }) {
-  const gateBasis = Object.fromEntries(Object.entries(CORE_ROWS).map(([name, row]) => [
-    name, dimensionState(findings.filter(finding => finding.rubricRowId === row)),
-  ]));
-  const state = name => gateBasis[name].state;
-  const anyNegative = Object.keys(gateBasis).some(name => state(name) === 'negative');
-  const reasons = [];
-  let status = 'unresolved';
-  if (state('demand') === 'negative' && (state('economics') === 'negative' || state('runway') === 'negative')) {
-    status = 'failed';
-  } else if (state('demand') === 'positive' && (state('economics') === 'positive' || state('runway') === 'positive')
-      && !anyNegative && stageCapIds.length === 0 && evidenceConfidence !== 'low') {
-    status = 'supported';
-  } else {
-    if (state('demand') !== 'positive') reasons.push(`Demand and retention evidence is ${state('demand')}.`);
-    if (state('economics') !== 'positive' && state('runway') !== 'positive') reasons.push('Neither unit economics nor runway is positive on supplied or verified evidence.');
-    if (anyNegative) reasons.push('At least one core dimension is negative.');
-    if (stageCapIds.length) reasons.push(`Stage requirement unmet: ${stageCapIds.join(', ')}`);
-    if (evidenceConfidence === 'low') reasons.push('Evidence confidence is low.');
+export function readDimensions(findings, questions = []) {
+  return Object.fromEntries(Object.entries(CORE_ROWS).map(([name, row]) => {
+    const own = findings.filter(finding => finding.rubricRowId === row);
+    return [name, {
+      state: dimensionState(own),
+      findingIds: own.map(finding => finding.id),
+      openQuestions: questions.filter(question => question.rubric_row_id === row).map(question => question.question),
+    }];
+  }));
+}
+
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const DECIMAL_VALUE = /^\d{1,15}(\.\d{1,12})?$/;
+const VALUATION_PATTERNS = {
+  preferredPricePerShare: DECIMAL_VALUE,
+  postMoneyValuation: DECIMAL_VALUE,
+  fullyDilutedShares: /^\d{1,15}$/,
+  fmv409APerShare: DECIMAL_VALUE,
+  fmv409AAsOf: ISO,
+  lastRoundDate: ISO,
+  seniorClaimsAmount: DECIMAL_VALUE,
+  preferenceTerms: /^[\s\S]{1,500}$/,
+};
+
+/**
+ * Keep researched valuation proposals that cite supplied or verified evidence and fit the
+ * field's format. Others are dropped with a note. Kept proposals are never confirmed.
+ */
+export function screenResearchedValuation(proposals = [], evidence = []) {
+  const status = new Map(evidence.map(item => [item.id, item.status]));
+  const kept = [];
+  const notes = [];
+  const seen = new Set();
+  for (const proposal of proposals || []) {
+    const drop = reason => notes.push({ field: proposal?.field ?? null, evidenceId: proposal?.evidenceId ?? null, reason });
+    if (!VALUATION_FIELDS.includes(proposal?.field)) { drop('Not a valuation context field.'); continue; }
+    if (!status.has(proposal.evidenceId)) { drop('Cites evidence that is not in the packet.'); continue; }
+    if (!SUFFICIENT.has(status.get(proposal.evidenceId))) { drop('Cites evidence that is not supplied or verified.'); continue; }
+    if (typeof proposal.value !== 'string' || !VALUATION_PATTERNS[proposal.field].test(proposal.value)) { drop('The value does not fit the field format.'); continue; }
+    if (proposal.asOfDate != null && !ISO.test(proposal.asOfDate)) { drop('The as-of date is not an ISO date.'); continue; }
+    if (seen.has(proposal.field)) { drop('A proposal for this field was already kept.'); continue; }
+    seen.add(proposal.field);
+    kept.push({ field: proposal.field, value: proposal.value, asOfDate: proposal.asOfDate ?? null, evidenceId: proposal.evidenceId, state: 'researched_unconfirmed' });
   }
-  const adjustments = status === proposal.status ? [] : [{
-    code: 'computed_gate_differs_from_model',
-    message: `Radar computed ${status} from the findings; the model proposed ${proposal.status}.`,
-  }];
-  return {
-    status,
-    modelProposed: proposal.status,
-    rulesVersion: GATE_RULES_VERSION,
-    rationale: proposal.rationale,
-    gateBasis,
-    decidingFindingIds: [...new Set(Object.values(gateBasis).flatMap(item => item.findingIds))],
-    unresolvedReasons: status === 'unresolved' ? [...(proposal.unresolved_reasons || []), ...reasons] : [],
-    adjustments,
-    presentation: status === 'unresolved' ? 'investigate' : status,
-  };
+  return { kept, notes };
 }
 
 function validateGrader(data, ctx) {
@@ -677,10 +696,8 @@ function validateCalibratorOutput(data, ctx) {
       throw new Error(`Core row coverage is missing: return at least one finding for ${row} (${name}). If evidence is lacking, use evidenceState unavailable and direction unknown.`);
     }
   }
-  const gate = finalizeBusinessGate({
-    proposal: data.gate_proposal, findings, stageCapIds: data.stage_cap_ids, evidenceConfidence: data.evidence_confidence,
-  });
-  return { ...data, findings, gate, normalized };
+  const dimensions = readDimensions(findings, data.questions_for_employer);
+  return { ...data, findings, dimensions, normalized };
 }
 
 // ---------------------------------------------------------------------------
@@ -737,7 +754,7 @@ function prepareRun(rawCompany, opts) {
   const followupHash = followup ? hash({ parent: parentReviewId, answers: followup.answers }) : null;
   const provenance = {
     reviewMode: 'earned_equity_company',
-    lensId, lensVersion, policyVersion, rubricVersion: rubric.version, rulesVersion: GATE_RULES_VERSION, reviewKind, parentReviewId,
+    lensId, lensVersion, policyVersion, rubricVersion: rubric.version, rulesVersion: DIMENSION_RULES_VERSION, reviewKind, parentReviewId,
     instructionHash, companyInputHash,
     sourceManifestHash: hash(sourceManifest),
     researchPlanSeedVersion: RESEARCH_PLAN_SEED_VERSION,
@@ -746,7 +763,7 @@ function prepareRun(rawCompany, opts) {
   };
   provenance.runKey = hash({
     portfolioEntityId: company.portfolioEntityId,
-    lensId, lensVersion, policyVersion, instructionHash, rulesVersion: GATE_RULES_VERSION,
+    lensId, lensVersion, policyVersion, instructionHash, rulesVersion: DIMENSION_RULES_VERSION,
     sourceManifestHash: provenance.sourceManifestHash,
     modelPolicy: policy,
     reviewKind,
@@ -952,6 +969,7 @@ export async function earnedEquityCompanyReview(company, opts = {}) {
 
     await notify('finalizing');
     const final = calibrator.data;
+    const valuation = screenResearchedValuation(research.data.researchedValuation, evidence);
     const withholdPayout = final.findings.some(finding => finding.withholdDefinitiveCommonPayout
       && !(finding.evidenceState === 'verified' && finding.direction === 'strengthens'));
     const researchSnapshot = { ...research.data };
@@ -964,17 +982,19 @@ export async function earnedEquityCompanyReview(company, opts = {}) {
       company: {
         portfolioEntityId: input.portfolioEntityId, name: input.company, stage: input.stage, businessModel: input.businessModel,
       },
-      gate: final.gate,
+      rulesVersion: DIMENSION_RULES_VERSION,
+      dimensions: final.dimensions,
       evidenceConfidence: final.evidence_confidence,
       stageCapIds: final.stage_cap_ids,
       findings: final.findings,
       withholdDefinitiveCommonPayout: withholdPayout,
+      researchedValuation: valuation.kept,
       employeeCommonEquityNotes: final.employee_common_equity_notes,
       questionsForEmployer: final.questions_for_employer,
       netAssessment: final.net_assessment,
       voices: {
-        bull: { gateView: bull.data.gate_view, keyArgument: bull.data.key_argument, findingIds: bull.data.findings.map(item => item.id) },
-        bear: { gateView: bear.data.gate_view, keyArgument: bear.data.key_argument, findingIds: bear.data.findings.map(item => item.id) },
+        bull: { keyArgument: bull.data.key_argument, findingIds: bull.data.findings.map(item => item.id) },
+        bear: { keyArgument: bear.data.key_argument, findingIds: bear.data.findings.map(item => item.id) },
       },
       research: {
         evidence,
@@ -983,7 +1003,7 @@ export async function earnedEquityCompanyReview(company, opts = {}) {
       },
       provenance: {
         runKey: provenance.runKey,
-        rulesVersion: GATE_RULES_VERSION,
+        rulesVersion: DIMENSION_RULES_VERSION,
         instructionHash: provenance.instructionHash,
         sourceManifestHash: provenance.sourceManifestHash,
         companyInputHash: provenance.companyInputHash,
@@ -991,6 +1011,7 @@ export async function earnedEquityCompanyReview(company, opts = {}) {
         researchPlan,
         researchSnapshot,
         normalizedFindings: final.normalized,
+        researchedValuationNotes: valuation.notes,
       },
       normalizedFindingCount: final.normalized.length,
     };

@@ -2,7 +2,7 @@
 
 Make the strongest credible case that this company is an exceptional business and that a common-equity holder could share in the outcome. Use only the frozen research packet. Do not search and do not add facts.
 
-Return rubric findings from the Bull's side plus one key argument and your view of the business gate.
+Return rubric findings from the Bull's side plus one key argument.
 
 Rules:
 - Every finding cites evidence IDs that exist in the packet. If no evidence supports a point, do not make the point.

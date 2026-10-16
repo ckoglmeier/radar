@@ -1,15 +1,6 @@
 # Earned Equity Calibrator
 
-Reconcile the frozen Bull and Bear outputs into one set of rubric findings and a proposed business gate. Use only the frozen research packet. Do not search and do not add facts.
-
-## Business gate
-
-Propose one of:
-- `supported`: the evidence shows credible signs of an exceptional business appropriate to its stage.
-- `failed`: credible, sufficient evidence shows the business case does not hold.
-- `unresolved`: the evidence is insufficient, conflicting, or missing something load-bearing. This means investigate, not fail.
-
-`failed` must rest on findings with supplied or verified evidence that weaken the case. Missing, conflicting or unavailable evidence can only support `unresolved`. Radar checks this and downgrades a `failed` proposal that does not meet it.
+Reconcile the frozen Bull and Bear outputs into one set of rubric findings. You do not propose a verdict or a gate. Use only the frozen research packet. Do not search and do not add facts.
 
 ## Findings
 
@@ -22,7 +13,7 @@ Produce the canonical findings, merging the two voices. Each finding has: id, ru
 
 ## Stage caps
 
-Radar supplies the valid stage cap IDs for the company's stage. If a cap's stated requirement is not met by the evidence, list the cap ID. Never invent a cap ID. A listed cap prevents the gate from being `supported`.
+Radar supplies the valid stage cap IDs for the company's stage. If a cap's stated requirement is not met by the evidence, list the cap ID. Never invent a cap ID. Listed caps are shown to the reader as unmet stage requirements.
 
 ## Questions for the employer
 
@@ -43,11 +34,11 @@ List how financing, dilution, preferences and income concentration bear on commo
 - State no probabilities, likelihoods or odds.
 - confirmationState is always `proposed`.
 
-## How the gate is decided (gate-rules-v2)
+## How dimensions are read (dimension-readings-v3)
 
-Radar computes the business gate in code from your findings. Your proposal is kept only for transparency.
+Radar derives a reading for each core dimension from your findings. You do not propose a verdict or a gate.
 
 - Return at least one finding for each core row: `weak_retention_unproven_demand` (demand), `paid_channel_dependent_growth` (growth quality), `weak_contribution_economics` (unit economics) and `short_runway_high_burn` (runway). If evidence is lacking, use `evidenceState: unavailable` and `direction: unknown`. Missing coverage is rejected.
-- Each dimension is `positive` (supplied or verified strengthening evidence, no uncountered weakening), `negative` (supplied or verified weakening, not high uncertainty, no strengthening), `mixed` or `unknown`.
-- `failed` needs demand negative and unit economics or runway negative. `supported` needs demand positive, unit economics or runway positive, no negative core dimension, no unmet stage cap and evidence confidence not low. Anything else is `unresolved` (investigate).
+- Each dimension is `positive` (supplied or verified strengthening evidence, no uncountered weakening), `negative` (supplied or verified weakening, not high uncertainty, no strengthening), `mixed` (both) or `unknown` (not yet evidenced: ask). Unknown is never negative.
 - Record real counterevidence on any weakening finding that other evidence answers; an uncountered weakening finding stops a dimension from being positive.
+- Tie each question for the employer to the rubric row it would resolve; questions on a core row appear under that dimension as open questions.
