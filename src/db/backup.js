@@ -409,6 +409,33 @@ export async function backupDatabase({ outDir = './backups' } = {}) {
  * Every application table is replaced inside one transaction so a failed
  * restore leaves the existing workspace unchanged.
  */
+// Restore is not a new lifecycle event. Validate the stored-state invariants from
+// migration 051 before temporarily suspending its transition/timestamp trigger.
+// SQL CHECK/FK constraints and every other trigger remain active.
+function validateRestoredProposal(row) {
+  const has = key => row[key] != null;
+  let valid = false;
+  switch (row.status) {
+    case 'proposed':
+      valid = !['result', 'error_code', 'error_message', 'reviewed_by', 'reviewed_at', 'applied_at'].some(has);
+      break;
+    case 'applied':
+      valid = ['result', 'reviewed_by', 'reviewed_at', 'applied_at'].every(has) && !has('error_code');
+      break;
+    case 'rejected':
+      valid = has('reviewed_by') && has('reviewed_at') && !has('result') && !has('applied_at');
+      break;
+    case 'failed':
+      valid = has('error_code') && !has('result') && !has('applied_at');
+      break;
+    case 'stale':
+    case 'superseded':
+      valid = !has('result') && !has('applied_at');
+      break;
+  }
+  if (!valid) throw new Error('Invalid command proposal state in backup');
+}
+
 export async function restoreDatabase({ file, content } = {}) {
   if (!file && content == null) throw new Error('restore file or content is required');
   if (!(await isPgliteActive())) {
@@ -428,7 +455,9 @@ export async function restoreDatabase({ file, content } = {}) {
 
   for (const table of restoreTables) {
     if (!liveTables.has(table)) throw new Error(`backup contains unknown table: ${table}`);
+    if (!Array.isArray(dump.tables[table])) throw new Error(`backup table is not an array: ${table}`);
   }
+  for (const row of dump.tables.command_proposals || []) validateRestoredProposal(row);
 
   return withAtomicWrite(async () => {
     // Append-only Earned Equity tables allow restore's cycle repair only inside this transaction.
@@ -447,6 +476,11 @@ export async function restoreDatabase({ file, content } = {}) {
       const generated = await generatedColumns(table);
       const json = await jsonColumns(table);
       const deferredSelfReferences = [];
+      // Transactional DDL: rollback restores the trigger on any failure. Do not
+      // disable all triggers, FK checks, or change normal proposal-write behavior.
+      if (table === 'command_proposals') {
+        await query('ALTER TABLE command_proposals DISABLE TRIGGER command_proposals_contract');
+      }
 
       for (const { row, references } of rowsWithDeferredSelfReferences(rows, selfReferences)) {
         if (references.length > 0) {
@@ -479,6 +513,10 @@ export async function restoreDatabase({ file, content } = {}) {
           `WHERE id = $${deferred.references.length + 1}`,
           [...deferred.references.map(reference => reference.value), deferred.id],
         );
+      }
+
+      if (table === 'command_proposals') {
+        await query('ALTER TABLE command_proposals ENABLE TRIGGER command_proposals_contract');
       }
 
       // Sequence-backed ordering columns: id (serial) and seq (identity).
