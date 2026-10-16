@@ -621,7 +621,7 @@ export async function setOngoingIntake({ workspaceId, enabled }) {
 // Deletes every giving record for the workspace. Investment data is untouched.
 export async function resetGiving({ workspaceId }) {
   const workspace = ws(workspaceId);
-  const tables = ['giving_settings', 'giving_request_evaluations', 'giving_org_reviews', 'giving_snapshots', 'giving_transitions', 'giving_lens_versions', 'giving_budgets', 'giving_source_items', 'giving_refunds',
+  const tables = ['giving_daf_plans', 'giving_daf_balances', 'giving_settings', 'giving_request_evaluations', 'giving_org_reviews', 'giving_snapshots', 'giving_transitions', 'giving_lens_versions', 'giving_budgets', 'giving_source_items', 'giving_refunds',
     'giving_gifts', 'giving_pledges', 'giving_requests', 'giving_daf_contributions', 'giving_sources', 'giving_organizations', 'giving_household_members'];
   const counts = {};
   for (const table of tables) counts[table] = (await query(`DELETE FROM ${table} WHERE workspace_id = $1 RETURNING 1`, [workspace])).length;
@@ -631,7 +631,7 @@ export async function resetGiving({ workspaceId }) {
 export async function exportGiving({ workspaceId }) {
   const workspace = ws(workspaceId);
   const tables = ['giving_household_members', 'giving_organizations', 'giving_sources', 'giving_source_items', 'giving_requests', 'giving_pledges',
-    'giving_gifts', 'giving_refunds', 'giving_daf_contributions', 'giving_lens_versions', 'giving_budgets', 'giving_snapshots', 'giving_transitions', 'giving_org_reviews', 'giving_request_evaluations', 'giving_settings'];
+    'giving_gifts', 'giving_refunds', 'giving_daf_contributions', 'giving_daf_balances', 'giving_daf_plans', 'giving_lens_versions', 'giving_budgets', 'giving_snapshots', 'giving_transitions', 'giving_org_reviews', 'giving_request_evaluations', 'giving_settings'];
   const out = { format: 'radar-giving-export/v1', exported_at: new Date().toISOString(), tables: {} };
   for (const table of tables) out.tables[table] = await query(`SELECT * FROM ${table} WHERE workspace_id = $1`, [workspace]);
   return out;

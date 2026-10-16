@@ -1,6 +1,6 @@
 {
   "name": "radar",
-  "version": "2.4.3",
+  "version": "2.4.4-daffy.1",
   "description": "Decision infrastructure for private market investors. Portfolio tracking, thesis management, deal pipeline, and bet sizing.",
   "type": "module",
   "license": "MIT",
@@ -31,7 +31,7 @@
     "test:funds": "node src/models/test-funds.js",
     "test:funds-migration": "node src/models/test-funds-migration.js",
     "test:employment-equity-audit": "node src/models/test-employment-equity-audit.js",
-    "test:giving": "node src/giving/test-giving-core.js && node src/giving/test-giving-upload.js && node src/giving/test-giving-timezone.js && node src/giving/test-giving-reviews.js && node src/commands/test-giving-commands.js && node src/giving/test-giving-release.js",
+    "test:giving": "node src/giving/test-giving-core.js && node src/giving/test-giving-upload.js && node src/giving/test-giving-timezone.js && node src/giving/test-giving-reviews.js && node src/commands/test-giving-commands.js && node src/giving/test-giving-release.js && node src/giving/test-giving-daf.js",
     "test:angel-evaluations": "node src/models/test-angel-evaluations.js && node src/commands/test-angel-evaluation-commands.js",
     "test:earned-equity-core": "node --test packages/earned-equity-core/test/*.test.mjs",
     "test:earned-equity-opportunities": "node src/models/test-earned-equity-opportunities.js && node src/commands/test-earned-equity-commands.js",

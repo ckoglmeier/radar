@@ -1,3 +1,4 @@
+import { recordDafBalance, saveDafPlan } from '../models/giving-daf.js';
 import { writeCapabilities } from '../db/index.js';
 import { buildUploadItems, parseGivingImport } from '../giving/import.js';
 import {
@@ -365,6 +366,37 @@ export const givingCommandDefinitions = [
       const parsed = parseGivingImport(sampleBatch());
       return importSource({ workspaceId, source: { ...parsed.source, label: `Sample batch (simulation) ${new Date().toISOString().slice(0, 10)}` }, items: parsed.items });
     },
+  }),
+  command({
+    name: 'giving.record_daf_balance',
+    title: 'Record Daffy balance',
+    description: 'Save a dated Daffy fund balance for planning. Does not record a gift or move money.',
+    properties: { balance: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        account_ref: text(128), account_name: text(160), currency: { const: 'USD' },
+        source: { enum: ['daffy_api', 'manual'] }, as_of: { type: 'string', format: 'date' },
+        total_cents: { type: 'integer', minimum: 0 }, available_cents: { type: 'integer', minimum: 0 },
+        invested_cents: { type: ['integer', 'null'], minimum: 0 }, pending_cents: { type: ['integer', 'null'], minimum: 0 },
+      }, required: ['account_ref','account_name','currency','source','as_of','total_cents','available_cents'],
+    } },
+    required: ['balance'], target: async () => giving,
+    summary: ({ input }) => `Record the Daffy balance for ${input.balance.account_name}.`,
+    apply: (input, workspaceId) => recordDafBalance({ workspaceId, balance: input.balance }),
+  }),
+  command({
+    name: 'giving.save_daf_plan', title: 'Save Daffy giving plan',
+    description: 'Save a scenario tied to a dated Daffy balance. No grants are made.',
+    properties: { balanceId: idText, assumptions: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        years: { type: 'integer', minimum: 1, maximum: 50 },
+        annual_giving_cents: { type: 'integer', minimum: 0 }, annual_contribution_cents: { type: 'integer', minimum: 0 },
+        net_return_bps: { type: 'integer', minimum: -10000, maximum: 2000 }, giving_growth_bps: { type: 'integer', minimum: 0, maximum: 2000 },
+      }, required: ['years','annual_giving_cents','annual_contribution_cents','net_return_bps','giving_growth_bps'],
+    } }, required: ['balanceId','assumptions'], target: async () => giving,
+    summary: () => 'Save a long-term Daffy giving scenario.',
+    apply: (input, workspaceId) => saveDafPlan({ workspaceId, balanceId: input.balanceId, assumptions: input.assumptions }),
   }),
   command({
     name: 'giving.reset',

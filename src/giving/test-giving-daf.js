@@ -1,0 +1,76 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { closeDb, query, withTenant } from '../db/index.js';
+import { runMigrations } from '../db/migrate.js';
+import { createDatabaseBackupPayload, restoreDatabase } from '../db/backup.js';
+import { planCommandProposal, authorizeCommandProposal } from '../commands/service.js';
+import { getDafBalance, latestDafPlan, listDafAccounts, listDafBalanceHistory } from '../models/giving-daf.js';
+import { exportGiving, resetGiving, givingReport } from '../models/giving.js';
+import { projectDafPlan, validateDafBalance } from './daf.js';
+const root = mkdtempSync(join(tmpdir(), 'radar-daf-test-'));
+const assumptions = { years: 10, annual_giving_cents: 1000000, annual_contribution_cents: 0, net_return_bps: 0, giving_growth_bps: 0 };
+const balance = { account_ref: '123', account_name: 'Synthetic family fund', source: 'daffy_api', currency: 'USD', as_of: '2026-01-01', total_cents: 10500000, available_cents: 10000000, pending_cents: 500000, invested_cents: 10000000 };
+const projection = projectDafPlan(balance, assumptions);
+assert.equal(projection.ending_cents, 0);
+assert.equal(projectDafPlan({ available_cents: 100000 }, { ...assumptions, years: 1, annual_giving_cents: 10000, annual_contribution_cents: 5000, net_return_bps: 500 }).ending_cents, 99750);
+assert.equal(projectDafPlan({ available_cents: 100000 }, { ...assumptions, years: 3, annual_giving_cents: 10000, giving_growth_bps: 1000 }).total_grants_cents, 33100);
+assert.equal(projection.first_shortfall_year, null);
+assert.equal(projection.total_grants_cents, 10000000);
+assert.equal(projectDafPlan(balance, { ...assumptions, years: 11 }).first_shortfall_year, 11);
+assert.equal(projectDafPlan(balance, { ...assumptions, annual_contribution_cents: 1000000 }).ending_cents, 10000000);
+assert.equal(projectDafPlan(balance, { ...assumptions, years: 2, net_return_bps: -10000 }).first_shortfall_year, 2);
+assert.equal(projectDafPlan({ available_cents: 0 }, { ...assumptions, annual_giving_cents: 0 }).total_shortfall_cents, 0);
+assert.throws(() => projectDafPlan(balance, { ...assumptions, net_return_bps: NaN }));
+assert.throws(() => projectDafPlan(balance, { ...assumptions, annual_giving_cents: Number.MAX_SAFE_INTEGER, giving_growth_bps: 2000 }));
+assert.throws(() => validateDafBalance({ ...balance, as_of: '2026-02-30' }));
+assert.throws(() => validateDafBalance({ ...balance, as_of: '2099-01-01' }));
+assert.throws(() => validateDafBalance({ ...balance, available_cents: 20000000 }));
+assert.throws(() => validateDafBalance({ ...balance, currency: 'EUR' }));
+let counter = 0;
+async function run(name, input, workspaceId = 'local') {
+  const p = await planCommandProposal([{ name, input: { ...input, workspaceId, requestId: `daf-${++counter}` } }], { originSurface: 'manual_ui', actorType: 'user', actorId: 'test' });
+  const r = await authorizeCommandProposal(p.proposal.id, p.proposal.command_set_hash, { authorizationKind: 'manual_ui', actorType: 'user', actorId: 'test', actorCapabilities: ['portfolio:apply:metadata', 'portfolio:apply:additive', 'portfolio:apply:destructive'] });
+  assert.equal(r.status, 'applied');
+  return r.receipt.commands[0].result;
+}
+let backup, savedId, planId;
+try {
+  await withTenant(`file:${join(root, 'source')}`, async () => {
+    await runMigrations();
+    await query("INSERT INTO investments(company_name, asset_class, source) VALUES ('Protected DAF test investment','direct','test')");
+    const protectedRows = await query('SELECT * FROM investments');
+    const saved = await run('giving.record_daf_balance', { balance }); savedId = saved.id;
+    assert.equal((await listDafAccounts({ workspaceId: 'local' }))[0].id, saved.id);
+    await run('giving.record_daf_balance', { balance: { ...balance, as_of: '2025-01-01', available_cents: 1 } });
+    assert.equal((await listDafAccounts({ workspaceId: 'local' }))[0].id, saved.id, 'older import cannot replace current balance');
+    assert.equal((await listDafBalanceHistory({ workspaceId: 'local', accountRef: '123' })).length, 2);
+    assert.equal(await getDafBalance({ workspaceId: 'other', balanceId: saved.id }), undefined);
+    await assert.rejects(run('giving.save_daf_plan', { balanceId: saved.id, assumptions }, 'other'), /not found/i);
+    const plan = await run('giving.save_daf_plan', { balanceId: saved.id, assumptions }); planId = plan.id;
+    assert.deepEqual((await latestDafPlan({ workspaceId: 'local', accountRef: '123' })).projection, projection);
+    await run('giving.record_daf_balance', { balance: { ...balance, as_of: '2026-02-01', available_cents: 9000000 } });
+    assert.equal((await latestDafPlan({ workspaceId: 'local', accountRef: '123' })).balance_id, saved.id, 'saved plan keeps original evidence');
+    await assert.rejects(query('UPDATE giving_daf_balances SET available_cents=0 WHERE id=$1', [saved.id]), /immutable/);
+    await assert.rejects(query('UPDATE giving_daf_plans SET assumptions=\'{}\'::jsonb WHERE id=$1', [plan.id]), /immutable/);
+    const report = await givingReport({ workspaceId: 'local', asOf: '2026-10-16' });
+    assert.equal(report.totals.reduce((n, r) => n + r.net_cents, 0), 0, 'DAF assets and scenario grants are not historical gifts');
+    assert.equal((await query('SELECT COUNT(*)::int AS n FROM giving_daf_contributions'))[0].n, 0);
+    assert.deepEqual(await query('SELECT * FROM investments'), protectedRows);
+    backup = await createDatabaseBackupPayload({ includeLocalOnly: true });
+  });
+  await closeDb();
+  await withTenant(`file:${join(root, 'restored')}`, async () => {
+    await runMigrations(); await restoreDatabase({ content: backup.content });
+    assert.equal((await getDafBalance({ workspaceId: 'local', balanceId: savedId })).available_cents, balance.available_cents);
+    assert.equal((await latestDafPlan({ workspaceId: 'local', accountRef: '123' })).id, planId);
+    const exported = await exportGiving({ workspaceId: 'local' });
+    assert.equal(exported.tables.giving_daf_balances.length, 3); assert.equal(exported.tables.giving_daf_plans.length, 1);
+    await assert.rejects(query('UPDATE giving_daf_plans SET assumptions=\'{}\'::jsonb'), /immutable/);
+    await resetGiving({ workspaceId: 'local' });
+    assert.equal((await listDafAccounts({ workspaceId: 'local' })).length, 0);
+    assert.equal((await query('SELECT COUNT(*)::int AS n FROM investments'))[0].n, 1);
+  });
+  console.log('giving DAF: projections, command authorization, workspace isolation, immutable evidence, historical boundaries, backup/restore and reset passed');
+} finally { await closeDb(); rmSync(root, { recursive: true, force: true }); }

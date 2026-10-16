@@ -89,6 +89,8 @@ const INSERT_ORDER = [
   'giving_org_reviews',
   'giving_request_evaluations',
   'giving_settings',
+  'giving_daf_balances',
+  'giving_daf_plans',
   'council_run_events',
   'council_run_dispatch',
   'deal_evaluations',
