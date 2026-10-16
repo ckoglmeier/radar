@@ -469,6 +469,7 @@ export async function restoreDatabase({ file, content } = {}) {
     }
 
     const restored = [];
+    const deferredThreadRequests = [];
     for (const table of restoreTables) {
       const rows = dump.tables[table];
       if (!Array.isArray(rows)) throw new Error(`backup table is not an array: ${table}`);
@@ -483,6 +484,12 @@ export async function restoreDatabase({ file, content } = {}) {
       }
 
       for (const { row, references } of rowsWithDeferredSelfReferences(rows, selfReferences)) {
+        // Threads own messages, while a thread's active request points back to
+        // one message. Restore that nullable edge only after all messages exist.
+        if (table === 'command_threads' && row.active_request_id != null) {
+          deferredThreadRequests.push({ id: row.id, requestId: row.active_request_id });
+          row.active_request_id = null;
+        }
         if (references.length > 0) {
           if (row.id == null) throw new Error(`self-referencing backup table has no id: ${table}`);
           deferredSelfReferences.push({ id: row.id, references });
@@ -540,6 +547,9 @@ export async function restoreDatabase({ file, content } = {}) {
         }
       }
       restored.push({ table, rows: rows.length });
+    }
+    for (const { id, requestId } of deferredThreadRequests) {
+      await query('UPDATE command_threads SET active_request_id = $2 WHERE id = $1', [id, requestId]);
     }
 
     return {
