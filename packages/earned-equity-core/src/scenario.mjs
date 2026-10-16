@@ -7,7 +7,7 @@ import { sortedUnique } from './canonical-json.mjs';
 import { Q, ZERO, formatQ } from './rational.mjs';
 import { vestedFractionAt, vestingErrors } from './vesting.mjs';
 
-export const CALCULATOR_VERSION = 'earned-equity-core/1.1.1';
+export const CALCULATOR_VERSION = 'earned-equity-core/1.2.0';
 const ONE = Q.int(1);
 const money = (q) => formatQ(q, 2);
 const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -56,6 +56,10 @@ function validate(group, offer, set) {
   if (!isValidIsoDate(group.startDate)) err(errors, 'group.startDate', 'invalid_date', 'Group startDate is not a valid calendar date.');
   if (!Number.isInteger(group.horizonMonths) || group.horizonMonths < 1) err(errors, 'group.horizonMonths', 'invalid_horizon', 'horizonMonths must be a positive integer.');
   if (!isValidIsoDate(offer.asOfDate)) err(errors, 'offerRevision.asOfDate', 'invalid_date', 'asOfDate must be a valid calendar date.');
+  for (const key of ['fmv409AAsOf', 'lastRoundDate']) {
+    const v = readFact(offer.valuationContext?.[key], key, { allowResearched: true });
+    checkDate(errors, `offerRevision.valuationContext.${key}`, v.value);
+  }
   if (!offer.cash || typeof offer.cash !== 'object') {
     err(errors, 'offerRevision.cash', 'missing_input', 'cash is required.');
     return errors;

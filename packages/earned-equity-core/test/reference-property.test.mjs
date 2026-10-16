@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateOffer } from '../index.mjs';
+import { calculateOffer, sensitivityGrid } from '../index.mjs';
 import { am, predictErrors, reference } from './fixtures/reference.mjs';
 
 // Seeded LCG so the cases are reproducible.
@@ -107,7 +107,7 @@ test('property: calculator agrees EXACTLY with the independent rational referenc
   const rng = makeRng(20261015);
   let agreed = 0;
   let generated = 0;
-  const stats = { net: 0, be: 0, residual: 0, nullNet: 0 };
+  const stats = { net: 0, be: 0, residual: 0, nullNet: 0, gridCells: 0 };
   let errorCases = 0;
   while (agreed < 600 && generated < 6000) {
     generated += 1;
@@ -138,9 +138,35 @@ test('property: calculator agrees EXACTLY with the independent rational referenc
       });
     });
     assert.deepEqual(got.result.weighted, ref.weighted, `case ${generated} weighted`);
+    if (generated % 3 === 0) {
+      // Sample grid cells against the independent reference on the equivalent single scenario.
+      const prices = ['3.5', '12'];
+      const years = [2, 5];
+      const grid = sensitivityGrid({ ...input, baseScenarioId: 's0', prices, years });
+      assert.equal(grid.ok, true, JSON.stringify(grid.errors));
+      const base = input.scenarioSet.scenarios[0];
+      prices.forEach((price, i) => years.forEach((y, j) => {
+        const months = y * 12;
+        const cell = grid.grid.cells[i][j];
+        if (base.exercisePath.kind === 'at_date' && base.exercisePath.exerciseMonthsFromStart > months) {
+          assert.equal(cell.netPreTax, null);
+          return;
+        }
+        const scenario = {
+          ...base, scenarioId: 'c', weightPct: null,
+          payout: { method: 'common_per_share', commonProceedsPerShare: price, source: 's', asOfDate: input.group.startDate },
+          liquidity: { occurs: true, monthsFromStart: months },
+        };
+        const cellInput = { group: { ...input.group, horizonMonths: Math.max(input.group.horizonMonths, months) }, offerRevision: input.offerRevision, scenarioSet: { ...input.scenarioSet, scenarios: [scenario] } };
+        const r = reference(cellInput).scenarios[0];
+        assert.equal(cell.netPreTax, r.netPreTax, `case ${generated} grid ${price}/${y} net`);
+        if (input.group.discountRateAnnual !== null) assert.equal(cell.npv, r.npv, `case ${generated} grid ${price}/${y} npv`);
+        stats.gridCells += 1;
+      }));
+    }
     agreed += 1;
   }
   assert.ok(agreed >= 500);
   assert.ok(errorCases >= 30, `error cases: ${errorCases}`);
-  assert.ok(stats.net >= 150 && stats.be >= 40 && stats.residual >= 40 && stats.nullNet >= 20, JSON.stringify(stats));
+  assert.ok(stats.net >= 150 && stats.be >= 40 && stats.residual >= 40 && stats.nullNet >= 20 && stats.gridCells >= 400, JSON.stringify(stats));
 });

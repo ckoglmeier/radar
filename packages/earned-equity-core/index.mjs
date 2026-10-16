@@ -5,3 +5,5 @@ export { validateSelection } from './src/selection.mjs';
 export { vestedUnitsAt } from './src/vesting.mjs';
 export { addMonths } from './src/dates.mjs';
 export { canonicalJson } from './src/canonical-json.mjs';
+export { relativePosition } from './src/relative.mjs';
+export { sensitivityGrid } from './src/sensitivity.mjs';

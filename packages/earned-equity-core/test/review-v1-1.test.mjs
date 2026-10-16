@@ -9,10 +9,10 @@ const none = { liquidity: { occurs: false, monthsFromStart: null }, payout: { me
 const t0 = { commencementDate: f('2026-01-15'), totalMonths: 0, cliffMonths: 0, cadence: 'monthly', acceleration: 'none' };
 const calc = (group, offerRevision, scenarioSet) => calculateOffer({ group, offerRevision, scenarioSet });
 
-test('version is 1.1.1 and results carry their basis (A2)', () => {
-  assert.equal(CALCULATOR_VERSION, 'earned-equity-core/1.1.1');
+test('version is 1.2.0 and results carry their basis (A2)', () => {
+  assert.equal(CALCULATOR_VERSION, 'earned-equity-core/1.2.0');
   const r = run({ group: makeGroup({ discountRateAnnual: '0.1' }) });
-  assert.equal(r.calculatorVersion, 'earned-equity-core/1.1.1');
+  assert.equal(r.calculatorVersion, 'earned-equity-core/1.2.0');
   assert.deepEqual(r.basis, { currency: 'USD', startDate: '2026-01-15', horizonMonths: 48, discountRateAnnual: '0.1' });
 });
 
@@ -172,7 +172,7 @@ test('F10: impossible dates give structured errors; malformed compare does not t
   assert.equal(validateSelection({ group: makeGroup(), opportunities: 'x', offerRevisions: null, selectedOfferRevisionIds: 5 }).ok, false);
 });
 
-// ---- v1.1.1 (round 4): N1 / A4a, A3a, M1 and M2 / A9a, M3 / A10 ----
+// ---- v1.2.0 (round 4): N1 / A4a, A3a, M1 and M2 / A9a, M3 / A10 ----
 
 test('N1: known zero units give 0.00 even when the ownership percentage is unusable', () => {
   const own = { method: 'pro_rata_ownership', equityExitValue: '1000000000', dilutionRounds: [] };
