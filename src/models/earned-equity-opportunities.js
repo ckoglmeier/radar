@@ -311,7 +311,7 @@ export function checkDecisionShape(payload) {
   if (payload.outcome !== 'selected' && selected.length > 0) {
     throw new EarnedEquityError('invalid_decision', `Outcome "${payload.outcome}" cannot select an offer revision.`);
   }
-  if (payload.gates.participation === 'learning_led_user_choice' && !payload.learningJudgment) {
+  if (payload.gates?.participation === 'learning_led_user_choice' && !payload.learningJudgment) {
     throw new EarnedEquityError('learning_judgment_required', 'A learning-led choice needs the user\'s learning judgment; Radar never infers it.');
   }
 }

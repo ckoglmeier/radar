@@ -185,6 +185,11 @@ try {
     await assert.rejects(recordDecision(pick('d0', 'g1', [winner], { comparedSnapshotIds: ['ghost'] })), /snapshot/);
     await assert.rejects(recordDecision(pick('d0', 'g1', [winner], { gates: { business: 'supported', participation: 'learning_led_user_choice' } })), code('learning_judgment_required'));
     await assert.rejects(recordDecision(pick('d0', 'g1', [winner], { gates: { business: 'supported', participation: 'learning_led_user_choice' }, learningJudgment: null })), code('learning_judgment_required'));
+    // v1.2: decisions no longer carry gates; a gate-less decision must record cleanly.
+    const gateless = pick('d-gateless', 'g1', [winner]);
+    delete gateless.gates;
+    const recordedGateless = await recordDecision(gateless);
+    assert.equal(recordedGateless.payload?.gates ?? recordedGateless.gates, undefined);
     await assert.rejects(recordDecision({ ...pick('d0', 'g1', [winner]), outcome: 'maybe' }), code('invalid_payload'));
     // Two revisions of one opportunity: r1 is superseded, so exercise the same-opportunity rule in an advisory group.
     await addOfferRevision(revision('r-a1b', 'a1', 'r-a1'));
