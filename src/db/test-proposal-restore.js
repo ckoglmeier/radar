@@ -10,7 +10,7 @@ import { createCommandProposal } from '../models/command-proposals.js';
 const root = mkdtempSync(join(tmpdir(), 'radar-proposal-restore-'));
 const statuses = ['proposed', 'applied', 'rejected', 'stale', 'failed', 'superseded'];
 try {
-  let content, expected, expectedThreads, expectedMessages;
+  let content, expected, expectedThreads, expectedMessages, expectedTimestamp;
   await withTenant(`file:${join(root, 'source')}`, async () => {
     await runMigrations();
     let previous;
@@ -20,9 +20,11 @@ try {
       previous = proposal.id;
     }
     const [thread] = await query("INSERT INTO command_threads (title) VALUES ('Synthetic restore thread') RETURNING id");
+    await query("UPDATE command_threads SET created_at='2026-01-02T03:04:05.123456Z' WHERE id=$1", [thread.id]);
     const [message] = await query("INSERT INTO command_messages (thread_id, role, content) VALUES ($1, 'user', 'Synthetic request') RETURNING id", [thread.id]);
     await query("UPDATE command_threads SET active_request_id=$2, active_request_state='completed', active_request_stage='complete' WHERE id=$1", [thread.id, message.id]);
     expectedThreads = await query('SELECT * FROM command_threads ORDER BY id');
+    expectedTimestamp = await query('SELECT created_at::text FROM command_threads ORDER BY id');
     expectedMessages = await query('SELECT * FROM command_messages ORDER BY id');
     expected = await query('SELECT * FROM command_proposals ORDER BY id');
     ({ content } = await createDatabaseBackupPayload({ includeLocalOnly: true }));
@@ -33,6 +35,7 @@ try {
     await restoreDatabase({ content });
     assert.deepEqual(await query('SELECT * FROM command_proposals ORDER BY id'), expected, 'all lifecycle states, timestamps and supersession links preserved');
     assert.deepEqual(await query('SELECT * FROM command_threads ORDER BY id'), expectedThreads);
+    assert.deepEqual(await query('SELECT created_at::text FROM command_threads ORDER BY id'), expectedTimestamp, 'microsecond audit timestamps preserved');
     assert.deepEqual(await query('SELECT * FROM command_messages ORDER BY id'), expectedMessages);
     const assertGuards = async () => {
       assert.equal((await query("SELECT tgenabled FROM pg_trigger WHERE tgname='command_proposals_contract'"))[0].tgenabled, 'O');

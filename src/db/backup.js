@@ -302,7 +302,15 @@ export async function createDatabaseBackupPayload({ includeLocalOnly = false } =
 
   let totalRows = 0;
   for (const table of ordered) {
-    const rows = await query(`SELECT * FROM ${table}`);
+    // JavaScript Date truncates PostgreSQL's microseconds. Export timestamps as
+    // database text so a restore preserves the original audit chronology exactly.
+    const columns = await query(`SELECT column_name, data_type FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position`, [table]);
+    const projection = columns.map(({ column_name, data_type }) => {
+      const name = quoteIdentifier(column_name);
+      return data_type.startsWith('timestamp') ? `${name}::text AS ${name}` : name;
+    }).join(', ');
+    const rows = await query(`SELECT ${projection} FROM ${quoteIdentifier(table)}`);
     dump.tables[table] = rows.map(encodeValue);
     totalRows += rows.length;
   }
