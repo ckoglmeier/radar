@@ -119,3 +119,61 @@ Also applies to every new table:
 **Comparison and decisions**
 - There is no composite winner. The comparison shows rows and crossovers only.
 - An accepted decision never displays as vested holdings.
+
+## Gate rules v2 (2026-10-15, after the expanded live evaluation)
+
+Evidence from the expanded run:
+- The business gate agreed across reps for only 2 of 6 real companies on live research. Frozen-evidence companies were stable.
+- Gate 2 was never decisive (unresolved in 30 of 30 memos).
+
+From now on, the model supplies findings and prose, and Radar computes both gates in code. The model's own proposal is kept only as `modelProposed`, for transparency.
+
+### Gate 1 (business): a deterministic function of the calibrated findings
+
+**Core dimensions** are the rubric rows:
+- `weak_retention_unproven_demand` (demand)
+- `paid_channel_dependent_growth` (growth quality)
+- `weak_contribution_economics` (unit economics)
+- `short_runway_high_burn` (runway)
+
+**Coverage rule.** The calibrator must return at least one finding for each core row. If evidence is lacking, the finding uses `evidenceState: unavailable` and `direction: unknown`. Missing coverage is a validation error with one repair.
+
+**Dimension state.** "Sufficient" means `supplied` or `verified` evidence.
+
+| State | Condition |
+| --- | --- |
+| `positive` | ≥1 `strengthens` finding with sufficient evidence, and no uncountered `weakens` finding with sufficient evidence |
+| `negative` | ≥1 `weakens` finding with sufficient evidence and uncertainty not `high`, and no `strengthens` finding with sufficient evidence |
+| `mixed` | Both of the above present |
+| `unknown` | Anything else |
+
+**Gate.**
+- **`failed`**: demand is `negative` AND (unit economics OR runway is `negative`).
+- **`supported`**: all of the following:
+  - demand is `positive`;
+  - unit economics OR runway is `positive`;
+  - no core dimension is `negative`;
+  - no unmet stage cap;
+  - evidence confidence is not `low`.
+- **`unresolved`** (presented as "investigate"): otherwise.
+
+**Recorded output.** The artifact records `gateBasis`, a map from dimension to `{state, findingIds}`, plus `modelProposed` and `rulesVersion: "gate-rules-v2"`. `rulesVersion` folds into the run key.
+
+### Gate 2 (participation): a deterministic function of the calculator result
+
+The memo model no longer chooses gate 2. Code computes it and passes it into the memo packet, and the model explains it. A model `gate2.proposal` that differs from the computed value is overwritten and recorded as an adjustment.
+
+1. **`unresolved` when the inputs are structurally incomplete**:
+   - the baseline is missing (cash differences are null);
+   - any grant is unsupported (`instrument_unsupported:*`);
+   - or the equity outcome is null in the base or upside scenario because of missing units, strike or exercise terms.
+2. **Weighted case.** If `weighted` is non-null (the user's weights sum to 100): `expectedNetPreTax > 0` gives `financially_attractive`; otherwise `not_attractive`.
+3. **Unweighted case.**
+   - Base scenario `netPreTax > 0` gives `financially_attractive`.
+   - Else, the upside scenario exists and its `netPreTax ≤ 0` gives `not_attractive`: even the upside does not recover the cash forgone.
+   - Else `unresolved`, with the reason "Depends on whether the upside occurs. Add scenario weights to decide."
+4. **Standing limitations never force `unresolved` by themselves.** These are `pre_tax_only`, `excludes_preferences`, `post_service_cash_unmodeled`, `discount_rate_missing`, `bonus_uncertain`, `no_liquidity_in_horizon` (on a failure or no-liquidity scenario) and `vesting_final_event_off_cadence`. The memo still states them.
+
+`learning_led_user_choice` remains user-only, set in the decision.
+
+v1 threshold: "attractive" means net positive against the baseline. That is a deliberate, simple v1 rule; owner review may raise it (for example, requiring the base net to exceed a multiple of the cash forgone).
