@@ -6,7 +6,7 @@ export const SCHEMA_VERSION = 1;
 
 export const VALUE_STATES = Object.freeze([
   'confirmed_by_user', 'supported_by_document', 'user_reported',
-  'illustrative', 'conflicting', 'missing', 'not_applicable',
+  'illustrative', 'conflicting', 'missing', 'not_applicable', 'researched_unconfirmed',
 ]);
 
 const id = { type: 'string', minLength: 1, maxLength: 128 };
@@ -166,6 +166,19 @@ export const offerRevisionSchema = {
     },
     serviceStartDate: fact(date),
     grants: { type: 'array', maxItems: 20, items: grantComponentSchema },
+    valuationContext: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        preferredPricePerShare: fact(nonNegativeDecimal),
+        postMoneyValuation: fact(nonNegativeDecimal),
+        fullyDilutedShares: fact(units),
+        fmv409APerShare: fact(nonNegativeDecimal),
+        fmv409AAsOf: fact(date),
+        lastRoundDate: fact(date),
+        seniorClaimsAmount: fact(nonNegativeDecimal),
+        preferenceTerms: fact({ type: 'string', maxLength: 500 }),
+      },
+    },
     note,
   },
 };
@@ -253,7 +266,7 @@ export const scenarioSetSchema = {
 export const decisionRecordSchema = {
   $id: 'earned-equity/decision-record.v1',
   type: 'object', additionalProperties: false,
-  required: ['schemaVersion', 'id', 'groupId', 'comparedSnapshotIds', 'selectedOfferRevisionIds', 'outcome', 'rationale', 'acknowledgedRisks', 'gates'],
+  required: ['schemaVersion', 'id', 'groupId', 'comparedSnapshotIds', 'selectedOfferRevisionIds', 'outcome', 'rationale', 'acknowledgedRisks'],
   properties: {
     schemaVersion: { const: 1 },
     id,
@@ -263,6 +276,7 @@ export const decisionRecordSchema = {
     outcome: { type: 'string', enum: ['selected', 'stay_put', 'decline_all', 'deferred'] },
     rationale: { type: 'string', maxLength: 5000 },
     acknowledgedRisks: { type: 'array', maxItems: 50, items: { type: 'string', maxLength: 500 } },
+    // Deprecated (v1.2): kept only so earlier decisions still validate; new decisions omit it.
     gates: {
       type: 'object', additionalProperties: false, required: ['business', 'participation'],
       properties: {
