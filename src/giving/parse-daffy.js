@@ -12,7 +12,7 @@
 // rule (every literal appears in the excerpt) holds. Unrecognized Daffy mail returns null.
 
 const FOOTER = /\n-{3,}\s*\n[\s\S]*Daffy Charitable Fund is recognized[\s\S]*$/;
-const MONEY = /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\$\s?\d+(?:\.\d{2})?/;
+const MONEY = /\$\s?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2})?(?![\d,]|\.\d)/;
 const EIN = /\b\d{2}-\d{7}\b/;
 
 export function isDaffyEmail({ from = '', text = '' } = {}) {

@@ -16,7 +16,10 @@ const actorCapabilities = ['portfolio:apply:additive', 'portfolio:apply:metadata
 try {
   await withTenant(databaseUrl, async () => {
     await runMigrations();
-    assert.equal(commandMetadata().commands.length, 117);
+    assert.equal(commandMetadata().commands.length, 119);
+    for (const name of ['giving.record_daf_balance', 'giving.save_daf_plan']) {
+      assert.ok(commandMetadata().commands.some(command => command.name === name), `${name} registered`);
+    }
 
     const [direct] = await query(`
       INSERT INTO investments

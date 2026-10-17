@@ -55,6 +55,18 @@ Daffy has partnered with Chariot (<link>) to offer charities electronic donation
 
 ${FOOTER}`;
 
+for (const [literal, cents] of [['$1250.00', 125000], ['$1,250.00', 125000], ['$1234567.89', 123456789]]) {
+  for (const template of [receipt, sent]) {
+    const parsed = parseDaffyEmail({ text: template.replace('$2,500.00', literal) });
+    assert.equal(parsed.proposed.amount.cents, cents, 'complete monetary token');
+    assert.equal(parsed.proposed.amount.literal, literal);
+  }
+}
+for (const literal of ['$1,25.00', '$1250.123']) {
+  const parsed = parseDaffyEmail({ text: receipt.replace('$2,500.00', literal) });
+  assert.equal(parsed.proposed.amount.cents, null, 'malformed amount must not become a truncated value');
+}
+
 const recommendation = `Thank you for making your donation recommendation to ”Hillside Library Friends”!
 
 TAX-ID
