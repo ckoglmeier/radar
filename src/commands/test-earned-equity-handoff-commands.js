@@ -18,6 +18,13 @@ const hash = label => createHash('sha256').update(label).digest('hex');
 const actorCapabilities = ['portfolio:apply:additive', 'portfolio:apply:metadata', 'portfolio:apply:destructive'];
 const SECRET_TEXT = 'Your annual base salary is $187,654 and we grant 48,000 stock options at a strike of $1.37 per share.';
 const SECRET_FILE = 'confidential-offer-letter-zebra.txt';
+// Match complete numeric values, not incidental fragments of timestamps or IDs.
+const containsSecret = (text, secret) => /^\d/.test(secret)
+  ? new RegExp(`(?<![\\w.])${secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.])`).test(text)
+  : text.includes(secret);
+assert.equal(containsSecret('2026-10-16T10:11:21.370Z', '1.37'), false);
+assert.equal(containsSecret('strike of $1.37 per share', '1.37'), true);
+assert.equal(containsSecret('{"strike":1.37}', '1.37'), true);
 
 let seq = 0;
 const plan = (name, input) => planCommandProposal([{ name, input }], {
@@ -188,7 +195,7 @@ try {
       await query('SELECT * FROM command_proposals'), await query('SELECT * FROM command_receipts'),
     ]);
     for (const secret of ['187,654', '187654', '48,000', '1.37', 'annual base salary', SECRET_FILE, 'zebra']) {
-      assert.ok(!stored.includes(secret), `command records must not contain: ${secret}`);
+      assert.ok(!containsSecret(stored, secret), `command records must not contain: ${secret}`);
     }
     assert.ok(stored.includes('earned_equity.attach_offer_document'));
     console.log('Earned Equity handoff commands: PASS');
