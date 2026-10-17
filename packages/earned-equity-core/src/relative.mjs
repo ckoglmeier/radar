@@ -4,10 +4,26 @@ import { CALCULATOR_VERSION } from './scenario.mjs';
 import { readFact } from './facts.mjs';
 import { sortedUnique } from './canonical-json.mjs';
 import { Q, formatQ } from './rational.mjs';
+import { addMonths, isValidIsoDate } from './dates.mjs';
 
 export const SENIOR_CLAIMS_NOTE = 'Simplified as-converted figure: adds senior claims to the break-even equity value. It excludes participation, conversion and seniority detail.';
 
 const fail = (code, message, path = '') => ({ ok: false, errors: [{ path, code, message }] });
+
+// Older immutable snapshots do not carry comparisonMonths. Reconstruct only
+// from their recorded basis, using the same monthly horizon as calculateOffer.
+function comparisonMonths(base, scenario, result, offer) {
+  if (Number.isInteger(base.cash.comparisonMonths) && base.cash.comparisonMonths >= 0) return base.cash.comparisonMonths;
+  const basis = result.basis;
+  const start = readFact(offer.serviceStartDate, 'service_start').value;
+  if (!isValidIsoDate(start) || !isValidIsoDate(basis?.startDate) || !Number.isInteger(basis?.horizonMonths)) return null;
+  const end = addMonths(basis.startDate, basis.horizonMonths);
+  let months = 0;
+  for (let k = 0; addMonths(start, k) < end; k += 1) {
+    if (k < scenario.serviceMonths || scenario.postServiceAnnualCash != null) months += 1;
+  }
+  return months;
+}
 
 function ctxValue(vc, key, lim) {
   const r = readFact(vc?.[key], key, { allowResearched: true });
@@ -42,8 +58,9 @@ export function relativePosition(input) {
     const total = base.cash.totalCashDifference === null ? null : Q.of(base.cash.totalCashDifference);
     let perYear = null;
     if (total !== null) {
-      if (baseSet.serviceMonths > 0) perYear = total.mul(Q.int(12)).div(Q.int(baseSet.serviceMonths));
-      else lim.add('service_months_zero');
+      const months = comparisonMonths(base, baseSet, result, offer);
+      if (months > 0) perYear = total.mul(Q.int(12)).div(Q.int(months));
+      else lim.add('cash_comparison_duration_unknown');
     }
     const be = base.breakEvenCommonPrice === null ? null : Q.of(base.breakEvenCommonPrice);
     const preferred = ctxValue(vc, 'preferredPricePerShare', lim);

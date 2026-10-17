@@ -7,7 +7,7 @@ import { sortedUnique } from './canonical-json.mjs';
 import { Q, ZERO, formatQ } from './rational.mjs';
 import { vestedFractionAt, vestingErrors } from './vesting.mjs';
 
-export const CALCULATOR_VERSION = 'earned-equity-core/1.2.0';
+export const CALCULATOR_VERSION = 'earned-equity-core/1.2.1';
 const ONE = Q.int(1);
 const money = (q) => formatQ(q, 2);
 const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -466,6 +466,7 @@ function computeScenario(sc, ctx) {
     label: sc.label,
     kind: sc.kind,
     cash: {
+      comparisonMonths: nAll,
       offerBase: offerBase && money(offerBase), offerBonus: offerBonus && money(offerBonus),
       baselineBase: baselineBase && money(baselineBase), baselineBonus: baselineBonus && money(baselineBonus),
       baseDifference: baseDifference && money(baseDifference), totalCashDifference: totalCashDifference && money(totalCashDifference),

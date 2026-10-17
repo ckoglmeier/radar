@@ -20,10 +20,41 @@ const position = (offer, set = baseSet(), group = makeGroup()) => {
   return out.position;
 };
 
-test('version is 1.2.0 and valuation context validates against the schema', () => {
-  assert.equal(CALCULATOR_VERSION, 'earned-equity-core/1.2.0');
+test('version is 1.2.1 and valuation context validates against the schema', () => {
+  assert.equal(CALCULATOR_VERSION, 'earned-equity-core/1.2.1');
   const ajv = new Ajv({ strict: true, allErrors: true });
   assert.ok(ajv.compile(SCHEMAS.offerRevision)(withCtx(ctx)));
+});
+
+test('cash annualization uses the months actually included, not the intended service term', () => {
+  const group = makeGroup({ startDate: '2026-10-17', horizonMonths: 48,
+    baseline: { kind: 'current_role', annualBase: '150000', annualCashBonus: '0' } });
+  const offer = makeOffer({ serviceStartDate: f('2026-10-17'), grants: [],
+    cash: { annualBase: f('180000'), annualTargetBonus: f('0'), signingBonus: f('0'), signingRepaymentMonths: null } });
+  for (const [service, post, total, months, annual] of [
+    [24, null, '-60000.00', 24, '-30000.00'],
+    [48, null, '-120000.00', 48, '-30000.00'],
+    [60, null, '-120000.00', 48, '-30000.00'],
+    [24, '150000', '-60000.00', 48, '-15000.00'],
+    [24, '210000', '-180000.00', 48, '-45000.00'],
+    [0, '180000', '-120000.00', 48, '-30000.00'],
+    [0, null, '0.00', 0, null],
+  ]) {
+    const set = makeScenarioSet([makeScenario({ serviceMonths: service, postServiceAnnualCash: post,
+      payout: { method: 'none' }, liquidity: { occurs: false, monthsFromStart: null } })]);
+    const result = run({ group, offer, set });
+    assert.equal(result.scenarios[0].cash.comparisonMonths, months);
+    const args = { group, offerRevision: offer, scenarioSet: set, result };
+    assert.equal(relativePosition(args).position.cashGivenUpTotal, total);
+    assert.equal(relativePosition(args).position.cashGivenUpPerYear, annual);
+    // Immutable results generated before 1.2.1 can still be interpreted from their basis.
+    delete result.scenarios[0].cash.comparisonMonths;
+    assert.equal(relativePosition(args).position.cashGivenUpPerYear, annual);
+  }
+  const delayed = { ...offer, serviceStartDate: f('2027-10-17') };
+  const p = position(delayed, makeScenarioSet([makeScenario({ serviceMonths: 60 })]), group);
+  assert.equal(p.cashGivenUpTotal, '-90000.00');
+  assert.equal(p.cashGivenUpPerYear, '-30000.00');
 });
 
 test('relativePosition: hand-computed golden case', () => {

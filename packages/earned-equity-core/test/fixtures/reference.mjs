@@ -192,7 +192,7 @@ export function reference({ group, offerRevision: offer, scenarioSet }) {
         if (sol) be = fmt(sol, 6); else beCode = 'no_solution';
       }
     }
-    out.push({ scenarioId: sc.scenarioId, cash: { offerBase: fmt(offerBase, 2), offerBonus: fmt(offerBonus, 2), baselineBase: fmt(baselineBase, 2), baselineBonus: fmt(baselineBonus, 2), baseDifference: fmt(baseDiff, 2), totalCashDifference: fmt(tcd, 2) }, grants, maxCumulativeFundingNeed: fmt(funding, 2), netPreTax: fmt(net, 2), npv: fmt(npv, 2), breakEvenCommonPrice: be, _net: net, _beCode: beCode });
+    out.push({ scenarioId: sc.scenarioId, cash: { comparisonMonths: nServ + nPost, offerBase: fmt(offerBase, 2), offerBonus: fmt(offerBonus, 2), baselineBase: fmt(baselineBase, 2), baselineBonus: fmt(baselineBonus, 2), baseDifference: fmt(baseDiff, 2), totalCashDifference: fmt(tcd, 2) }, grants, maxCumulativeFundingNeed: fmt(funding, 2), netPreTax: fmt(net, 2), npv: fmt(npv, 2), breakEvenCommonPrice: be, _net: net, _beCode: beCode });
   }
   const ws = scenarioSet.scenarios.map((s) => s.weightPct);
   let weighted = null;

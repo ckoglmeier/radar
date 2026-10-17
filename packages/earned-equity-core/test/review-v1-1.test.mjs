@@ -9,10 +9,10 @@ const none = { liquidity: { occurs: false, monthsFromStart: null }, payout: { me
 const t0 = { commencementDate: f('2026-01-15'), totalMonths: 0, cliffMonths: 0, cadence: 'monthly', acceleration: 'none' };
 const calc = (group, offerRevision, scenarioSet) => calculateOffer({ group, offerRevision, scenarioSet });
 
-test('version is 1.2.0 and results carry their basis (A2)', () => {
-  assert.equal(CALCULATOR_VERSION, 'earned-equity-core/1.2.0');
+test('version is 1.2.1 and results carry their basis (A2)', () => {
+  assert.equal(CALCULATOR_VERSION, 'earned-equity-core/1.2.1');
   const r = run({ group: makeGroup({ discountRateAnnual: '0.1' }) });
-  assert.equal(r.calculatorVersion, 'earned-equity-core/1.2.0');
+  assert.equal(r.calculatorVersion, 'earned-equity-core/1.2.1');
   assert.deepEqual(r.basis, { currency: 'USD', startDate: '2026-01-15', horizonMonths: 48, discountRateAnnual: '0.1' });
 });
 

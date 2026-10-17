@@ -263,23 +263,28 @@ export async function createGift({ workspaceId, organization, gift }) {
   if (!VEHICLES.includes(vehicle)) throw invalid(`Unknown giving vehicle: ${vehicle}`, 'vehicle');
   let pledgeId = gift.pledge_id || null;
   let requestId = gift.request_id || null;
+  let purpose = optionalText(gift.purpose);
   if (requestId) {
     const request = await getRequest({ workspaceId: workspace, requestId });
     if (!request) throw new CommandError('TARGET_NOT_FOUND', 'Request not found.');
     if (!['approved', 'pledged'].includes(request.status)) throw invalid('Only an approved or pledged request can receive a payment.');
     if (request.organization_id !== org.id) throw invalid('The payment organization does not match the request.');
+    // Snapshot the approved request's purpose when the payment has no override.
+    // Subsequent request edits must not rewrite the paid gift's history.
+    purpose = purpose || optionalText(request.purpose);
     if (!pledgeId && request.status === 'pledged') pledgeId = (await query('SELECT id FROM giving_pledges WHERE request_id = $1', [request.id]))[0]?.id || null;
   }
   if (pledgeId) {
     const pledge = await getPledge({ workspaceId: workspace, pledgeId });
     if (!pledge) throw new CommandError('TARGET_NOT_FOUND', 'Pledge not found.');
     if (pledge.organization_id !== org.id) throw invalid('The payment organization does not match the pledge.');
+    purpose = purpose || optionalText(pledge.purpose);
     requestId = requestId || pledge.request_id || null;
   }
   const [row] = await query(`
     INSERT INTO giving_gifts (id, workspace_id, organization_id, member_id, purpose, restriction, amount_cents, currency, paid_on, vehicle, daf_provider, pledge_id, request_id)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *
-  `, [id(), workspace, org.id, await memberId(workspace, gift.member_id), optionalText(gift.purpose), optionalText(gift.restriction),
+  `, [id(), workspace, org.id, await memberId(workspace, gift.member_id), purpose, optionalText(gift.restriction),
     cents(gift.amount_cents, 'amount_cents'), gift.currency || 'USD', optionalDate(gift.paid_on, 'paid_on'), vehicle,
     vehicle === 'daf_grant' ? optionalText(gift.daf_provider, 80) || 'Daffy' : null, pledgeId, requestId]);
   await transition(workspace, 'gift', row.id, 'confirmed_paid', { to: 'paid', detail: { amount_cents: num(row.amount_cents), paid_on: day(row.paid_on), request_id: requestId, pledge_id: pledgeId } });

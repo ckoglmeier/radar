@@ -93,7 +93,8 @@ try {
     // Pledge with a partial payment.
     const capital = await run('giving.create_request', { organization: { id: maple.id }, request: { purpose: 'Capital campaign', requested_cents: 300000 } });
     await run('giving.decide_request', { giftRequestId: capital.id, status: 'pledged', decidedCents: 300000, rationale: 'Multi-year commitment' });
-    await run('giving.record_payment', { giftRequestId: capital.id, gift: { amount_cents: 100000, paid_on: '2026-09-01', purpose: 'Capital campaign', vehicle: 'direct' } });
+    const capitalPayment = await run('giving.record_payment', { giftRequestId: capital.id, gift: { amount_cents: 100000, paid_on: '2026-09-01', vehicle: 'direct' } });
+    assert.equal(capitalPayment.purpose, 'Capital campaign', 'payments inherit the approved request purpose without needing a hidden form field');
     const [pledge] = await listPledges({ workspaceId: 'local' });
     assert.equal(pledge.outstanding_cents, 200000);
     assert.equal(pledge.paid_cents, 100000);

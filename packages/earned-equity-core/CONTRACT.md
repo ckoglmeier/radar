@@ -315,7 +315,8 @@ All results are exact rationals and deterministic. There is no verdict field.
 
 **Cash given up**
 - `cashGivenUpTotal` is the base scenario's `totalCashDifference`.
-- `cashGivenUpPerYear` is that total divided by the base scenario's service years.
+- `cashGivenUpPerYear` is that total annualized over the monthly cash periods
+  actually included in the comparison horizon (including modeled post-service cash).
 
 **Break-even multiples**
 - `breakEvenCommonPrice` is the base scenario's break-even common price.
@@ -355,7 +356,14 @@ The grid is one two-way table of `netPreTax` by exit common price per share × y
 
 Cells that cannot be computed are `null` with a limitation. They are never zero.
 
-`CALCULATOR_VERSION` becomes `earned-equity-core/1.2.0`.
+`CALCULATOR_VERSION` is `earned-equity-core/1.2.1`.
+
+The annual cash comparison divides the horizon-bounded total by the number of
+monthly cash periods actually modeled, not the scenario's intended service
+term. `cash.comparisonMonths` records that basis, including post-service months
+only when post-service cash is supplied. Zero covered months produces an unknown
+annual figure. Pre-1.2.1 immutable results remain unchanged; their recorded
+comparison basis can be used to derive the same duration when displaying them.
 
 ### V4. Decision record
 
