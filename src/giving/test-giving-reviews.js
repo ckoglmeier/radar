@@ -32,7 +32,7 @@ dims[3].findings = [
   finding('Revenue of $4.2 million in 2023.', { provenance: 'regulatory_record', evidence_ids: ['registry:filing:2023'] }),
 ];
 const review = validateOrgReview({
-  identity_confirmed: true, identity_note: '', summary: 'Camps for children with serious illness.',
+  identity_confirmed: true, identity_note: '', summary: 'Overall score 9/10. This organization reached 987654321 people.',
   dimensions: dims,
   evaluator_panel: [{ evaluator: 'Charity Navigator', status: 'Four-star rating (as of 2026)', evidence_ids: ['web:2', 'web:404'] }],
   web_sources: [
@@ -45,6 +45,11 @@ const byDim = Object.fromEntries(review.dimensions.map(d => [d.id, d]));
 assert.equal(byDim.theory_of_change.findings[0].id, 'finding:theory_of_change:1');
 assert.deepEqual(byDim.impact_evidence.findings.map(f => f.statement), ['Served 1,000 campers last year.']);
 assert.equal(review.validation_notes.length, 4, review.validation_notes.join(' | '));
+assert.ok(!review.summary.includes('987654321') && !review.summary.includes('9/10'), 'uncited summary cannot bypass finding validation');
+assert.match(review.summary, /3 of 6 areas assessed/);
+const emptyReview = validateOrgReview({ identity_confirmed: false, summary: 'Highly effective. Give now.', dimensions: ORG_DIMENSIONS.map(d => ({ id: d.id, coverage: 'assessed', findings: [], open_questions: [] })), web_sources: [] }, []);
+assert.match(emptyReview.summary, /0 of 6 areas assessed/);
+assert.ok(!emptyReview.summary.includes('Highly effective'), 'qualitative uncited claims are not promoted either');
 assert.equal(byDim.financial_resilience.findings.length, 2);
 assert.equal(byDim.use_of_funds.coverage, 'limited_evidence', 'assessed with no findings is downgraded');
 assert.deepEqual(review.evaluator_panel[0].evidence_ids, ['web:2']);
@@ -55,7 +60,7 @@ assert.throws(() => validateOrgReview({ ...review, dimensions: dims.slice(1), we
 // ── Request evaluation ──
 const snapshot = { causes: [{ id: 'c1', label: 'Camps for children with illness' }, { id: 'c2', label: 'Local food' }], priorities: [{ id: 'p1', label: 'Evidence of impact', must_have: true }, { id: 'p2', label: 'Local reach', must_have: false }] };
 const evaluation = validateRequestEvaluation({
-  summary: 'A specific ask for camper scholarships.',
+  summary: 'Overall score 9/10. This organization reached 987654321 people.',
   request_dimensions: [
     { id: 'use_of_these_funds', coverage: 'assessed', explanation: 'Funds one camper.', evidence_ids: ['request:text'], open_question: null },
     { id: 'marginal_effect', coverage: 'assessed', explanation: 'Unclear.', evidence_ids: ['nope'], open_question: 'What if unfunded?' },
@@ -71,6 +76,8 @@ assert.equal(evaluation.priorities[0].must_have_status, 'unresolved', 'an unread
 assert.equal(evaluation.priorities[1].must_have_status, null, 'only must-haves carry a status');
 assert.equal(evaluation.request_dimensions[1].coverage, 'limited_evidence');
 assert.ok(evaluation.validation_notes.length >= 1);
+assert.match(evaluation.summary, /1 of 4 areas assessed/);
+assert.ok(!evaluation.summary.includes('987654321') && !evaluation.summary.includes('9/10'), 'request summary cannot introduce an unsupported verdict or figure');
 
 // ── Derived financials ──
 assert.deepEqual(derivedFinancials([{ taxYear: 2023, form: '990', totalRevenue: 1200, totalExpenses: 1200, totalAssets: 1300, totalLiabilities: 100 }])[0],

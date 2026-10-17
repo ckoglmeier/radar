@@ -117,6 +117,14 @@ export function unsupportedFigures(statement, sourceTexts) {
 
 const RADAR_VERDICT = /\b(overall (?:score|rating|grade|verdict)|we (?:rate|score|grade)|radar (?:rates|scores|grades)|\d+\s*(?:\/|out of)\s*(?:5|10|100)\b)/i;
 
+// Summaries have no claim-level citations. Do not give that unvalidated model
+// channel authority to repeat rejected findings or introduce an overall verdict.
+// Describe coverage only; the source-linked detail carries the actual analysis.
+function coverageSummary(dimensions, subject) {
+  const assessed = dimensions.filter(d => d.coverage === 'assessed').length;
+  return `${subject}: ${assessed} of ${dimensions.length} areas assessed. ${assessed === dimensions.length ? 'Review the evidence and open questions below.' : 'The remaining areas have limited evidence or cannot yet be assessed. Review the evidence and open questions below.'} This is not an overall rating or a giving decision.`;
+}
+
 // sources: [{ id, kind: 'registry'|'derived'|'web'|'request'|'user', text }]
 export function validateOrgReview(output, registrySources) {
   if (!output || typeof output !== 'object') throw new GivingError('The review is missing.', 'review');
@@ -160,7 +168,7 @@ export function validateOrgReview(output, registrySources) {
     rubric_version: GIVING_RUBRIC_VERSION,
     identity_confirmed: output.identity_confirmed === true,
     identity_note: output.identity_note || null,
-    summary: output.summary,
+    summary: coverageSummary(dimensions, 'Organization review'),
     dimensions,
     evaluator_panel: panel,
     sources: sources.map(({ id, kind, url = null, title = null, quote = null, text }) => ({ id, kind, url, title: title || null, quote: quote || (kind === 'web' ? null : text) })),
@@ -204,7 +212,7 @@ export function validateRequestEvaluation(output, { snapshot, evidenceIds }) {
   });
   return {
     rubric_version: GIVING_RUBRIC_VERSION,
-    summary: output.summary,
+    summary: coverageSummary(requestDimensions, 'Request review'),
     request_dimensions: requestDimensions,
     causes,
     priorities,
