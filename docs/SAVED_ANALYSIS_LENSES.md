@@ -1,7 +1,7 @@
 # Saved analysis lenses — local implementation, October 18
 
 Based on `7165040`; local branch `codex/saved-analysis-lenses`. No public release,
-push or publication. Version `2.4.4-lenses.1`, migration 093.
+push or publication. Version `2.4.4-lenses.2`, migration 093.
 
 `analysis_lenses` stores explicitly named, workspace/category-scoped reusable
 preference copies. Saving a custom lens never replaces Angel theses, business
@@ -20,6 +20,12 @@ Named lenses are additive, not overwritten. Duplicate names fail explicitly.
 The generic save command is not exposed to the LLM planner. Reads scope by
 workspace AND category. Full backup/restore includes the table; Giving export
 and reset include Giving lenses only, preserving Angel lenses.
+
+Saved thesis belief snapshots are source material, not optional notes. Preserve
+their exact wording (including whitespace) up to the separate 100,000-character
+source bound; optional annotations retain their 1,000-character limit. Long
+saved-thesis draft readback is covered by the lens tests, now part of
+`test:angel-evaluations`. No historical snapshot is rewritten.
 
 Verified on disposable PGlite: `node src/models/test-analysis-lenses.js` and
 `node src/commands/test-angel-evaluation-commands.js`, both exit 0. Covers complete

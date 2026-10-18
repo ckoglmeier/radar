@@ -10,6 +10,7 @@ import { saveAnalysisLens, listAnalysisLenses, getAnalysisLens } from './analysi
 import { createRequest, saveLens, currentLens, exportGiving, resetGiving } from './giving.js';
 import { startOrgReview, completeOrgReview, startRequestEvaluation, failRequestEvaluation } from './giving-reviews.js';
 import { planCommandProposal, authorizeCommandProposal } from '../commands/service.js';
+import { validateInterestItem } from '../angel/personal-context.js';
 
 const scratch = mkdtempSync(join(tmpdir(),'radar-lenses-'));
 let backup;
@@ -17,6 +18,12 @@ try {
   await withTenant(`file:${join(scratch,'source')}`, async () => {
     await runMigrations({ seedLegacyTheses: false });
     const angel = { interests: [{ id: 'custom', label: 'Useful infrastructure', note: null, source: { kind: 'custom' } }], business: [] };
+    const longBelief='  A full saved thesis is source material. '.repeat(100);
+    const thesisItem={id:'saved_thesis',label:'Synthetic thesis',note:null,source:{kind:'thesis',lens_thesis_id:'synthetic',thesis_name:'Synthetic thesis',thesis_belief:longBelief}};
+    assert.equal(validateInterestItem(thesisItem).source.thesis_belief,longBelief,'full thesis wording is not constrained by the optional-note limit');
+    assert.throws(()=>validateInterestItem({...thesisItem,note:'n'.repeat(1001)}),/Note must be 1000/,'notes remain bounded');
+    const longDraft=await (await import('./angel-evaluations.js')).createEvaluationDraft({workspaceId:'local',state:{interests:{mode:'saved',confirmed:true,items:[thesisItem]}}});
+    assert.equal((await (await import('./angel-evaluations.js')).getEvaluationDraft({workspaceId:'local',draftId:longDraft.id})).state.interests.items[0].source.thesis_belief,longBelief,'long saved thesis survives persisted draft readback');
     const saved = await saveAnalysisLens({ workspaceId: 'local', category: 'angel', name: 'Infrastructure', payload: angel });
     assert.equal((await listAnalysisLenses({ workspaceId:'local',category:'angel' })).length,1);
     const command = async (name,input) => {

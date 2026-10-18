@@ -20,6 +20,7 @@ export const LIMITS = Object.freeze({
   business: 6,
   label: 120,
   note: 1000,
+  thesisBelief: 100000,
   companyName: 200,
   url: 500,
 });
@@ -78,6 +79,15 @@ function note(value, field) {
   return text || null;
 }
 
+// A frozen saved thesis is source material, not the user's optional annotation.
+// Keep its full wording; never silently shorten it to satisfy the note limit.
+function thesisBelief(value, field) {
+  if (value == null) return null;
+  if (typeof value !== 'string') fail('Thesis belief must be text', field);
+  if (value.length > LIMITS.thesisBelief) fail(`Thesis belief must be ${LIMITS.thesisBelief} characters or fewer`, field);
+  return value;
+}
+
 function itemId(value, field) {
   if (typeof value !== 'string' || !ID_PATTERN.test(value)) fail('Each item needs a stable ID', field);
   return value;
@@ -111,7 +121,7 @@ export function validateInterestItem(value, index = 0) {
       kind: 'thesis',
       lens_thesis_id: source.lens_thesis_id.trim(),
       thesis_name: label(source.thesis_name, `${field}.source.thesis_name`),
-      thesis_belief: source.thesis_belief == null ? null : note(String(source.thesis_belief), `${field}.source.thesis_belief`),
+      thesis_belief: thesisBelief(source.thesis_belief, `${field}.source.thesis_belief`),
     };
   } else {
     fail('Interest source must be a thesis or custom', field);
