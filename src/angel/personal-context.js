@@ -295,7 +295,10 @@ export function personalFitContext(snapshot) {
   const s = validateSnapshot(snapshot);
   return {
     company: s.company.name,
-    interests: s.interests.items.map(item => ({ id: item.id, label: item.label, note: item.note, source: item.source.kind === 'thesis' ? `Your thesis “${item.source.thesis_name}”` : 'Added for this evaluation' })).sort((a, b) => a.label.localeCompare(b.label)),
+    interests: s.interests.items.map(item => ({ id: item.id, label: item.label, note: item.note,
+      source: item.source.kind === 'thesis' ? `Your thesis “${item.source.thesis_name}”` : 'Added for this evaluation',
+      ...(item.source.kind === 'thesis' ? { thesis: { id: item.source.lens_thesis_id, name: item.source.thesis_name, belief: item.source.thesis_belief } } : {}),
+    })).sort((a, b) => a.label.localeCompare(b.label)),
     business: s.business.items.map(item => ({ id: item.id, label: item.label, note: item.note, must_have: item.must_have })),
     confirmed_facts: Object.fromEntries(Object.entries({ ...s.facts.deal_terms, ...s.facts.portfolio })
       .filter(([, fact]) => fact.status === 'confirmed').map(([key, fact]) => [key, fact.value])),
