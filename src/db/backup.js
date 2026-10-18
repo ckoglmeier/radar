@@ -70,6 +70,7 @@ const INSERT_ORDER = [
   'council_runs',
   'ad_hoc_reviews',
   'angel_business_preference_lists',
+  'analysis_lenses',
   'angel_evaluation_drafts',
   'angel_evaluation_contexts',
   'angel_personal_fit_jobs',

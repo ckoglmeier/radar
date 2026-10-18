@@ -32,6 +32,7 @@ import { pipelineCommandDefinitions } from './pipeline.js';
 import { intakeCouncilCommandDefinitions } from './intake-council.js';
 import { angelEvaluationCommandDefinitions } from './angel-evaluation.js';
 import { givingCommandDefinitions } from './giving.js';
+import { analysisLensCommandDefinitions } from './analysis-lenses.js';
 import { directLifecycleCommandDefinitions } from './direct-lifecycle.js';
 import { canonicalProductModelCommandDefinitions } from './canonical-product-model.js';
 
@@ -48,6 +49,7 @@ export const commandRegistry = createCommandRegistry([
   ...intakeCouncilCommandDefinitions,
   ...angelEvaluationCommandDefinitions,
   ...givingCommandDefinitions,
+  ...analysisLensCommandDefinitions,
   ...directLifecycleCommandDefinitions,
   ...canonicalProductModelCommandDefinitions,
 ]);

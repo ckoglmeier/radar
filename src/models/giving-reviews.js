@@ -5,6 +5,8 @@ import { snapshotHash } from '../angel/personal-context.js';
 import { forwardPlan, scenario } from '../giving/budget.js';
 import { GIVING_RUBRIC_VERSION } from '../giving/review-contract.js';
 import { currentBudget, currentLens, getOrganization, getRequest, listGifts } from './giving.js';
+import { getAnalysisLens, saveAnalysisLens } from './analysis-lenses.js';
+import { validateLens, lensHash } from '../giving/lens.js';
 
 // Giving research runs. A start creates a 'running' row whose inputs are assembled here from
 // the database, so the runner never decides what it was asked. Completed rows are immutable.
@@ -98,7 +100,7 @@ export async function failOrgReview({ workspaceId, reviewId, code, message }) {
 
 // ── Request evaluations ──
 
-export async function startRequestEvaluation({ workspaceId, requestId }) {
+export async function startRequestEvaluation({ workspaceId, requestId, lensChoice = 'plan', customLens = null, saveLensName = null }) {
   const workspace = ws(workspaceId);
   const request = await getRequest({ workspaceId: workspace, requestId });
   if (!request) throw new CommandError('TARGET_NOT_FOUND', 'Request not found.');
@@ -108,7 +110,24 @@ export async function startRequestEvaluation({ workspaceId, requestId }) {
   const [running] = await query(`SELECT * FROM giving_request_evaluations WHERE request_id = $1 AND workspace_id = $2 AND status = 'running'`, [request.id, workspace]);
   if (running) return { evaluation: row(running), already_running: true };
 
-  const lens = await currentLens({ workspaceId: workspace });
+  let lens;
+  let lensSource;
+  if (lensChoice === 'plan') {
+    if (customLens || saveLensName) throw new CommandError('PRECONDITION_FAILED', 'Custom preferences must be explicitly selected.');
+    lens = await currentLens({ workspaceId: workspace });
+    lensSource = { kind: 'plan', id: lens?.id || null };
+  } else if (lensChoice === 'custom') {
+    const normalized = validateLens(customLens || {});
+    const saved = saveLensName ? await saveAnalysisLens({ workspaceId: workspace, category: 'giving', name: saveLensName, payload: normalized }) : null;
+    lens = { version: null, lens_sha256: lensHash(normalized), lens: normalized };
+    lensSource = { kind: saved ? 'saved' : 'custom', id: saved?.id || null, name: saved?.name || null };
+  } else {
+    if (customLens || saveLensName) throw new CommandError('PRECONDITION_FAILED', 'A saved lens cannot be overwritten by this evaluation.');
+    const saved = await getAnalysisLens({ workspaceId: workspace, category: 'giving', lensId: lensChoice });
+    if (!saved) throw new CommandError('TARGET_NOT_FOUND', 'That Giving lens was not found.');
+    lens = { version: null, lens_sha256: saved.sha256, lens: saved.payload };
+    lensSource = { kind: 'saved', id: saved.id, name: saved.name };
+  }
   const budget = await currentBudget({ workspaceId: workspace });
   const gifts = await listGifts({ workspaceId: workspace });
   const pledges = (await query('SELECT * FROM giving_pledges WHERE workspace_id = $1', [workspace])).map(p => ({ ...p, total_cents: Number(p.total_cents) }));
@@ -127,6 +146,7 @@ export async function startRequestEvaluation({ workspaceId, requestId }) {
     lens: lens
       ? { version: lens.version, sha256: lens.lens_sha256, causes: lens.lens.causes.map(c => ({ id: c.id, label: c.label, outcome: c.outcome, community: c.community, geography: c.geography, note: c.note })), priorities: lens.lens.priorities.map(p => ({ id: p.id, label: p.label, note: p.note, must_have: p.must_have })), reasoning: lens.lens.reasoning }
       : { version: null, sha256: null, causes: [], priorities: [], reasoning: null },
+    lens_source: lensSource,
     budget: plan
       ? { version: budget.version, plan: { starts_on: plan.starts_on, ends_on: plan.ends_on, budget_cents: plan.budget_cents, unallocated_cents: plan.unallocated_cents, committed_cents: plan.committed_cents, planned_remaining_cents: plan.planned_remaining_cents, paid_in_period_cents: plan.paid_in_period_cents },
         effect: amount != null ? scenario(plan, { amount_cents: amount, organization_id: request.organization_id, already_counted_cents: alreadyCounted }) : null }

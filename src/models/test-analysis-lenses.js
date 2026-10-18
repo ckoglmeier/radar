@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { query, withTenant, closeDb } from '../db/index.js';
+import { runMigrations } from '../db/migrate.js';
+import { createDatabaseBackupPayload, restoreDatabase } from '../db/backup.js';
+import { saveAnalysisLens, listAnalysisLenses, getAnalysisLens } from './analysis-lenses.js';
+import { createRequest, saveLens, currentLens, exportGiving, resetGiving } from './giving.js';
+import { startOrgReview, completeOrgReview, startRequestEvaluation, failRequestEvaluation } from './giving-reviews.js';
+import { planCommandProposal, authorizeCommandProposal } from '../commands/service.js';
+
+const scratch = mkdtempSync(join(tmpdir(),'radar-lenses-'));
+let backup;
+try {
+  await withTenant(`file:${join(scratch,'source')}`, async () => {
+    await runMigrations({ seedLegacyTheses: false });
+    const angel = { interests: [{ id: 'custom', label: 'Useful infrastructure', note: null, source: { kind: 'custom' } }], business: [] };
+    const saved = await saveAnalysisLens({ workspaceId: 'local', category: 'angel', name: 'Infrastructure', payload: angel });
+    assert.equal((await listAnalysisLenses({ workspaceId:'local',category:'angel' })).length,1);
+    const command = async (name,input) => {
+      const plan=await planCommandProposal([{name,input}],{originSurface:'manual_ui',actorType:'user',actorId:'test',intentText:name,idempotencyKey:randomUUID()});
+      const applied=await authorizeCommandProposal(plan.proposal.id,plan.proposal.command_set_hash,{authorizationKind:'manual_ui',actorType:'user',actorId:'test',actorCapabilities:['portfolio:apply:metadata']});
+      return applied.receipt.commands[0].result;
+    };
+    const [deal]=await query("INSERT INTO pipeline_invites (company_name,deal_slug,status) VALUES ('Synthetic Lens Deal','synthetic-lens-deal','invite') RETURNING id");
+    const draft=await command('angel_evaluation.save_draft',{inviteId:Number(deal.id),state:{step:'review',company:{name:'Synthetic Lens Deal',pipeline_invite_id:Number(deal.id)},interests:{mode:'custom',items:angel.interests,confirmed:true},business:{mode:'custom',items:[{id:'business',label:'Recurring revenue',must_have:false}],confirmed:true},framework:{review_mode:'ad_hoc'},lens_choice:'custom',save_lens_name:'Complete Angel lens'}});
+    await command('angel_evaluation.submit',{draftId:draft.id,expectedRevision:draft.revision});
+    const whole=await getAnalysisLens({workspaceId:'local',category:'angel',lensId:draft.id});
+    assert.equal(whole.payload.interests[0].label,'Useful infrastructure');
+    assert.equal(whole.payload.business[0].label,'Recurring revenue','whole lens, not just HOW, persists at submit');
+    assert.equal(await getAnalysisLens({ workspaceId:'other',category:'angel',lensId:saved.id }),undefined);
+    assert.equal(await getAnalysisLens({ workspaceId:'local',category:'giving',lensId:saved.id }),undefined);
+    assert.equal((await saveAnalysisLens({ workspaceId:'local',category:'angel',name:saved.name,payload:angel,lensId:saved.id })).id,saved.id);
+    await assert.rejects(saveAnalysisLens({ workspaceId:'local',category:'angel',name:'Infrastructure',payload:angel }),/already exists/);
+    await assert.rejects(saveAnalysisLens({ workspaceId:'local',category:'angel',name:'Bad',payload:{...angel,deal_terms:{}} }),/deal facts/);
+    const planned = await planCommandProposal([{name:'analysis_lens.save',input:{category:'giving',name:'Empty intentional lens',payload:{}}}],{ originSurface:'manual_ui',actorType:'user',actorId:'test',intentText:'save lens',idempotencyKey:randomUUID() });
+    await authorizeCommandProposal(planned.proposal.id,planned.proposal.command_set_hash,{authorizationKind:'manual_ui',actorType:'user',actorId:'test',actorCapabilities:['portfolio:apply:metadata']});
+    await saveLens({workspaceId:'local',lens:{causes:[{id:'plan',label:'Saved plan cause'}]}});
+    const planBefore = await currentLens({workspaceId:'local'});
+    const request = await createRequest({workspaceId:'local',organization:{name:'Synthetic Giving Charity'},request:{purpose:'Synthetic request'}});
+    const orgRun = await startOrgReview({workspaceId:'local',organizationId:request.organization_id});
+    await completeOrgReview({workspaceId:'local',reviewId:orgRun.review.id,artifact:{synthetic:true}});
+    const run = async options => {const result=await startRequestEvaluation({workspaceId:'local',requestId:request.id,...options});await failRequestEvaluation({workspaceId:'local',evaluationId:result.evaluation.id,code:'SYNTHETIC_DONE',message:'No model called'});return result.evaluation.inputs;};
+    assert.equal((await run({})).lens.causes[0].label,'Saved plan cause');
+    const custom={causes:[{id:'custom',label:'Custom cause'}],priorities:[],reasoning:null};
+    const temporary=await run({lensChoice:'custom',customLens:custom});
+    assert.equal(temporary.lens.causes[0].label,'Custom cause');
+    assert.equal(temporary.lens_source.kind,'custom');
+    assert.equal((await listAnalysisLenses({workspaceId:'local',category:'giving'})).length,1,'unchecked means no save');
+    const persisted=await run({lensChoice:'custom',customLens:custom,saveLensName:'Custom reusable Giving lens'});
+    assert.equal(persisted.lens_source.kind,'saved');
+    assert.equal((await run({lensChoice:persisted.lens_source.id})).lens.causes[0].label,'Custom cause');
+    await assert.rejects(run({lensChoice:saved.id}),/not found/,'Angel lens cannot be used for Giving');
+    assert.equal((await currentLens({workspaceId:'local'})).id,planBefore.id,'custom never replaces plan');
+    assert.equal((await exportGiving({workspaceId:'local'})).tables.analysis_lenses.every(row=>row.category==='giving'),true);
+    backup=await createDatabaseBackupPayload();
+    await resetGiving({workspaceId:'local'});
+    assert.equal((await listAnalysisLenses({workspaceId:'local',category:'giving'})).length,0);
+    assert.equal((await listAnalysisLenses({workspaceId:'local',category:'angel'})).length,2,'Giving reset preserves Angel lenses');
+  });
+  await closeDb();
+  await withTenant(`file:${join(scratch,'restore')}`,async()=>{
+    await runMigrations({seedLegacyTheses:false});await restoreDatabase({content:backup.content});
+    assert.equal((await listAnalysisLenses({workspaceId:'local',category:'angel'})).length,2);
+    assert.equal((await listAnalysisLenses({workspaceId:'local',category:'giving'})).length,2);
+  });
+  console.log('Analysis lenses: scoped commands, custom/saved Giving inputs, opt-in, no plan mutation, privacy reset/export and backup/restore passed; no model calls');
+}finally{await closeDb();rmSync(scratch,{recursive:true,force:true});}

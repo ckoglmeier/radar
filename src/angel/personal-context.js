@@ -297,7 +297,7 @@ export function personalFitContext(snapshot) {
 export const DRAFT_STEPS = Object.freeze(['deal', 'terms', 'interests', 'business', 'review']);
 export function validateDraftState(value) {
   const input = value ?? {};
-  exactKeys(input, ['step', 'company', 'interests', 'business', 'facts', 'framework', 'save_business_preferences', 'materials'], 'draft');
+  exactKeys(input, ['step', 'company', 'interests', 'business', 'facts', 'framework', 'save_business_preferences', 'materials', 'lens_choice', 'save_lens_name'], 'draft');
   const out = { step: DRAFT_STEPS.includes(input.step) ? input.step : 'deal' };
   if (input.company != null) {
     exactKeys(input.company, ['name', 'url', 'pipeline_invite_id', 'deal_slug'], 'draft.company');
@@ -326,6 +326,14 @@ export function validateDraftState(value) {
   if (input.facts != null) out.facts = validateFacts(input.facts);
   if (input.framework != null) out.framework = validateFramework(input.framework);
   out.save_business_preferences = input.save_business_preferences === true;
+  if (input.lens_choice != null) {
+    if (typeof input.lens_choice !== 'string' || !/^(plan|custom|[0-9a-f-]{36})$/.test(input.lens_choice)) fail('Invalid lens selection', 'lens_choice');
+    out.lens_choice = input.lens_choice;
+  }
+  if (input.save_lens_name != null) {
+    if (typeof input.save_lens_name !== 'string' || input.save_lens_name.trim().length > 80) fail('Lens name must be at most 80 characters', 'save_lens_name');
+    out.save_lens_name = input.save_lens_name.trim() || null;
+  }
   if (input.materials != null) {
     if (!Array.isArray(input.materials) || input.materials.length > 50) fail('Too many materials', 'draft.materials');
     out.materials = input.materials.map(item => {

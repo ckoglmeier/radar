@@ -1,4 +1,5 @@
 import { query, writeCapabilities } from '../db/index.js';
+import { saveAnalysisLens } from '../models/analysis-lenses.js';
 import {
   buildEvaluationSnapshot,
   PersonalContextError,
@@ -164,6 +165,11 @@ async function submit(input) {
     if (!saved || !sameBusinessItems(saved.items, items)) await saveBusinessPreferenceList({ workspaceId, items });
   }
 
+  if (draft.state.save_lens_name) {
+    if (draft.state.lens_choice !== 'custom') throw new CommandError('PRECONDITION_FAILED', 'Only a custom lens can be saved from this analysis.');
+    await saveAnalysisLens({ workspaceId, category: 'angel', lensId: draft.id,
+      name: draft.state.save_lens_name, payload: { interests: snapshot.interests.items, business: snapshot.business.items } });
+  }
   const context = existing || await createEvaluationContext({ workspaceId, draftId: draft.id, draftRevision: draft.revision, snapshot });
 
   let run = adoptable;
