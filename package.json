@@ -1,6 +1,6 @@
 {
   "name": "radar",
-  "version": "2.4.4-pdfocr.1",
+  "version": "2.4.4-pdfocr.2",
   "description": "Decision infrastructure for private market investors. Portfolio tracking, thesis management, deal pipeline, and bet sizing.",
   "type": "module",
   "license": "MIT",
@@ -21,7 +21,7 @@
     "radar": "./src/cli.js"
   },
   "scripts": {
-    "test:pdf-ocr": "node --test src/intake/test-pdf-ocr.js",
+    "test:pdf-ocr": "node --test src/intake/test-pdf-ocr.js src/intake/test-pdf-cancellation.js",
     "test:migration-identity": "node src/db/test-migration-identity.js",
     "radar": "node src/cli.js",
     "test:data-dir": "node src/config/test-data-dir.js",

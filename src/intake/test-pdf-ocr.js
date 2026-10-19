@@ -61,7 +61,7 @@ test('page and time limits stop OCR; malformed/incomplete data is not accepted',
   assert.deepEqual(oversized.calls.rendered, []); assert.equal(oversized.calls.destroyed, 1);
   const timed = fixture(['']); let n = 0;
   await assert.rejects(extractPdfEvidence(input, { createParser: timed.createParser, budgetMs: 1, now: () => n++ * 100 }), /time limit/);
-  assert.deepEqual(timed.calls.rendered, []); assert.equal(timed.calls.destroyed, 1);
+  assert.deepEqual(timed.calls.rendered, []); assert.equal(timed.calls.destroyed, 0, 'expired budget must not create a parser');
   const incomplete = fixture(['']); incomplete.parser.getText = async () => ({ total: 2, pages: [{ num: 1, text: 'Partial' }] });
   await assert.rejects(extractPdfEvidence(input, { createParser: incomplete.createParser }), /incomplete/);
   assert.equal(incomplete.calls.destroyed, 1);
@@ -78,7 +78,7 @@ test('invalid dimensions fail before rendering and page progress supports cancel
     onProgress: async event => { progress.push(event.page); if (event.page === 2) controller.abort(); },
     ocr: async () => 'First synthetic page',
   }), /stopped/);
-  assert.deepEqual(progress, [1, 2]); assert.deepEqual(f.calls.rendered, [1]); assert.equal(f.calls.destroyed, 1);
+  assert.deepEqual(progress, [0, 1, 2]); assert.deepEqual(f.calls.rendered, [1]); assert.equal(f.calls.destroyed, 1);
 });
 
 // An actual two-page raster PDF containing only synthetic financial text.
