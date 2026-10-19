@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { hasReadablePdfText } from '../intake/pdf-text.js';
 
 export const ROOM_CHUNK_CONTRACT_VERSION = 'room-chunks-v1';
 export const ROOM_EVIDENCE_CONTRACT_VERSION = 'room-evidence-v1';
@@ -26,6 +27,9 @@ export function chunkRoomDocuments(documents = [], options = {}) {
   const chunks = [];
   for (const document of documents) {
     const text = String(document?.text || '');
+    if ((document?.mime === 'application/pdf' || /\.pdf$/i.test(document?.filename || '')) && !hasReadablePdfText(text)) {
+      throw new Error('PDF source contains no readable text. Run local OCR before analysis.');
+    }
     let start = 0;
     let sequence = 0;
     while (start < text.length) {

@@ -38,21 +38,11 @@ export function extractHtmlText(html) {
     .trim();
 }
 
-// PDF extraction is deliberately best-effort. A malformed, scanned, or
-// unsupported PDF remains a provenance document instead of failing intake.
-export async function extractPdfText(content) {
-  let parser;
-  try {
-    const { PDFParse } = await import('pdf-parse');
-    parser = new PDFParse({ data: Buffer.isBuffer(content) ? content : Buffer.from(content) });
-    const result = await parser.getText();
-    const text = result?.text?.trim();
-    return text || null;
-  } catch {
-    return null;
-  } finally {
-    if (parser) {
-      try { await parser.destroy(); } catch { /* extraction already has its result */ }
-    }
-  }
+// The compatibility API remains best-effort for intake. Detailed consumers can
+// surface the OCR failure while preserving the original provenance document.
+export { extractPdfEvidence, cleanPdfText, hasReadablePdfText } from './pdf-text.js';
+import { extractPdfEvidence } from './pdf-text.js';
+export async function extractPdfText(content, options) {
+  try { return (await extractPdfEvidence(content, options)).text; }
+  catch { return null; }
 }
