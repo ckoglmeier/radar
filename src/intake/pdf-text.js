@@ -17,7 +17,7 @@ export function hasReadablePdfText(value) {
 }
 function problem(code, message) { return Object.assign(new Error(message), { code }); }
 
-export async function recognizePdfPage(bytes, { timeoutMs = 30000, env = process.env } = {}) {
+export async function recognizePdfPage(bytes, { timeoutMs = 30000, env = process.env, signal } = {}) {
   const helper = env.RADAR_IMAGE_OCR_PATH || (env.RADAR_PDF_NORMALIZER_PATH
     ? join(dirname(env.RADAR_PDF_NORMALIZER_PATH), 'radar-image-ocr') : null);
   if (!helper) throw problem('PDF_OCR_UNAVAILABLE', 'This PDF needs local OCR. Open it in an updated Radar Desktop or attach a text-readable copy.');
@@ -25,7 +25,7 @@ export async function recognizePdfPage(bytes, { timeoutMs = 30000, env = process
   try {
     const path = join(directory, 'page.png');
     await writeFile(path, bytes, { mode: 0o600 });
-    const { stdout } = await execute(helper, [path], { timeout: timeoutMs, maxBuffer: 1024 * 1024, env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' } });
+    const { stdout } = await execute(helper, [path], { timeout: timeoutMs, maxBuffer: 1024 * 1024, signal, env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' } });
     const value = JSON.parse(stdout);
     if (!Array.isArray(value.lines) || value.lines.some(line => typeof line.text !== 'string')) throw Error();
     return value.lines.map(line => line.text).join('\n');
@@ -34,7 +34,7 @@ export async function recognizePdfPage(bytes, { timeoutMs = 30000, env = process
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
-export async function extractPdfEvidence(content, { createParser, ocr = recognizePdfPage, now = Date.now, budgetMs = PDF_OCR_BUDGET_MS } = {}) {
+export async function extractPdfEvidence(content, { createParser, ocr = recognizePdfPage, now = Date.now, budgetMs = PDF_OCR_BUDGET_MS, onProgress, signal } = {}) {
   let parser;
   const deadline = now() + Math.min(budgetMs, PDF_OCR_BUDGET_MS);
   try {
@@ -49,6 +49,9 @@ export async function extractPdfEvidence(content, { createParser, ocr = recogniz
     if (missing.length && result.total > PDF_OCR_MAX_PAGES) throw problem('PDF_OCR_LIMIT', 'This PDF exceeds the 150-page local OCR limit. Split it into smaller documents; analysis has not started.');
     const pages = [];
     for (const page of result.pages) {
+      signal?.throwIfAborted();
+      await onProgress?.({ page: page.num, total: result.total });
+      signal?.throwIfAborted();
       let text = cleanPdfText(page.text), method = 'pdf_text';
       if (!hasReadablePdfText(text)) {
         if (now() >= deadline) throw problem('PDF_OCR_LIMIT', 'Local PDF OCR reached its time limit; analysis has not started.');
@@ -62,13 +65,14 @@ export async function extractPdfEvidence(content, { createParser, ocr = recogniz
         if (!image?.data?.length) throw problem('PDF_EXTRACTION_FAILED', 'The PDF page could not be rendered for local OCR.');
         const remaining = deadline - now();
         if (remaining <= 0) throw problem('PDF_OCR_LIMIT', 'Local PDF OCR reached its time limit; analysis has not started.');
-        text = cleanPdfText(await ocr(Buffer.from(image.data), { timeoutMs: Math.min(30000, remaining) }));
+        text = cleanPdfText(await ocr(Buffer.from(image.data), { timeoutMs: Math.min(30000, remaining), signal }));
         if (now() > deadline) throw problem('PDF_OCR_LIMIT', 'Local PDF OCR reached its time limit; analysis has not started.');
         if (!hasReadablePdfText(text)) throw problem('PDF_EMPTY_PAGE', `No readable text was found on PDF page ${page.num}. Review that page or attach a readable copy; analysis has not started.`);
         method = 'local_ocr';
       }
       pages.push({ page: page.num, text, method });
     }
+    signal?.throwIfAborted();
     const ocrPages = pages.filter(page => page.method === 'local_ocr').length;
     const note = ocrPages ? `PDF text: ${ocrPages} of ${pages.length} pages recognized by local OCR, which may contain errors. Charts and visual meaning are not interpreted. Do not treat OCR as source verification.\n\n` : '';
     return {
@@ -76,6 +80,7 @@ export async function extractPdfEvidence(content, { createParser, ocr = recogniz
       pages, method: ocrPages === pages.length ? 'local_ocr' : ocrPages ? 'pdf_text_and_local_ocr' : 'pdf_text', ocrPages,
     };
   } catch (error) {
+    if (signal?.aborted) throw problem('PDF_EXTRACTION_CANCELLED', 'Local PDF extraction stopped; analysis has not started.');
     if (/^PDF_/.test(error?.code)) throw error;
     throw problem('PDF_EXTRACTION_FAILED', 'PDF extraction failed. Retry or attach a readable copy; analysis has not started.');
   } finally { if (parser) await parser.destroy().catch(() => {}); }

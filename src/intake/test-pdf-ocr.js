@@ -68,6 +68,19 @@ test('page and time limits stop OCR; malformed/incomplete data is not accepted',
   assert.equal(await extractPdfText(Buffer.from('%PDF broken')), null);
 });
 
+test('invalid dimensions fail before rendering and page progress supports cancellation', async () => {
+  const bad = fixture(['']); bad.parser.getInfo = async () => ({ pages: [{ pageNumber: 1, width: Infinity, height: 540 }] });
+  await assert.rejects(extractPdfEvidence(input, { createParser: bad.createParser }), /dimensions/);
+  assert.deepEqual(bad.calls.rendered, []); assert.equal(bad.calls.destroyed, 1);
+  const f = fixture(['', '']); const progress = [], controller = new AbortController();
+  await assert.rejects(extractPdfEvidence(input, {
+    createParser: f.createParser, signal: controller.signal,
+    onProgress: async event => { progress.push(event.page); if (event.page === 2) controller.abort(); },
+    ocr: async () => 'First synthetic page',
+  }), /stopped/);
+  assert.deepEqual(progress, [1, 2]); assert.deepEqual(f.calls.rendered, [1]); assert.equal(f.calls.destroyed, 1);
+});
+
 // An actual two-page raster PDF containing only synthetic financial text.
 
 test('real parser plus native Vision reads all synthetic image pages and numeric evidence', { skip: !process.env.RADAR_IMAGE_OCR_PATH }, async () => {
